@@ -1,6 +1,6 @@
 ---
 name: roost
-description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #pr-NNN", "kill that worker", "tear down the test", "list the running agents", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, model-selection guidance, and lifecycle rules.
+description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #issue-NNN", "kill that worker", "tear down the test", "list the running agents", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, and lifecycle rules.
 ---
 
 # roost — manage Claude sessions on the IRC roost
@@ -41,14 +41,17 @@ roost status
 Defaults:
 
 - channels: `#roost`
-- model: claude default (Sonnet today)
+- model: `opus` (Opus 4.7 — required for auto mode)
+- permission mode: `auto`
 - session name: `roost-<nick>`
 - mcp-config: `<roost>/mcp-config-irc.json` (resolved from script dir)
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
-`--dangerously-skip-permissions` flag, and the dev-channels
-confirmation prompt that appears on first launch.
+`--permission-mode auto` flag (auto-mode classifier; only Opus 4.7
+supports it — `-m` overrides to a non-Opus model will degrade auto
+mode to manual permissioning), and the dev-channels confirmation
+prompt that appears on first launch.
 
 ## Prerequisites
 
@@ -72,7 +75,7 @@ The script daemonizes; PID at `roost/var/ngircd.pid`. Stop with
 - **Per-PR reviewers** — `reviewer-<PR>`, e.g. `reviewer-1987`.
   Join `#pr-<PR>` on CI green, leave on conclude.
 - **Watchers / observers** — descriptive (`dispatch-watcher`,
-  `metrics-A`). Frequently a good fit for `--model haiku`.
+  `metrics-A`).
 
 ngircd refuses nick collisions, so two agents trying the same nick
 will fail. The wrapper doesn't enforce uniqueness for you — pick
@@ -87,15 +90,6 @@ with `roost status` (which lists running tmux sessions).
 - `#pr-NNN` — one per active PR. Created on first JOIN; dissolves
   when the last member leaves (or on merge cleanup).
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.
-
-## Model selection
-
-- `--model haiku` — cheap watchers, routine event consumers (CI
-  feeds, log tails). Faster, terser, lower per-turn cost.
-- (default Sonnet) — actual work: design discussion, code review,
-  PR drafting, anything involving judgment.
-- `--model opus` — only when reasoning load justifies the cost.
-  Usually unnecessary.
 
 ## Lifecycle = channel membership
 
@@ -117,7 +111,7 @@ roost attach worker-1987-A   # one-time prompt to bootstrap, then detach
 **Bring up a watcher on a noisy channel:**
 
 ```bash
-roost spawn dispatch-watcher --model haiku -c '#dispatch-feed'
+roost spawn dispatch-watcher -c '#dispatch-feed'
 ```
 
 **Coordinate via a shared channel without ProductOps in the loop:**

@@ -97,8 +97,8 @@ Use the `bin/roost` wrapper — handles env vars, mcp-config path,
 dev-channels prompt dismissal, tmux session naming:
 
 ```bash
-~/Dev/GoCarrot/roost/bin/roost spawn worker-1987-A -c '#pr-1987'
-~/Dev/GoCarrot/roost/bin/roost spawn watcher-A --model haiku
+~/Dev/GoCarrot/roost/bin/roost spawn worker-1987-A -c '#issue-1987'
+~/Dev/GoCarrot/roost/bin/roost spawn watcher-A
 ~/Dev/GoCarrot/roost/bin/roost list
 ~/Dev/GoCarrot/roost/bin/roost attach worker-1987-A
 ~/Dev/GoCarrot/roost/bin/roost shutdown worker-1987-A
@@ -106,16 +106,18 @@ dev-channels prompt dismissal, tmux session naming:
 ```
 
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`, and
-`--mcp-config`. Default channel is `#roost`; default model is whatever
-`claude` defaults to (Sonnet today).
+`--mcp-config`. Default channel is `#roost`; default model is `opus`
+(Opus 4.7 — required for `--permission-mode auto`, which the wrapper
+always passes). Override the model with `-m`, but auto mode will
+degrade to manual permissioning on non-Opus models.
 
 To do it by hand without the wrapper:
 
 ```bash
 ROOST_IRC_NICK=alex ROOST_IRC_CHANNELS='#roost' \
-  claude \
+  claude --model opus \
+    --permission-mode auto \
     --mcp-config /Users/alex/Dev/GoCarrot/roost/mcp-config-irc.json \
-    --dangerously-skip-permissions \
     --dangerously-load-development-channels server:roost-irc
 ```
 

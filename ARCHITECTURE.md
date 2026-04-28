@@ -146,8 +146,8 @@ roost spawn worker-718-A -c '#issue-718'
 # Reviewer joining post-CI:
 roost spawn reviewer-718 -c '#issue-718'
 
-# Cheap watcher on a noisy feed (haiku is enough — observation only):
-roost spawn dispatch-watcher --model haiku -c '#dispatch-feed'
+# Watcher on a noisy feed (observation only):
+roost spawn dispatch-watcher -c '#dispatch-feed'
 
 # Hard restart (channel-as-lifecycle: kick + new worker JOINs same
 # channel, orients from dispatcher state + channel topic + spawn

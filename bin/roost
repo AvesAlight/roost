@@ -35,7 +35,9 @@ Commands:
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
-  -m, --model MODEL          Pass --model to claude (e.g. haiku, sonnet, opus).
+  -m, --model MODEL          Override --model. Default: opus. Auto mode
+                             requires Opus 4.7; passing a non-Opus model
+                             will degrade auto mode to manual permissioning.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --mcp-config PATH          Override mcp-config path.
                              Default: ${DEFAULT_MCP_CONFIG}
@@ -43,9 +45,10 @@ spawn options:
                              after the session boots. Useful for handoff
                              prompts (senior PO → per-project PO respawn).
 
+Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier).
+
 Examples:
   roost spawn worker-718-A -c '#issue-718'
-  roost spawn watcher-A --model haiku -c '#dispatch-feed'
   roost spawn productops-simplifyrewards \\
     -c '#leads-simplifyrewards,#issue-718,#issue-721' \\
     --prompt-file /tmp/handoff-2026-04-28.md
@@ -66,7 +69,7 @@ require_ngircd() {
 cmd_spawn() {
   local nick=""
   local channels="#roost"
-  local model=""
+  local model="opus"
   local session_name=""
   local mcp_config="${DEFAULT_MCP_CONFIG}"
   local prompt_file=""
@@ -103,15 +106,12 @@ cmd_spawn() {
     exit 3
   fi
 
-  local model_flag=""
-  [ -n "${model}" ] && model_flag="--model ${model}"
-
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model:-default})"
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto)"
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${ROOST_DIR}" \
     "ROOST_IRC_NICK=${nick} ROOST_IRC_CHANNELS='${channels}' \
-     claude ${model_flag} \
+     claude --model ${model} \
+            --permission-mode auto \
             --mcp-config ${mcp_config} \
-            --dangerously-skip-permissions \
             --dangerously-load-development-channels server:roost-irc"
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
