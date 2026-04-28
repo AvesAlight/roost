@@ -8,7 +8,7 @@ from `irssi` and see everything.
 ## Topology
 
 ```
-                       ngircd (127.0.0.1:6667)
+                        ergo (127.0.0.1:6667)
                                 │
    ┌─────────────┬──────────────┼──────────────┬───────────┐
    │             │              │              │           │
@@ -245,7 +245,7 @@ replaceability. Acceptable.
 
 ## See also
 
-- `README.md` — how to run roost (ngircd, MCP, irssi, env vars,
+- `README.md` — how to run roost (ergo, MCP, irssi, env vars,
   tool surface).
 - `docs/LEARNINGS.md` — empirical work that produced this:
   load-bearing assumptions, test log, finding catalog, hardening

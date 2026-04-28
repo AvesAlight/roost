@@ -4,11 +4,12 @@ A channel MCP that rides IRC. Independent Claude Code sessions join named
 channels and exchange messages — replacing the Agent-tool team mechanism's
 SendMessage with a topology a human operator can join from `irssi`.
 
-Status: functional. ngircd local, six MCP tools, inbound channel
-events with reassembly + JOIN/LEAVE pushes. See `ARCHITECTURE.md`
-for how the team uses it; `docs/LEARNINGS.md` for the empirical
-work that produced it (load-bearing assumptions, test log, finding
-catalog).
+Status: functional. Local ergo daemon (IRCv3 stack — multiline,
+chathistory, message-tags, server-time, account-tag), six MCP tools,
+inbound channel events with reassembly + JOIN/LEAVE pushes. See
+`ARCHITECTURE.md` for how the team uses it; `docs/LEARNINGS.md` for
+the empirical work that produced it (load-bearing assumptions, test
+log, finding catalog).
 
 ## What you get
 
@@ -19,7 +20,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 - **Inbound IRC** arrives as `<channel source="roost-irc" ...>` events
   in the host session's context — same format channel notifications
   always take. Messages, JOIN/LEAVE/KICK, and NICK changes all push.
-- **One nick per session** (configured at spawn). ngircd refuses
+- **One nick per session** (configured at spawn). Ergo refuses
   collisions. A human `irssi` user against the same server sees
   everything in real time.
 
@@ -27,7 +28,9 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 
 - macOS or Linux
 - [bun](https://bun.sh) ≥ 1.0
-- [ngircd](https://ngircd.barton.de) — `brew install ngircd`
+- [ergo](https://ergo.chat) — release tarball already extracted at
+  `var/ergo/ergo` (v2.18.0). Re-fetch from
+  https://github.com/ergochat/ergo/releases if you need to upgrade.
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
@@ -71,12 +74,15 @@ pick up the new skill.
 
 ## Running
 
-### 1. Start ngircd
+### 1. Start ergo
 
-Project-local config; daemonizes; PID at `var/ngircd.pid`.
+Run from `var/ergo` so relative paths in the config (`languages`,
+`logs/`, `ircd.db`, `ircd.lock`, `ergo.motd`) resolve correctly.
 
 ```bash
-ngircd -f /Users/alex/Dev/GoCarrot/roost/etc/ngircd.conf
+cd /Users/alex/Dev/GoCarrot/roost/var/ergo
+nohup ./ergo run --conf /Users/alex/Dev/GoCarrot/roost/etc/ergo.yaml \
+  > /tmp/ergo.out 2>&1 &
 ```
 
 Verify it's up:
@@ -85,10 +91,15 @@ Verify it's up:
 lsof -nP -iTCP:6667 -sTCP:LISTEN
 ```
 
+Server-side audit log at `var/ergo/logs/audit.log` captures every
+PRIVMSG and NOTICE line both directions — useful for "what did the
+agents actually say" forensics. Ergo also auto-NOTICEs every
+connecting client that user I/O is being logged.
+
 To stop:
 
 ```bash
-pkill -f 'ngircd.*roost/etc/ngircd.conf'
+pkill -f 'ergo run.*roost/etc/ergo.yaml'
 ```
 
 ### 2. Launch a Claude session that joins the roost
@@ -145,7 +156,8 @@ to the bare invocation.
 
 ### 3. Observe as a human (no Claude needed)
 
-ngircd has zero auth — any IRC client against `127.0.0.1:6667` works:
+The spike ergo config has no auth — any IRC client against
+`127.0.0.1:6667` works:
 
 ```bash
 brew install irssi   # or weechat
@@ -165,11 +177,14 @@ irssi -c 127.0.0.1 -n alex
 | `channel_who(channel)` | List nicks present (populated from RPL_NAMREPLY + JOIN/PART/KICK/QUIT/NICK). |
 | `channel_history(channel, limit?)` | Recent messages observed by this MCP since startup. Defaults to 20, capped at `ROOST_IRC_HISTORY` (default 50). |
 
-Long messages from `channel_message` and `direct_message` are
-automatically split into ≤300-byte chunks at natural boundaries
-(sentence end, then whitespace) and reassembled by receiving roost-irc
-MCPs into a single `<channel>` event. Non-roost observers (irssi) see
-multiple plain PRIVMSGs.
+Long messages from `channel_message` and `direct_message` use IRCv3
+`draft/multiline` batches when the server advertises the cap (ergo
+does): one `BATCH +id draft/multiline target` / tagged PRIVMSGs /
+`BATCH -id` round-trip lossless and emit on the receiver as a single
+`<channel>` event with `chunkCount=N`. Against any server that doesn't
+ACK the cap, the MCP falls back to the legacy ≤300-byte chunker
+reassembled by receiving roost-irc MCPs via a short time window.
+Non-roost observers (irssi) see the individual lines.
 
 ## Channel events received
 
@@ -214,7 +229,7 @@ Self-events (your own JOIN/LEAVE/NICK) are suppressed.
 
 | Var | Default | Notes |
 |-----|---------|-------|
-| `ROOST_IRC_NICK` | (required) | The nick this session connects as. ngircd refuses collisions. |
+| `ROOST_IRC_NICK` | (required) | The nick this session connects as. Ergo refuses collisions. |
 | `ROOST_IRC_CHANNELS` | (none) | Comma-separated channels to auto-join at registration. |
 | `ROOST_IRC_SERVER` | `127.0.0.1` | IRC server host. |
 | `ROOST_IRC_PORT` | `6667` | IRC server port. |
@@ -240,7 +255,8 @@ roost/
 │                           attach / tail / status.
 ├── skills/roost/SKILL.md   Claude Code skill that wraps the bin/roost
 │                           command surface for model invocation.
-├── etc/ngircd.conf         Localhost-only IRC server config.
+├── etc/ergo.yaml           Localhost-only IRC server config.
+├── var/ergo/               Ergo binary, datastore, MOTD, logs.
 ├── var/                    Runtime state (PID file, gitignored).
 ├── mcp-config-irc.json     Use this for the IRC MCP.
 ├── mcp-config.json         Test 1 stub MCP (legacy).
@@ -254,16 +270,17 @@ roost/
 
 ## Known limitations
 
-- **ngircd-27 doesn't support IRCv3 message-tags.** We use receive-side
-  buffering with natural-boundary splitting instead. Tagged PRIVMSGs
-  are silently dropped by the server — confirmed via probe
-  (`tests/probe-message-tags.ts`).
+- **No SASL / nick reservation in the spike config.** Any local
+  process that connects can claim any unused nick. Acceptable for a
+  single-user dev box; revisit before this hosts multi-tenant work.
 - **No worker spawn helper yet.** Each Claude session is launched
   manually with the full invocation above. Automation is in scope but
   not built.
 - **`channel_history` is per-MCP-instance.** Restarting an MCP loses
-  the buffer. Use IRC server logs (ngircd writes to its configured
-  `Log` target) for durable history.
+  the buffer. For durable history use either ergo's audit log
+  (`var/ergo/logs/audit.log` — full PRIVMSG/NOTICE capture both
+  directions) or the IRCv3 `CHATHISTORY` command which ergo serves
+  out of its in-memory store.
 - **None of the previously-listed cache misses.** `alwaysLoad: true`
   is set on the roost-irc server in `mcp-config-irc.json`, so all
   six tools stay non-deferred. Empirical baseline-vs-alwaysLoad probe

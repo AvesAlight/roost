@@ -1,11 +1,14 @@
-# ergo config for roost development — spike phase
+# ergo config for roost.
 #
-# Coexists with ngircd during the cutover. Listens on 127.0.0.1:6668
-# while ngircd holds 6667. Once the multiline + audit-log story is
-# proven, ergo moves to 6667 and ngircd retires.
+# Plaintext loopback only (single-user dev box). The IRCv3 stack —
+# draft/multiline, message-tags, batch, server-time, chathistory,
+# account-tag, labeled-response — is what makes this server worth
+# running over the previous ngircd setup; the MCP at src/irc-server.ts
+# negotiates the relevant caps and falls back to a chunk-and-buffer
+# heuristic for any peer that doesn't speak them.
 #
 # Working dir is /Users/alex/Dev/GoCarrot/roost/var/ergo when launched
-# via the project Makefile/scripts. All relative paths resolve there.
+# via bin/roost. All relative paths in this file resolve there.
 
 network:
     name: roost
@@ -14,9 +17,8 @@ server:
     name: roost.local
 
     listeners:
-        # Spike port — ngircd still owns 6667.
-        "127.0.0.1:6668":
-        "[::1]:6668":
+        "127.0.0.1:6667":
+        "[::1]:6667":
 
     # No STS — plaintext loopback only.
     sts:

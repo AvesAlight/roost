@@ -7,7 +7,7 @@
 #   list                    — show all roost-prefixed tmux sessions
 #   attach <nick>           — tmux attach to that nick's session
 #   tail <nick> [-n LINES]  — show recent pane output
-#   status                  — ngircd state + session count
+#   status                  — ergo state + session count
 #
 # Hides the launch boilerplate: env-var names, mcp-config path, the
 # dev-channels prompt dismissal, the auto-join list, the tmux session
@@ -30,7 +30,7 @@ Commands:
   list                     Show all roost-prefixed tmux sessions.
   attach <nick>            tmux attach to that nick's session.
   tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
-  status                   ngircd state + roost session count.
+  status                   ergo state + roost session count.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -70,10 +70,11 @@ Examples:
 EOF
 }
 
-require_ngircd() {
+require_ircd() {
   if ! lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "error: ngircd not listening on 127.0.0.1:6667" >&2
-    echo "  start with: ngircd -f ${ROOST_DIR}/etc/ngircd.conf" >&2
+    echo "error: no IRC daemon listening on 127.0.0.1:6667" >&2
+    echo "  start ergo with:" >&2
+    echo "    cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml" >&2
     exit 2
   fi
 }
@@ -128,7 +129,7 @@ cmd_spawn() {
     done
   fi
 
-  require_ngircd
+  require_ircd
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "error: tmux session '${session_name}' already exists" >&2
@@ -251,9 +252,9 @@ cmd_tail() {
 
 cmd_status() {
   if lsof -nP -iTCP:6667 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "ngircd: up on 127.0.0.1:6667"
+    echo "ircd: up on 127.0.0.1:6667"
   else
-    echo "ngircd: DOWN (start: ngircd -f ${ROOST_DIR}/etc/ngircd.conf)"
+    echo "ircd: DOWN (start: cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml)"
   fi
   local count
   count="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^${SESSION_PREFIX}" || echo 0)"

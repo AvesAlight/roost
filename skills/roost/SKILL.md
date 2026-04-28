@@ -96,15 +96,16 @@ Otherwise, operations shape.
 
 ## Prerequisites
 
-ngircd must be running on `127.0.0.1:6667`. `roost status` checks;
+Ergo must be running on `127.0.0.1:6667`. `roost status` checks;
 `roost spawn` aborts with a hint if it's down. Start with:
 
 ```bash
-ngircd -f /Users/alex/Dev/GoCarrot/roost/etc/ngircd.conf
+cd /Users/alex/Dev/GoCarrot/roost/var/ergo
+nohup ./ergo run --conf /Users/alex/Dev/GoCarrot/roost/etc/ergo.yaml \
+  > /tmp/ergo.out 2>&1 &
 ```
 
-The script daemonizes; PID at `roost/var/ngircd.pid`. Stop with
-`pkill -f 'ngircd.*roost/etc/ngircd.conf'`.
+Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
 
 ## Naming conventions
 
@@ -118,7 +119,7 @@ The script daemonizes; PID at `roost/var/ngircd.pid`. Stop with
 - **Watchers / observers** — descriptive (`dispatch-watcher`,
   `metrics-A`).
 
-ngircd refuses nick collisions, so two agents trying the same nick
+Ergo refuses nick collisions, so two agents trying the same nick
 will fail. The wrapper doesn't enforce uniqueness for you — pick
 nicks that won't collide with what's already on the server. Check
 with `roost status` (which lists running tmux sessions).
@@ -203,7 +204,7 @@ for the most recent JSONL log; common causes:
 - `ROOST_IRC_NICK is required` — env var name typo (must be
   `ROOST_IRC_NICK`, not `ROOST_NICK`); the wrapper sets it correctly.
 - Nick already in use — pick a different one.
-- ngircd down — start it.
+- ergo down — `roost status` will say so; start it.
 
 ## See also
 

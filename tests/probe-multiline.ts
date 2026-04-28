@@ -2,15 +2,15 @@
 /**
  * Probe: ergo IRCv3 draft/multiline roundtrip.
  *
- * Two clients connect to ergo on 127.0.0.1:6668, both request the
+ * Two clients connect to ergo on 127.0.0.1:6667, both request the
  * draft/multiline cap. Sender emits a multi-paragraph message as a
  * BATCH+PRIVMSG(@batch=…)+BATCH wire sequence — same shape the MCP
  * uses in src/irc-server.ts:sendMultiline. Receiver subscribes to
  * `batch end draft/multiline` and reassembles per spec (\n join,
- * suppressed when +draft/multiline-concat is present). We then assert
- * the reassembled text byte-equals the original.
+ * suppressed when draft/multiline-concat tag is present on a line).
+ * We then assert the reassembled text byte-equals the original.
  *
- * Run ergo first (alongside ngircd):
+ * Run ergo first:
  *   cd var/ergo && ./ergo run --conf ../../etc/ergo.yaml
  *
  * Then:
@@ -20,12 +20,12 @@
 import IRC from 'irc-framework'
 
 const SERVER = '127.0.0.1'
-const PORT = 6668
+const PORT = 6667
 const CHAN = '#multiline-probe'
 
 // Multi-paragraph payload spanning > one IRC line, with explicit
 // blank line and a >300-byte single line that will need to be chunked
-// internally with +draft/multiline-concat. Round-trip must preserve
+// internally with draft/multiline-concat. Round-trip must preserve
 // every byte including the blank line.
 const ORIGINAL_MESSAGE = [
   'First paragraph — short and tidy.',
