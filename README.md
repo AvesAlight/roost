@@ -97,19 +97,35 @@ Use the `bin/roost` wrapper — handles env vars, mcp-config path,
 dev-channels prompt dismissal, tmux session naming:
 
 ```bash
+# Code worker on a PR — defaults are right:
 ~/Dev/GoCarrot/roost/bin/roost spawn worker-1987-A -c '#issue-1987'
-~/Dev/GoCarrot/roost/bin/roost spawn watcher-A
+
+# Operations agent — chrome + blank system prompt via -- pass-through:
+~/Dev/GoCarrot/roost/bin/roost spawn productops-simplifyrewards \
+  -c '#leads-simplifyrewards' \
+  -- --chrome --system-prompt ' '
+
 ~/Dev/GoCarrot/roost/bin/roost list
 ~/Dev/GoCarrot/roost/bin/roost attach worker-1987-A
 ~/Dev/GoCarrot/roost/bin/roost shutdown worker-1987-A
 ~/Dev/GoCarrot/roost/bin/roost status
 ```
 
-`spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`, and
-`--mcp-config`. Default channel is `#roost`; default model is `opus`
-(Opus 4.7 — required for `--permission-mode auto`, which the wrapper
-always passes). Override the model with `-m`, but auto mode will
-degrade to manual permissioning on non-Opus models.
+`spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
+`--mcp-config`, `-p|--prompt-file`, and `--` (everything after
+forwards to claude verbatim). Default channel is `#roost`; default
+model is `opus` (Opus 4.7 — required for `--permission-mode auto`,
+which the wrapper always passes). Override the model with `-m`, but
+auto mode will degrade to manual permissioning on non-Opus models.
+
+**Worker vs. operations shape.** Code workers (carrot, taro, teak-ios,
+teak-android, teak-js-private, scratcher) want Claude Code's default
+CLI-tuned system prompt and don't need browser access. Operations
+agents (productops, finance, sales, marketing, cos, opsmanager,
+tooldev, analytics) typically want `--chrome` for GUI work (Folk,
+Linear web, QBO, Google Workspace, Figma, Slack) and `--system-prompt
+' '` for a less-CLI-flavored conversational Claude. Pass those after
+`--` on the spawn line.
 
 To do it by hand without the wrapper:
 

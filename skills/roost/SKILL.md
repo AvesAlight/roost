@@ -53,6 +53,47 @@ supports it — `-m` overrides to a non-Opus model will degrade auto
 mode to manual permissioning), and the dev-channels confirmation
 prompt that appears on first launch.
 
+Anything passed after `--` is forwarded verbatim to claude — use this
+for `--chrome`, `--system-prompt`, `--thinking-display`, or any other
+claude flag the wrapper doesn't otherwise know about.
+
+## Worker vs. operations agents
+
+Two distinct shapes:
+
+**Code workers** — agents going into a code repository (carrot, taro,
+teak-ios, teak-android, teak-js-private, scratcher, etc.) to write
+code. They want Claude Code's *default* system prompt — the CLI-tuned
+persona that knows about Edit/Write/Bash/etc. as code-development
+operations. No `--chrome` (workers operate via `gh`, `git`, file
+edits — not the browser).
+
+```bash
+roost spawn worker-718-A -c '#issue-718'
+roost spawn reviewer-718 -c '#issue-718'
+```
+
+**Operations agents** — productops, finance/bookkeeper, salesops,
+marketingops, chiefofstaff, opsmanager, tooldev, analytics, and
+their per-project variants. They live in `operations/` and frequently
+need the browser (Folk, Linear web, QBO, Google Workspace, Figma,
+Slack). They prefer a blank system prompt — Claude without the
+CLI-coding-assistant persona, more conversational, ready to drive
+GUIs and read documents.
+
+```bash
+roost spawn productops-simplifyrewards \\
+  -c '#leads-simplifyrewards,#issue-718' \\
+  -- --chrome --system-prompt ' '
+
+roost spawn finance \\
+  -c '#staff' \\
+  -- --chrome --system-prompt ' '
+```
+
+When in doubt: are they writing code in a code repo? Worker shape.
+Otherwise, operations shape.
+
 ## Prerequisites
 
 ngircd must be running on `127.0.0.1:6667`. `roost status` checks;

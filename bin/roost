@@ -44,14 +44,26 @@ spawn options:
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
                              after the session boots. Useful for handoff
                              prompts (senior PO → per-project PO respawn).
+  -- <args...>               Pass remaining args directly to claude.
+                             Use for --chrome, --system-prompt, etc.
 
 Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier).
 
+Code workers (in carrot, taro, teak-ios, etc.) want the default Claude
+Code system prompt. Operations agents (productops, finance, sales, etc.)
+typically want --chrome and a blank system prompt — pass those after a
+'--' separator.
+
 Examples:
+  # Code worker on a PR — defaults are right:
   roost spawn worker-718-A -c '#issue-718'
+
+  # Operations agent — chrome + blank system prompt:
   roost spawn productops-simplifyrewards \\
-    -c '#leads-simplifyrewards,#issue-718,#issue-721' \\
-    --prompt-file /tmp/handoff-2026-04-28.md
+    -c '#leads-simplifyrewards,#issue-718' \\
+    --prompt-file /tmp/handoff-2026-04-28.md \\
+    -- --chrome --system-prompt ' '
+
   roost shutdown worker-718-A
   roost list
   roost tail worker-718-A -n 50      # show recent TUI output (debug)
@@ -73,6 +85,7 @@ cmd_spawn() {
   local session_name=""
   local mcp_config="${DEFAULT_MCP_CONFIG}"
   local prompt_file=""
+  local extra_args=()
 
   if [ "$#" -lt 1 ]; then
     echo "error: spawn requires a nick" >&2
@@ -89,13 +102,30 @@ cmd_spawn() {
       --mcp-config)     mcp_config="$2"; shift 2 ;;
       -p|--prompt-file) prompt_file="$2"; shift 2 ;;
       -h|--help)        usage; exit 0 ;;
-      *) echo "error: unknown spawn option: $1" >&2; usage; exit 1 ;;
+      --)               shift; extra_args=("$@"); break ;;
+      *)
+        echo "error: unknown spawn option: $1" >&2
+        echo "  pass extra args to claude after a '--' separator, e.g.:" >&2
+        echo "    roost spawn ${nick} -c '${channels}' -- --chrome --system-prompt ' '" >&2
+        usage
+        exit 1 ;;
     esac
   done
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
     exit 1
+  fi
+
+  # Properly shell-quote each extra arg so spaces and metachars survive
+  # the bash → tmux → inner-shell boundary. printf '%q' produces output
+  # that re-parses to the original token. Guarded against empty array
+  # because set -u treats ${arr[@]} on bash 3 as unbound when length=0.
+  local extra_str=""
+  if [ "${#extra_args[@]}" -gt 0 ]; then
+    for a in "${extra_args[@]}"; do
+      extra_str="${extra_str} $(printf '%q' "$a")"
+    done
   fi
 
   require_ngircd
@@ -107,12 +137,13 @@ cmd_spawn() {
   fi
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto)"
+  [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${ROOST_DIR}" \
     "ROOST_IRC_NICK=${nick} ROOST_IRC_CHANNELS='${channels}' \
      claude --model ${model} \
             --permission-mode auto \
             --mcp-config ${mcp_config} \
-            --dangerously-load-development-channels server:roost-irc"
+            --dangerously-load-development-channels server:roost-irc${extra_str}"
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
