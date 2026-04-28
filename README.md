@@ -5,8 +5,10 @@ channels and exchange messages — replacing the Agent-tool team mechanism's
 SendMessage with a topology a human operator can join from `irssi`.
 
 Status: functional. ngircd local, six MCP tools, inbound channel
-events with reassembly + JOIN/LEAVE pushes. See `PLAN.md` for the
-architecture rationale, the load-bearing assumptions, and the test log.
+events with reassembly + JOIN/LEAVE pushes. See `ARCHITECTURE.md`
+for how the team uses it; `docs/LEARNINGS.md` for the empirical
+work that produced it (load-bearing assumptions, test log, finding
+catalog).
 
 ## What you get
 
@@ -173,7 +175,10 @@ roost/
 ├── var/                    Runtime state (PID file, gitignored).
 ├── mcp-config-irc.json     Use this for the IRC MCP.
 ├── mcp-config.json         Test 1 stub MCP (legacy).
-├── PLAN.md                 Architecture, assumptions, test log.
+├── ARCHITECTURE.md         How the team uses roost (channels, roles,
+│                           routing, lifecycle, discipline).
+├── docs/LEARNINGS.md       Load-bearing assumptions, test log,
+│                           findings, hardening passes.
 ├── package.json / tsconfig.json / bun.lock
 └── README.md
 ```
@@ -193,4 +198,4 @@ roost/
 - **`alwaysLoad` not yet wired.** First IRC tool call still pays a
   one-time `tools_changed` cache miss as the deferred tool surfaces.
   Setting `alwaysLoad: true` in the mcp-config when supported would
-  eliminate it (see PLAN.md Finding A).
+  eliminate it (see `docs/LEARNINGS.md` Finding A).
