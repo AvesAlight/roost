@@ -37,6 +37,18 @@ cd ~/Dev/GoCarrot/roost
 bun install
 ```
 
+To make the `roost` Claude Code skill discoverable
+(model-invokable from any session via `/roost` or the Skill tool),
+symlink it into the user-global skills directory:
+
+```bash
+mkdir -p ~/.claude/skills
+ln -sfn ~/Dev/GoCarrot/roost/skills/roost ~/.claude/skills/roost
+```
+
+Restart any running Claude session for it to appear in the
+available-skills list.
+
 ## Running
 
 ### 1. Start ngircd
@@ -188,6 +200,8 @@ roost/
 │   └── logs/                    Test artifacts (gitignored).
 ├── bin/roost               Wrapper command — spawn / shutdown / list /
 │                           attach / tail / status.
+├── skills/roost/SKILL.md   Claude Code skill that wraps the bin/roost
+│                           command surface for model invocation.
 ├── etc/ngircd.conf         Localhost-only IRC server config.
 ├── var/                    Runtime state (PID file, gitignored).
 ├── mcp-config-irc.json     Use this for the IRC MCP.
