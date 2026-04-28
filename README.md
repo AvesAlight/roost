@@ -32,22 +32,42 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 
 ## Setup (one-time)
 
+### 1. Install dependencies
+
 ```bash
 cd ~/Dev/GoCarrot/roost
 bun install
 ```
 
-To make the `roost` Claude Code skill discoverable
-(model-invokable from any session via `/roost` or the Skill tool),
-symlink it into the user-global skills directory:
+### 2. Put `bin/roost` on `$PATH`
+
+So you can type `roost spawn …` from anywhere. In your shell rc:
+
+```bash
+export PATH="$HOME/Dev/GoCarrot/roost/bin:$PATH"
+```
+
+### 3. Load the `roost` Claude Code skill
+
+The skill lives at `roost/skills/roost/SKILL.md`. Symlink it into
+the user-global skills directory so any Claude Code session
+(across projects) can invoke it via `/roost` or the Skill tool:
 
 ```bash
 mkdir -p ~/.claude/skills
 ln -sfn ~/Dev/GoCarrot/roost/skills/roost ~/.claude/skills/roost
 ```
 
-Restart any running Claude session for it to appear in the
-available-skills list.
+Verify it's discoverable — start a fresh session and check the
+available-skills list, or:
+
+```bash
+claude --print 'List the names of all available skills, one per line.' \
+  | grep -x roost
+```
+
+Should print `roost`. Restart any already-open Claude sessions to
+pick up the new skill.
 
 ## Running
 
