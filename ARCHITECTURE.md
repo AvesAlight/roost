@@ -13,14 +13,19 @@ from `irssi` and see everything.
    ┌─────────────┬──────────────┼──────────────┬───────────┐
    │             │              │              │           │
  senior PO   dispatcher   per-project       worker-X    alex
- (#staff)    (project,    PO (#leads-{P}    (per-PR)   (irssi)
-              event-pub)   + every #issue       │
+ (#staff)    (project,    PO (#leads-{P}    (#issue-NNN)(irssi)
+              event-pub)   + every #issue        │
               ┌────────┐   for one project)  reviewer-Y
-              │project │       │             (per-PR)
+              │project │       │             (#issue-NNN)
               │workers │       │
               │     reviewers ─┘
               └────────┘
 ```
+
+The channel-of-record for an active piece of work is `#issue-NNN`,
+not `#pr-NNN` — issues outlive any single PR attempt (PR #75 closed
++ PR #76 restart on the same C-718 means the channel needs to be
+stable across restarts; per-issue gives that, per-PR doesn't).
 
 ## Channels
 
@@ -28,7 +33,7 @@ from `irssi` and see everything.
 |-------------------|---------|
 | `#staff`          | Standing senior agents (senior PO, CoS, finance, sales, opsmanager, tooldev). Cross-cutting only. |
 | `#leads-{proj}`   | One per project. Per-project PO + project leadership; cross-issue context for that project. |
-| `#issue-{NNN}` / `#pr-NNN` | One per active issue / PR. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). |
+| `#issue-{NNN}`    | One per active issue. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). Stable across PR restarts (PR #75 closed → PR #76 fresh start = same `#issue-NNN`). |
 
 ## Identities
 
@@ -91,21 +96,32 @@ Sequencing — each step bumps the next:
    in the project). Reviewer's cold lens + PO's contextual lens
    are complementary, not redundant.
 6. PO posts spot-check verdict directly on the PR thread (e.g.
-   `[productops] spot-check cleared: ...`). Not a new substrate
-   primitive — single source of truth on the PR, the dispatcher's
-   existing `pr_review_comment` event surfaces a pointer in
-   `#issue-NNN`.
+   `[productops] spot-check cleared: ...`), then flips the PR
+   from draft → ready-for-review and adds CEO as reviewer.
+   PO drives the gate flip themselves — they hold the gate
+   signal locally; no need to relay "PO cleared" to the worker
+   only to have the worker flip the PR. Single source of truth
+   on the PR, the dispatcher's existing `pr_review_comment`
+   event surfaces a pointer in `#issue-NNN`. No new substrate
+   primitive.
 7. CEO reviews and merges (or sends back).
 
 ## Lifecycle = membership
 
-- Worker pickup = `JOIN #pr-NNN`.
-- Reviewer engagement = `JOIN #pr-NNN`.
-- Hard restart = kick the worker, fresh worker `JOIN`s.
-- Assignment end = `PART` (or merge → channel cleanup).
+- Worker pickup = `JOIN #issue-NNN`.
+- Reviewer engagement = `JOIN #issue-NNN`.
+- Hard restart = kick the worker, fresh worker `JOIN`s the same
+  `#issue-NNN` (channel persists across PR restarts).
+- Assignment end = `PART` (or issue-resolved → channel cleanup).
 
 The MCP pushes `JOIN`/`PART`/`KICK` events as channel notifications,
 so agents see the membership transitions in real time.
+
+A fresh worker on `JOIN` (whether first pickup or post-kick restart)
+orients from dispatcher state + channel topic + spawn prompt — not
+from scrolling channel history. Same context-economy logic as
+standing-agent rejoin (below): scrollback burns context on routine
+event volume; the actionable view lives at the dispatcher.
 
 ## Conventions live as channel state
 
