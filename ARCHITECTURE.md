@@ -8,39 +8,94 @@ from `irssi` and see everything.
 ## Topology
 
 ```
-                     ngircd (127.0.0.1:6667)
-                              │
-        ┌─────────┬───────────┼───────────┬─────────┐
-        │         │           │           │         │
-   productops  dispatcher  worker-X  reviewer-Y   alex
-   (standing)  (project)   (per-PR)   (per-PR)   (irssi)
+                       ngircd (127.0.0.1:6667)
+                                │
+   ┌─────────────┬──────────────┼──────────────┬───────────┐
+   │             │              │              │           │
+ senior PO   dispatcher   per-project       worker-X    alex
+ (#staff)    (project,    PO (#leads-{P}    (per-PR)   (irssi)
+              event-pub)   + every #issue       │
+              ┌────────┐   for one project)  reviewer-Y
+              │project │       │             (per-PR)
+              │workers │       │
+              │     reviewers ─┘
+              └────────┘
 ```
 
 ## Channels
 
-| Channel    | Purpose |
-|------------|---------|
-| `#staff`   | Standing senior agents (productops, cos, finance, sales, opsmanager, tooldev). Cross-cutting only. |
-| `#pr-NNN`  | One per active PR. Dispatcher publishes events directly. Worker joins on pickup, leaves on merge. Reviewer joins on CI green, leaves on conclude. ProductOps observes; steps in only for needs-interpretation events. |
+| Channel           | Purpose |
+|-------------------|---------|
+| `#staff`          | Standing senior agents (senior PO, CoS, finance, sales, opsmanager, tooldev). Cross-cutting only. |
+| `#leads-{proj}`   | One per project. Per-project PO + project leadership; cross-issue context for that project. |
+| `#issue-{NNN}` / `#pr-NNN` | One per active issue / PR. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). |
 
 ## Identities
 
-- **Standing** — stable nicks (`productops`, `cos`, `tooldev`, …).
-  Sit in `#staff`, visit project channels for unclaimed events.
-- **Workers** — ephemeral (`worker-NNN-X`). Join `#pr-NNN` on
+- **Senior ProductOps** — stable nick (`productops`). Sits in
+  `#staff` alongside CoS, MarketingOps, FinanceOps, etc. Owns
+  runbooks + the cross-project pattern catalog. Spawns per-project
+  POs for new projects. Modeled on the FinanceOps/Bookkeeper
+  two-tier pattern Teak already runs.
+- **Per-project ProductOps** — `productops-{project}`. Lives in
+  `#leads-{project}` plus every `#issue-{NNN}` for that project's
+  lifetime. Restartable on compact: senior PO orients a fresh
+  instance from runbook + project artifacts + dispatcher state.
+  This is what makes "PO survives context boundaries" work — not a
+  single resilient instance, but a scoped instance the senior can
+  cheaply respawn.
+- **Other standing roles** — `cos`, `tooldev`, etc. Sit in
+  `#staff`, follow the same senior/scoped pattern when their work
+  goes per-project.
+- **Workers** — ephemeral (`worker-NNN-X`). Join `#issue-NNN` on
   assignment, leave on completion.
-- **Dispatchers** — one per project. Publish per-PR events
-  directly to `#pr-NNN`. Not Claude sessions; Python scripts.
+- **Reviewers** — `reviewer-NNN`. Join `#issue-NNN` on CI green,
+  leave on conclude.
+- **Dispatchers** — one per project. Publish per-issue events
+  directly to `#issue-NNN`. Not Claude sessions; Python scripts.
 
 ## Routing
 
+ProductOps is **observer-and-router**, not just router. The router
+job (handling unclaimed events) is small; the observer job
+(continuous attention for pattern detection) is load-bearing.
+Action ≠ observation: routing can distribute, but pattern
+recognition has to be continuous, because workers don't escalate
+absorbed-and-handled directives upward by design. Without an
+observer present, recurring directives get silently absorbed and
+re-occur next project.
+
 - **Routine signals** (CI green, CEO-APPROVED, CHANGES_REQUESTED):
-  dispatcher → `#pr-NNN` → worker. ProductOps not in the path.
+  dispatcher → `#issue-NNN` → worker. PO is in the channel but
+  not in the action path.
 - **Ambiguous CEO directives**: land in channel with a
   needs-interpretation flag. Workers clear the flag by claiming
   ("I've got this") when the directive is unambiguous to them.
-  Unclaimed = ProductOps's queue.
-- **Worker ↔ reviewer**: co-located in `#pr-NNN`. No relay.
+  Unclaimed events → PO's action queue.
+- **Worker ↔ reviewer**: co-located in `#issue-NNN`. No relay.
+- **PO observes everything else.** Pattern detection is the
+  primary deliverable on the attention surface. When a directive
+  hits twice in one project, codify into worker_conventions before
+  it can absorb a third time silently.
+
+### PR review flow
+
+Sequencing — each step bumps the next:
+
+1. Worker drafts → opens PR.
+2. CI green → dispatcher publishes to `#issue-NNN`.
+3. Reviewer-NNN joins → reviews against spec (cold lens).
+4. Reviewer satisfied → comments on the PR thread.
+5. **Per-project PO spot-checks** — informed by observed project
+   context (the running thread on `#leads-{project}`, prior issues
+   in the project). Reviewer's cold lens + PO's contextual lens
+   are complementary, not redundant.
+6. PO posts spot-check verdict directly on the PR thread (e.g.
+   `[productops] spot-check cleared: ...`). Not a new substrate
+   primitive — single source of truth on the PR, the dispatcher's
+   existing `pr_review_comment` event surfaces a pointer in
+   `#issue-NNN`.
+7. CEO reviews and merges (or sends back).
 
 ## Lifecycle = membership
 
@@ -65,6 +120,14 @@ restart, outage), it queries the dispatcher for actionable state
 *first*, then reads channel deltas only for items the dispatcher
 flags as needing interpretation. Don't scroll history — it burns
 context on routine event volume.
+
+For per-project PO specifically, rejoin is a fresh-instance
+respawn from the senior PO. Senior orients the new instance from:
+runbook + project artifacts (current `worker_conventions`,
+`#leads-{project}` topic / pins, recent journal entries) +
+dispatcher's actionable state. Trade: per-project PO gives up
+perfect scrollback continuity in exchange for cheap
+replaceability. Acceptable.
 
 ## Discipline
 
