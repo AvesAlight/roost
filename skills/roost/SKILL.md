@@ -1,6 +1,6 @@
 ---
 name: roost
-description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #issue-NNN", "kill that worker", "tear down the test", "list the running agents", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, and lifecycle rules.
+description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #issue-NNN", "kill that worker", "tear down the test", "list the running agents", "spawn a sonnet/haiku worker with permission oversight", "approve its tool calls over IRC", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, lifecycle rules, and the IRC permission-oversight pattern (Opus orchestrator gating a non-auto-mode worker's tool calls via DMs).
 ---
 
 # roost — manage Claude sessions on the IRC roost
@@ -30,7 +30,8 @@ prose, not a tool surface.
 ## Command surface
 
 ```bash
-roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH]
+roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
+                   [--perm-irc [--perm-target NICK]]
 roost shutdown <nick>
 roost list
 roost attach <nick>
@@ -94,6 +95,63 @@ roost spawn finance \\
 When in doubt: are they writing code in a code repo? Worker shape.
 Otherwise, operations shape.
 
+## IRC permission oversight (--perm-irc)
+
+`--perm-irc` starts a side daemon (`bin/roost-permbot`) alongside the
+worker. The daemon holds a stable IRC nick `permbot-{worker}` and
+serializes the worker's PreToolUse permission prompts as DMs to
+`--perm-target` (default `alex2`). The operator replies `y` / `n` /
+`yes` / `no` / `allow` / `deny` (case-insensitive); anything else or a
+30s timeout falls through to the regular terminal prompt as a safety
+net. `roost shutdown` reaps the daemon and its socket/pidfile.
+
+Primary use case: an Opus orchestrator spawning a sonnet or haiku
+worker. Non-Opus models can't use auto mode, so without oversight the
+worker would hit the terminal permission prompt for every tool call —
+unusable headlessly. With `--perm-irc --perm-target <orchestrator>`,
+the prompts come to the orchestrator over IRC and the orchestrator
+acts as the gate. Same pattern works for a human at any roost-attached
+client (`alex2` from weechat, etc.).
+
+```bash
+# Opus orchestrator gates a sonnet worker's tool calls:
+roost spawn worker-1987-A -c '#pr-1987' -m sonnet \
+  --perm-irc --perm-target productops-simplifyrewards
+
+# Human (alex2) gates a haiku worker:
+roost spawn scratch-h -c '#sandbox' -m haiku --perm-irc
+```
+
+Worker prerequisite: the worker's cwd must have a `.claude/settings.json`
+(or `settings.local.json`) that wires `PreToolUse` to
+`bin/irc-permission-prompt`. The hook degrades gracefully when no
+daemon is running (returns `ask`, terminal prompt fires as normal), so
+it's safe to install at the project level even for sessions that don't
+use `--perm-irc`.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "/Users/alex/Dev/GoCarrot/roost/bin/irc-permission-prompt",
+        "timeout": 45
+      }]
+    }]
+  }
+}
+```
+
+The hook auto-passes any `mcp__roost-irc__*` tool through without
+asking — otherwise the worker couldn't talk on IRC, including replying
+to its own approver. Reference sandbox at
+`/Users/alex/Dev/GoCarrot/roost-permtest/` is preconfigured for testing.
+
+Daemon logs land at `/tmp/roost-permbot-{worker}.log` if anything looks
+off (registration failures, IRC disconnects, etc.).
+
 ## Prerequisites
 
 Ergo must be running on `127.0.0.1:6667`. `roost status` checks;
@@ -118,6 +176,9 @@ Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
   Join `#pr-<PR>` on CI green, leave on conclude.
 - **Watchers / observers** — descriptive (`dispatch-watcher`,
   `metrics-A`).
+- **Permbot side daemons** — `permbot-{worker}`, automatically named
+  by `--perm-irc` (don't pick a worker nick that would collide with an
+  existing `permbot-*` nick).
 
 Ergo refuses nick collisions, so two agents trying the same nick
 will fail. The wrapper doesn't enforce uniqueness for you — pick
