@@ -58,22 +58,125 @@ def emit(decision: str, reason: str) -> None:
     sys.exit(0)
 
 
-def summarize(tool_name: str, tool_input: dict) -> str:
-    if tool_name in ("Read", "Write", "Edit", "NotebookEdit"):
-        return f"{tool_name} {tool_input.get('file_path', '?')}"
-    if tool_name == "Bash":
+def _clip(s: str, n: int) -> str:
+    s = (s or "").replace("\r", " ").replace("\n", " ").strip()
+    if len(s) > n:
+        return s[: n - 1] + "…"
+    return s
+
+
+def summarize(tool_name: str, tool_input: dict) -> list[str]:
+    """Return a list of lines describing the tool call (1+ lines)."""
+    lines: list[str] = []
+    if tool_name == "Read":
+        path = tool_input.get("file_path", "?")
+        rng = ""
+        offset = tool_input.get("offset")
+        limit = tool_input.get("limit")
+        if offset or limit:
+            start = offset or 1
+            end = (offset or 1) + (limit or 0) - 1 if limit else "end"
+            rng = f" (lines {start}–{end})"
+        lines.append(f"Read {path}{rng}")
+    elif tool_name == "Write":
+        path = tool_input.get("file_path", "?")
+        content = tool_input.get("content", "")
+        lines.append(f"Write {path} ({len(content)} bytes)")
+        if content:
+            lines.append(f"  preview: {_clip(content, 200)}")
+    elif tool_name == "Edit":
+        path = tool_input.get("file_path", "?")
+        old = tool_input.get("old_string", "")
+        new = tool_input.get("new_string", "")
+        replace_all = tool_input.get("replace_all")
+        suffix = " (replace_all)" if replace_all else ""
+        lines.append(f"Edit {path}{suffix}")
+        lines.append(f"  old: {_clip(old, 160)}")
+        lines.append(f"  new: {_clip(new, 160)}")
+    elif tool_name == "NotebookEdit":
+        path = tool_input.get("notebook_path", "?")
+        cell = tool_input.get("cell_id", "?")
+        lines.append(f"NotebookEdit {path} cell={cell}")
+        new = tool_input.get("new_source", "")
+        if new:
+            lines.append(f"  new: {_clip(new, 160)}")
+    elif tool_name == "Bash":
+        desc = tool_input.get("description", "").strip()
         cmd = tool_input.get("command", "")
-        if len(cmd) > 240:
-            cmd = cmd[:237] + "..."
-        return f"Bash: {cmd}"
-    if tool_name == "Grep":
+        head = f"Bash ({desc})" if desc else "Bash"
+        lines.append(head)
+        lines.append(f"  $ {_clip(cmd, 280)}")
+    elif tool_name == "Grep":
         pat = tool_input.get("pattern", "?")
         path = tool_input.get("path", "")
-        return f"Grep {pat!r}{(' in ' + path) if path else ''}"
-    blob = json.dumps(tool_input, separators=(",", ":"))
-    if len(blob) > 240:
-        blob = blob[:237] + "..."
-    return f"{tool_name} {blob}"
+        glob = tool_input.get("glob", "")
+        bits = [f"pattern={pat!r}"]
+        if path:
+            bits.append(f"path={path}")
+        if glob:
+            bits.append(f"glob={glob}")
+        lines.append("Grep " + " ".join(bits))
+    elif tool_name == "Glob":
+        pat = tool_input.get("pattern", "?")
+        path = tool_input.get("path", "")
+        lines.append(f"Glob {pat}" + (f" in {path}" if path else ""))
+    elif tool_name == "WebFetch":
+        url = tool_input.get("url", "?")
+        prompt = tool_input.get("prompt", "")
+        lines.append(f"WebFetch {url}")
+        if prompt:
+            lines.append(f"  prompt: {_clip(prompt, 200)}")
+    else:
+        blob = json.dumps(tool_input, separators=(",", ":"), ensure_ascii=False)
+        lines.append(f"{tool_name} {_clip(blob, 240)}")
+    return lines
+
+
+def extract_intent(transcript_path: str) -> str:
+    """Pull the most recent assistant text block from the transcript.
+
+    Falls back to thinking content if no text is available, then None.
+    Reads the tail of the file to keep this cheap on long sessions.
+    """
+    if not transcript_path or not os.path.exists(transcript_path):
+        return ""
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            f.seek(max(0, size - 200_000))
+            data = f.read()
+    except OSError:
+        return ""
+    # The first line after a mid-file seek is likely truncated; drop it.
+    raw_lines = data.split(b"\n")
+    if size > 200_000 and raw_lines:
+        raw_lines = raw_lines[1:]
+    fallback_thinking = ""
+    for raw in reversed(raw_lines):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            turn = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if turn.get("type") != "assistant":
+            continue
+        content = (turn.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = (block.get("text") or "").strip()
+                if text:
+                    return _clip(text, 400)
+            elif block.get("type") == "thinking" and not fallback_thinking:
+                think = (block.get("thinking") or "").strip()
+                if think:
+                    fallback_thinking = _clip(think, 400)
+    return fallback_thinking
 
 
 def ask_daemon(summary: str):
@@ -134,11 +237,16 @@ def main() -> None:
 
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {}) or {}
+    transcript_path = payload.get("transcript_path", "")
 
     if tool_name.startswith(PASSTHROUGH_PREFIXES):
         emit("allow", "roost-irc passthrough")
 
-    summary = summarize(tool_name, tool_input)
+    intent = extract_intent(transcript_path)
+    summary_lines = summarize(tool_name, tool_input)
+    if intent:
+        summary_lines.append(f"intent: {intent}")
+    summary = "\n".join(summary_lines)
     reply = ask_daemon(summary)
     if reply is None:
         emit("ask", "permbot unavailable / timed out; falling back to terminal")

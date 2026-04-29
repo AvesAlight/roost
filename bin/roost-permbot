@@ -174,10 +174,17 @@ def main() -> None:
         client_sock, req, _queued_at = queue.popleft()
         summary = req.get("summary", "(no summary)")
         timeout = float(req.get("timeout", 30))
-        question = f"[{WORKER}] permission needed: {summary} — reply y/n"
-        irc.send_line(f"PRIVMSG {TARGET} :{question}")
+        # Multi-line summaries (intent + per-tool detail) come through as
+        # newline-separated text; render as one PRIVMSG per line, with a
+        # header and a footer so the operator sees a clear block.
+        body_lines = [ln.rstrip() for ln in summary.split("\n") if ln.strip()]
+        wire_lines = [f"[{WORKER}] permission requested:"]
+        wire_lines.extend(body_lines)
+        wire_lines.append("reply y/n")
+        for line in wire_lines:
+            irc.send_line(f"PRIVMSG {TARGET} :{line}")
         in_flight = (client_sock, req, time.time() + timeout)
-        dlog(f"in-flight to {TARGET}: {summary[:80]} (timeout {timeout}s)")
+        dlog(f"in-flight to {TARGET} ({len(wire_lines)} lines, timeout {timeout}s)")
 
     while running:
         # Compute select timeout: short enough to enforce in-flight deadlines.
