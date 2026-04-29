@@ -41,6 +41,14 @@ spawn options:
                              will silently degrade auto mode to manual
                              permissioning. Per ProductOps Project_Execution.md
                              all roost agents run on Opus.
+  --perm-irc                 Start a permbot side daemon (bin/roost-permbot)
+                             that surfaces this worker's tool-permission
+                             prompts as DMs to --perm-target. Useful for
+                             non-Opus models that can't use auto mode and
+                             would otherwise flood the terminal with
+                             prompts. Daemon is killed by 'roost shutdown'.
+  --perm-target NICK         Operator nick to DM for permission prompts.
+                             Default: alex2. Only meaningful with --perm-irc.
   --cwd PATH                 Working directory for the spawned session.
                              Default: operations repo dir (~/Dev/GoCarrot/operations).
                              Operations agents (productops, finance, sales,
@@ -92,6 +100,64 @@ require_ircd() {
   fi
 }
 
+# Side-daemon (permbot) lifecycle. PERM_SOCK / PERM_PID / PERM_LOG paths
+# are derived from the worker nick — one daemon per worker, lifecycle
+# tied to the tmux session via roost spawn / roost shutdown.
+perm_paths() {
+  local nick="$1"
+  PERM_SOCK="/tmp/roost-permbot-${nick}.sock"
+  PERM_PID="/tmp/roost-permbot-${nick}.pid"
+  PERM_LOG="/tmp/roost-permbot-${nick}.log"
+}
+
+start_permbot() {
+  local nick="$1"
+  local target="$2"
+  perm_paths "${nick}"
+  if [ -f "${PERM_PID}" ] && kill -0 "$(cat "${PERM_PID}" 2>/dev/null)" 2>/dev/null; then
+    echo "  permbot already running (pid $(cat "${PERM_PID}")) — reusing"
+    return 0
+  fi
+  rm -f "${PERM_PID}" "${PERM_SOCK}"
+  ROOST_PERM_NICK="permbot-${nick}" \
+  ROOST_PERM_SOCK="${PERM_SOCK}" \
+  ROOST_PERM_TARGET="${target}" \
+  ROOST_PERM_WORKER="${nick}" \
+    nohup "${ROOST_DIR}/bin/roost-permbot" >>"${PERM_LOG}" 2>&1 </dev/null &
+  echo $! > "${PERM_PID}"
+  disown 2>/dev/null || true
+  echo "  permbot started (nick=permbot-${nick}, target=${target}, sock=${PERM_SOCK}, pid=$(cat "${PERM_PID}"))"
+  # Wait up to 5s for the socket to appear; that's our handshake.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "${PERM_SOCK}" ] && return 0
+    sleep 0.5
+  done
+  echo "  warning: permbot socket did not appear within 5s; check ${PERM_LOG}" >&2
+  return 1
+}
+
+stop_permbot() {
+  local nick="$1"
+  perm_paths "${nick}"
+  [ ! -f "${PERM_PID}" ] && return 0
+  local pid
+  pid="$(cat "${PERM_PID}" 2>/dev/null || true)"
+  if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}" 2>/dev/null || true
+    # Daemon should respond to SIGTERM and clean up the socket; give it
+    # a moment, then SIGKILL if still alive.
+    local i
+    for i in 1 2 3 4; do
+      kill -0 "${pid}" 2>/dev/null || break
+      sleep 0.25
+    done
+    kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+    echo "  killed permbot (pid ${pid})"
+  fi
+  rm -f "${PERM_PID}" "${PERM_SOCK}"
+}
+
 cmd_spawn() {
   local nick=""
   local channels="#roost"
@@ -100,6 +166,8 @@ cmd_spawn() {
   local mcp_config="${DEFAULT_MCP_CONFIG}"
   local prompt_file=""
   local cwd="${OPERATIONS_DIR}"
+  local perm_irc=0
+  local perm_target="alex2"
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -117,6 +185,8 @@ cmd_spawn() {
       --mcp-config)     mcp_config="$2"; shift 2 ;;
       -p|--prompt-file) prompt_file="$2"; shift 2 ;;
       --cwd)            cwd="$2"; shift 2 ;;
+      --perm-irc)       perm_irc=1; shift ;;
+      --perm-target)    perm_target="$2"; shift 2 ;;
       -h|--help)        usage; exit 0 ;;
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -156,14 +226,26 @@ cmd_spawn() {
     exit 3
   fi
 
+  # Start the permbot side daemon if --perm-irc was passed. Done before
+  # spawning the worker so the unix socket exists when the worker fires
+  # its first PreToolUse hook. The worker's settings.json must wire the
+  # hook to bin/irc-permission-prompt for this to do anything visible.
+  local perm_sock=""
+  if [ "${perm_irc}" -eq 1 ]; then
+    start_permbot "${nick}" "${perm_target}" || true
+    perm_paths "${nick}"
+    perm_sock="${PERM_SOCK}"
+  fi
+
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
   # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
   # the inner command stays a clean single-quoted string.
+  local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}")
+  [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}")
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
-    -e "ROOST_IRC_NICK=${nick}" \
-    -e "ROOST_IRC_CHANNELS=${channels}" \
+    "${tmux_env[@]}" \
     "exec zsh -l -c \"claude --model ${model} --permission-mode auto --mcp-config ${mcp_config} --dangerously-load-development-channels server:roost-irc${extra_str}\""
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
@@ -212,10 +294,13 @@ cmd_shutdown() {
   local session_name="${SESSION_PREFIX}${nick}"
   if ! tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "no tmux session named '${session_name}'" >&2
+    # Still try to clean up an orphaned permbot for this nick.
+    stop_permbot "${nick}"
     exit 4
   fi
   tmux kill-session -t "${session_name}"
   echo "killed ${session_name}"
+  stop_permbot "${nick}"
 }
 
 cmd_list() {

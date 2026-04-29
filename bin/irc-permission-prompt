@@ -1,52 +1,45 @@
 #!/usr/bin/env python3
 """
-roost — PreToolUse hook that surfaces permission prompts via IRC DM.
+roost — PreToolUse hook (thin socket client over the permbot daemon).
 
-Reads PreToolUse JSON from stdin, posts a DM to a configured IRC user
-asking for y/n approval, and emits hookSpecificOutput with
-permissionDecision = allow|deny|ask.
+Reads PreToolUse JSON on stdin, asks the worker's permbot daemon (over
+its unix socket) whether the operator approves, and emits
+hookSpecificOutput.permissionDecision = allow|deny|ask.
 
-Use case: roost workers running on non-Opus models can't use auto mode
-and would otherwise trip the terminal prompt for every tool call. With
-this hook installed, the prompt instead lands in IRC where the operator
-can approve from anywhere. Timeout / unrecognized reply → "ask" so the
-terminal prompt is still the safety net.
+The daemon (bin/roost-permbot) is what actually talks to IRC. This hook
+is just a pipe: stdin payload → one-line JSON request → one-line JSON
+response → decision.
+
+If the daemon's socket is missing or unreachable, emit "ask" so the
+terminal prompt is still the safety net. Same fallback for ambiguous
+replies and timeouts.
 
 Configuration (env, all optional):
-  ROOST_PERM_HOST       IRC server         (default: 127.0.0.1)
-  ROOST_PERM_PORT       IRC port           (default: 6667)
-  ROOST_PERM_TARGET     Nick to DM         (default: alex2)
-  ROOST_PERM_TIMEOUT    Reply timeout sec  (default: 30)
-  ROOST_IRC_NICK        Worker nick (set by bin/roost spawn)
+  ROOST_PERM_SOCK       Daemon socket path. Defaults to
+                        /tmp/roost-permbot-{ROOST_IRC_NICK}.sock
+  ROOST_PERM_TIMEOUT    Operator reply timeout (seconds, default 30).
+                        Sent to the daemon as part of the request;
+                        the local socket-read timeout is timeout + 5.
+  ROOST_IRC_NICK        Worker nick (set by bin/roost spawn). Used to
+                        derive the default socket path.
 
-Pure stdlib — runs anywhere Python 3.9+ is available.
+Tools whose names start with `mcp__roost-irc__` are passthrough
+(allowed without asking) — otherwise the worker couldn't talk on IRC,
+including replying to the operator.
 """
 import json
 import os
-import select
 import socket
 import sys
 import time
 
-HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
-PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
-TARGET = os.environ.get("ROOST_PERM_TARGET", "alex2")
-TIMEOUT = float(os.environ.get("ROOST_PERM_TIMEOUT", "30"))
 WORKER = os.environ.get("ROOST_IRC_NICK", "unknown")
-DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG", "/tmp/roost-perm-hook.log")
+SOCK_PATH = os.environ.get(
+    "ROOST_PERM_SOCK",
+    f"/tmp/roost-permbot-{WORKER}.sock",
+)
+TIMEOUT = float(os.environ.get("ROOST_PERM_TIMEOUT", "30"))
 
-
-def dlog(msg: str) -> None:
-    if not DEBUG_LOG:
-        return
-    try:
-        with open(DEBUG_LOG, "a") as f:
-            f.write(f"[{time.strftime('%H:%M:%S')} pid={os.getpid()}] {msg}\n")
-    except OSError:
-        pass
-
-# Tools that must NOT be intercepted, otherwise the worker can't talk on
-# IRC (and we'd recurse — the hook's own DM would itself be a tool call).
 PASSTHROUGH_PREFIXES = ("mcp__roost-irc__",)
 
 
@@ -83,101 +76,49 @@ def summarize(tool_name: str, tool_input: dict) -> str:
     return f"{tool_name} {blob}"
 
 
-def ask_irc(question: str):
-    """Connect to IRC, DM the question to TARGET, return their reply or None."""
-    nick = f"permbot-{WORKER}-{os.getpid()}"[:30]
-    dlog(f"connect {HOST}:{PORT} as nick={nick} target={TARGET} timeout={TIMEOUT}")
+def ask_daemon(summary: str):
+    """Round-trip a request through the permbot socket. Return reply str or None."""
+    if not os.path.exists(SOCK_PATH):
+        sys.stderr.write(f"perm-hook: socket {SOCK_PATH} missing\n")
+        return None
     try:
-        sock = socket.create_connection((HOST, PORT), timeout=5)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(TIMEOUT + 5)
+        sock.connect(SOCK_PATH)
     except OSError as e:
-        sys.stderr.write(f"perm-hook: connect {HOST}:{PORT} failed: {e}\n")
-        dlog(f"CONNECT FAIL: {e}")
+        sys.stderr.write(f"perm-hook: connect {SOCK_PATH} failed: {e}\n")
         return None
 
-    sock.setblocking(False)
-    recv_buf = b""
-
-    def send(line: str) -> None:
-        dlog(f"-> {line}")
-        sock.sendall((line + "\r\n").encode("utf-8"))
-
-    def read_lines(deadline: float):
-        """Yield decoded lines as they arrive; returns when deadline elapses or EOF."""
-        nonlocal recv_buf
-        while True:
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                return
-            ready, _, _ = select.select([sock], [], [], min(remaining, 1.0))
-            if not ready:
-                continue
+    try:
+        req = json.dumps({"summary": summary, "timeout": TIMEOUT})
+        sock.sendall((req + "\n").encode("utf-8"))
+        # Read response. Should be one line.
+        buf = b""
+        deadline = time.time() + TIMEOUT + 5
+        while time.time() < deadline and b"\n" not in buf:
             try:
                 chunk = sock.recv(4096)
-            except (BlockingIOError, InterruptedError):
-                continue
-            except OSError as e:
-                dlog(f"recv OSError: {e}")
-                return
-            if not chunk:
-                dlog("EOF on socket")
-                return
-            recv_buf += chunk
-            while b"\r\n" in recv_buf:
-                line_b, recv_buf = recv_buf.split(b"\r\n", 1)
-                yield line_b.decode("utf-8", errors="replace")
-
-    try:
-        send(f"NICK {nick}")
-        send(f"USER {nick} 0 * :roost-perm-bot")
-
-        registered = False
-        for line in read_lines(time.time() + 5):
-            dlog(f"<- {line}")
-            if line.startswith("PING "):
-                send("PONG " + line[5:])
-                continue
-            parts = line.split(" ", 3)
-            if len(parts) >= 2 and parts[1] == "001":
-                registered = True
+            except socket.timeout:
                 break
-            if len(parts) >= 2 and parts[1] in ("432", "433", "436"):
-                sys.stderr.write(f"perm-hook: nick reg failed: {line}\n")
-                dlog(f"nick reg failed: {line}")
-                return None
-        if not registered:
-            sys.stderr.write("perm-hook: no RPL_WELCOME within 5s\n")
-            dlog("no RPL_WELCOME within 5s")
+            if not chunk:
+                break
+            buf += chunk
+        if b"\n" not in buf:
+            sys.stderr.write("perm-hook: daemon response truncated\n")
             return None
-
-        send(f"PRIVMSG {TARGET} :{question}")
-
-        for line in read_lines(time.time() + TIMEOUT):
-            dlog(f"<- {line}")
-            if line.startswith("PING "):
-                send("PONG " + line[5:])
-                continue
-            if not line.startswith(":"):
-                continue
-            # :alex2!u@h PRIVMSG permbot-... :body...
-            try:
-                src, cmd, tgt, rest = line[1:].split(" ", 3)
-            except ValueError:
-                continue
-            if cmd != "PRIVMSG" or tgt != nick:
-                continue
-            src_nick = src.split("!", 1)[0]
-            if src_nick != TARGET:
-                continue
-            body = rest[1:] if rest.startswith(":") else rest
-            dlog(f"REPLY from {src_nick}: {body!r}")
-            return body.strip()
-        dlog("reply window expired with no match")
-        return None
-    finally:
+        line, _, _ = buf.partition(b"\n")
         try:
-            send("QUIT :done")
-        except OSError:
-            pass
+            resp = json.loads(line.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            sys.stderr.write(f"perm-hook: bad daemon response: {e}\n")
+            return None
+        if resp.get("timeout"):
+            return None
+        if "error" in resp:
+            sys.stderr.write(f"perm-hook: daemon error: {resp['error']}\n")
+            return None
+        return resp.get("reply")
+    finally:
         try:
             sock.close()
         except OSError:
@@ -198,17 +139,15 @@ def main() -> None:
         emit("allow", "roost-irc passthrough")
 
     summary = summarize(tool_name, tool_input)
-    question = f"[{WORKER}] permission needed: {summary} — reply y/n"
-
-    reply = ask_irc(question)
+    reply = ask_daemon(summary)
     if reply is None:
-        emit("ask", "irc prompt timed out / failed; falling back to terminal")
+        emit("ask", "permbot unavailable / timed out; falling back to terminal")
 
     norm = reply.strip().lower()
     if norm in ("y", "yes", "allow", "ok", "approve"):
-        emit("allow", f"approved by {TARGET} via IRC")
+        emit("allow", "approved via IRC")
     if norm in ("n", "no", "deny", "block"):
-        emit("deny", f"denied by {TARGET} via IRC: {reply!r}")
+        emit("deny", f"denied via IRC: {reply!r}")
     emit("ask", f"unrecognized reply {reply!r}; falling back to terminal")
 
 

@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+roost — permission-prompt daemon.
+
+Long-running side process that holds a stable IRC connection (nick
+`permbot-{worker}`) and listens on a unix socket. Hook scripts (one
+per PreToolUse) connect to the socket, send a one-line JSON request
+describing the proposed tool call, and read back a one-line JSON
+response with the operator's reply. The daemon handles the IRC
+round-trip; the hooks stay simple.
+
+Why a daemon: the v0 one-shot hook opened a fresh IRC connection per
+tool call, which (a) generated a new nick per call, fragmenting the
+operator's DM view, and (b) burned ~100ms per call on registration.
+A single persistent connection consolidates DMs under one stable nick
+and stays warm across calls.
+
+Wire protocol (newline-delimited JSON on the unix socket):
+  request:  {"summary": "Read /path/to/file", "timeout": 30}
+  response: {"reply": "y"} | {"timeout": true} | {"error": "..."}
+
+The daemon prefixes the summary with `[{worker}] permission needed: ...
+— reply y/n`. Hooks just send the raw tool description.
+
+Concurrency: one in-flight question at a time. Additional client
+requests queue. (Permission prompts are inherently serial — the
+operator can only meaningfully answer one at a time anyway.)
+
+Configuration (env, all required unless noted):
+  ROOST_PERM_NICK       Daemon's IRC nick (e.g., `permbot-permtest`)
+  ROOST_PERM_SOCK       Unix socket path (e.g., `/tmp/roost-permbot-permtest.sock`)
+  ROOST_PERM_TARGET     Operator's nick (default: alex2)
+  ROOST_PERM_HOST       IRC server (default: 127.0.0.1)
+  ROOST_PERM_PORT       IRC port   (default: 6667)
+  ROOST_PERM_WORKER     Worker nick to display in prompts (default: same as NICK without permbot- prefix)
+  ROOST_PERM_DEBUG_LOG  Append-only trace log path (default: /tmp/roost-permbot.log)
+"""
+import json
+import os
+import selectors
+import signal
+import socket
+import sys
+import time
+from collections import deque
+
+NICK = os.environ.get("ROOST_PERM_NICK") or sys.exit("ROOST_PERM_NICK required")
+SOCK_PATH = os.environ.get("ROOST_PERM_SOCK") or sys.exit("ROOST_PERM_SOCK required")
+TARGET = os.environ.get("ROOST_PERM_TARGET", "alex2")
+HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
+PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
+WORKER = os.environ.get("ROOST_PERM_WORKER") or NICK.removeprefix("permbot-")
+DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG", "/tmp/roost-permbot.log")
+
+
+def dlog(msg: str) -> None:
+    if not DEBUG_LOG:
+        return
+    try:
+        with open(DEBUG_LOG, "a") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')} {NICK}] {msg}\n")
+    except OSError:
+        pass
+
+
+class IRC:
+    """Single persistent IRC connection used by the daemon."""
+
+    def __init__(self) -> None:
+        self.sock = socket.create_connection((HOST, PORT), timeout=5)
+        self.sock.setblocking(False)
+        self.recv_buf = b""
+        self.registered = False
+
+    def fileno(self) -> int:
+        return self.sock.fileno()
+
+    def send_line(self, line: str) -> None:
+        dlog(f"-> {line}")
+        self.sock.sendall((line + "\r\n").encode("utf-8"))
+
+    def register(self) -> None:
+        self.send_line(f"NICK {NICK}")
+        self.send_line(f"USER {NICK} 0 * :roost-permbot")
+
+    def read_lines(self):
+        """Drain socket non-blockingly. Yields decoded lines."""
+        while True:
+            try:
+                chunk = self.sock.recv(4096)
+            except (BlockingIOError, InterruptedError):
+                return
+            except OSError as e:
+                dlog(f"recv OSError: {e}")
+                raise
+            if not chunk:
+                dlog("EOF on IRC socket")
+                raise ConnectionResetError("IRC closed")
+            self.recv_buf += chunk
+            while b"\r\n" in self.recv_buf:
+                line_b, self.recv_buf = self.recv_buf.split(b"\r\n", 1)
+                yield line_b.decode("utf-8", errors="replace")
+
+
+def parse_privmsg(line: str):
+    """Return (sender_nick, target, body) for a PRIVMSG line, or None."""
+    if not line.startswith(":"):
+        return None
+    try:
+        src, cmd, tgt, rest = line[1:].split(" ", 3)
+    except ValueError:
+        return None
+    if cmd != "PRIVMSG":
+        return None
+    sender_nick = src.split("!", 1)[0]
+    body = rest[1:] if rest.startswith(":") else rest
+    return sender_nick, tgt, body
+
+
+def main() -> None:
+    dlog(f"starting daemon nick={NICK} sock={SOCK_PATH} target={TARGET} worker={WORKER}")
+
+    if os.path.exists(SOCK_PATH):
+        os.unlink(SOCK_PATH)
+    listen_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listen_sock.bind(SOCK_PATH)
+    listen_sock.setblocking(False)
+    listen_sock.listen(8)
+    os.chmod(SOCK_PATH, 0o600)
+
+    irc = IRC()
+    irc.register()
+
+    sel = selectors.DefaultSelector()
+    sel.register(irc.sock, selectors.EVENT_READ, data=("irc", None))
+    sel.register(listen_sock, selectors.EVENT_READ, data=("listen", None))
+
+    # Queue of pending requests (client_sock, request_dict, queued_at)
+    queue: "deque[tuple[socket.socket, dict, float]]" = deque()
+    # Currently in flight: (client_sock, request_dict, deadline) or None
+    in_flight = None
+    # Map client fd -> partial recv buffer
+    client_bufs: "dict[int, bytes]" = {}
+
+    running = True
+
+    def shutdown(signum, _frame):
+        nonlocal running
+        dlog(f"received signal {signum}, shutting down")
+        running = False
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+
+    def respond(client_sock: socket.socket, payload: dict) -> None:
+        try:
+            client_sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        except OSError as e:
+            dlog(f"client respond failed: {e}")
+        try:
+            sel.unregister(client_sock)
+        except (KeyError, ValueError):
+            pass
+        client_bufs.pop(client_sock.fileno(), None)
+        try:
+            client_sock.close()
+        except OSError:
+            pass
+
+    def maybe_dispatch_next() -> None:
+        nonlocal in_flight
+        if in_flight is not None or not queue:
+            return
+        client_sock, req, _queued_at = queue.popleft()
+        summary = req.get("summary", "(no summary)")
+        timeout = float(req.get("timeout", 30))
+        question = f"[{WORKER}] permission needed: {summary} — reply y/n"
+        irc.send_line(f"PRIVMSG {TARGET} :{question}")
+        in_flight = (client_sock, req, time.time() + timeout)
+        dlog(f"in-flight to {TARGET}: {summary[:80]} (timeout {timeout}s)")
+
+    while running:
+        # Compute select timeout: short enough to enforce in-flight deadlines.
+        timeout = 1.0
+        if in_flight is not None:
+            remaining = in_flight[2] - time.time()
+            timeout = max(0.05, min(timeout, remaining))
+
+        events = sel.select(timeout=timeout)
+        for key, _mask in events:
+            kind, _ = key.data
+
+            if kind == "listen":
+                try:
+                    client_sock, _ = listen_sock.accept()
+                except OSError:
+                    continue
+                client_sock.setblocking(False)
+                client_bufs[client_sock.fileno()] = b""
+                sel.register(client_sock, selectors.EVENT_READ, data=("client", client_sock))
+                dlog(f"client accepted fd={client_sock.fileno()}")
+
+            elif kind == "client":
+                client_sock = key.data[1]
+                fd = client_sock.fileno()
+                try:
+                    chunk = client_sock.recv(4096)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                except OSError as e:
+                    dlog(f"client recv error fd={fd}: {e}")
+                    respond(client_sock, {"error": str(e)})
+                    continue
+                if not chunk:
+                    # Client disconnected before request.
+                    dlog(f"client EOF fd={fd}")
+                    try:
+                        sel.unregister(client_sock)
+                    except (KeyError, ValueError):
+                        pass
+                    client_bufs.pop(fd, None)
+                    try:
+                        client_sock.close()
+                    except OSError:
+                        pass
+                    continue
+                client_bufs[fd] += chunk
+                if b"\n" in client_bufs[fd]:
+                    line, _, rest = client_bufs[fd].partition(b"\n")
+                    client_bufs[fd] = rest
+                    try:
+                        req = json.loads(line.decode("utf-8"))
+                    except json.JSONDecodeError as e:
+                        respond(client_sock, {"error": f"bad request json: {e}"})
+                        continue
+                    queue.append((client_sock, req, time.time()))
+                    dlog(f"queued request fd={fd}: {req}")
+                    maybe_dispatch_next()
+
+            elif kind == "irc":
+                try:
+                    for line in irc.read_lines():
+                        if line.startswith("PING "):
+                            irc.send_line("PONG " + line[5:])
+                            continue
+                        parts = line.split(" ", 3)
+                        if len(parts) >= 2 and parts[1] == "001":
+                            irc.registered = True
+                            dlog("registered with IRC")
+                            continue
+                        if len(parts) >= 2 and parts[1] in ("432", "433", "436"):
+                            dlog(f"FATAL nick reg failure: {line}")
+                            running = False
+                            break
+                        msg = parse_privmsg(line)
+                        if not msg:
+                            continue
+                        sender, tgt, body = msg
+                        if sender != TARGET or tgt != NICK:
+                            continue
+                        body = body.strip()
+                        dlog(f"reply from {sender}: {body!r}")
+                        if in_flight is not None:
+                            client_sock, _req, _deadline = in_flight
+                            respond(client_sock, {"reply": body})
+                            in_flight = None
+                            maybe_dispatch_next()
+                        else:
+                            # Unsolicited DM — log and ignore (could echo a hint).
+                            dlog(f"unsolicited DM from {sender}: {body!r}")
+                except (ConnectionResetError, OSError) as e:
+                    dlog(f"IRC connection lost: {e}")
+                    running = False
+                    break
+
+        # Enforce in-flight timeout.
+        if in_flight is not None and time.time() >= in_flight[2]:
+            client_sock, _req, _deadline = in_flight
+            dlog("in-flight timed out")
+            respond(client_sock, {"timeout": True})
+            in_flight = None
+            maybe_dispatch_next()
+
+    # Shutdown.
+    dlog("shutdown: closing sockets")
+    if in_flight is not None:
+        respond(in_flight[0], {"error": "daemon shutting down"})
+    for client_sock, _req, _t in queue:
+        respond(client_sock, {"error": "daemon shutting down"})
+    try:
+        irc.send_line("QUIT :daemon shutdown")
+    except OSError:
+        pass
+    try:
+        irc.sock.close()
+    except OSError:
+        pass
+    try:
+        listen_sock.close()
+    except OSError:
+        pass
+    try:
+        os.unlink(SOCK_PATH)
+    except OSError:
+        pass
+    dlog("done")
+
+
+if __name__ == "__main__":
+    main()
