@@ -31,7 +31,8 @@ prose, not a tool surface.
 
 ```bash
 roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
-                   [--perm-irc [--perm-target NICK]]
+                   [--cwd PATH] [-p PROMPT_FILE] \
+                   [--perm-irc --perm-target NICK]
 roost shutdown <nick>
 roost list
 roost attach <nick>
@@ -44,6 +45,7 @@ Defaults:
 - channels: `#roost`
 - model: `opus` (Opus 4.7 — required for auto mode)
 - permission mode: `auto`
+- cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp-config: `<roost>/mcp-config-irc.json` (resolved from script dir)
 
@@ -58,49 +60,12 @@ Anything passed after `--` is forwarded verbatim to claude — use this
 for `--chrome`, `--system-prompt`, `--thinking-display`, or any other
 claude flag the wrapper doesn't otherwise know about.
 
-## Worker vs. operations agents
-
-Two distinct shapes:
-
-**Code workers** — agents going into a code repository (carrot, taro,
-teak-ios, teak-android, teak-js-private, scratcher, etc.) to write
-code. They want Claude Code's *default* system prompt — the CLI-tuned
-persona that knows about Edit/Write/Bash/etc. as code-development
-operations. No `--chrome` (workers operate via `gh`, `git`, file
-edits — not the browser).
-
-```bash
-roost spawn worker-718-A -c '#issue-718'
-roost spawn reviewer-718 -c '#issue-718'
-```
-
-**Operations agents** — productops, finance/bookkeeper, salesops,
-marketingops, chiefofstaff, opsmanager, tooldev, analytics, and
-their per-project variants. They live in `operations/` and frequently
-need the browser (Folk, Linear web, QBO, Google Workspace, Figma,
-Slack). They prefer a blank system prompt — Claude without the
-CLI-coding-assistant persona, more conversational, ready to drive
-GUIs and read documents.
-
-```bash
-roost spawn productops-simplifyrewards \\
-  -c '#leads-simplifyrewards,#issue-718' \\
-  -- --chrome --system-prompt ' '
-
-roost spawn finance \\
-  -c '#staff' \\
-  -- --chrome --system-prompt ' '
-```
-
-When in doubt: are they writing code in a code repo? Worker shape.
-Otherwise, operations shape.
-
 ## IRC permission oversight (--perm-irc)
 
 `--perm-irc` starts a side daemon (`bin/roost-permbot`) alongside the
 worker. The daemon holds a stable IRC nick `permbot-{worker}` and
 serializes the worker's PreToolUse permission prompts as DMs to
-`--perm-target` (default `alex2`). The operator replies `y` / `n` /
+`--perm-target` (required). The operator replies `y` / `n` /
 `yes` / `no` / `allow` / `deny` (case-insensitive); anything else or a
 30s timeout falls through to the regular terminal prompt as a safety
 net. `roost shutdown` reaps the daemon and its socket/pidfile.
@@ -111,15 +76,16 @@ worker would hit the terminal permission prompt for every tool call —
 unusable headlessly. With `--perm-irc --perm-target <orchestrator>`,
 the prompts come to the orchestrator over IRC and the orchestrator
 acts as the gate. Same pattern works for a human at any roost-attached
-client (`alex2` from weechat, etc.).
+IRC client.
 
 ```bash
 # Opus orchestrator gates a sonnet worker's tool calls:
-roost spawn worker-1987-A -c '#pr-1987' -m sonnet \
-  --perm-irc --perm-target productops-simplifyrewards
+roost spawn worker-123-A -c '#pr-123' -m sonnet \
+  --perm-irc --perm-target orchestrator
 
-# Human (alex2) gates a haiku worker:
-roost spawn scratch-h -c '#sandbox' -m haiku --perm-irc
+# Human operator gates a haiku worker:
+roost spawn scratch-h -c '#sandbox' -m haiku \
+  --perm-irc --perm-target mynick
 ```
 
 Worker prerequisite: the worker's cwd must have a `.claude/settings.json`
@@ -167,15 +133,13 @@ Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
 
 ## Naming conventions
 
-- **Standing roles** (`productops`, `cos`, `finance`, `sales`,
-  `opsmanager`, `tooldev`) — stable nicks. Live in `#staff`. One
-  instance per role.
-- **Per-PR workers** — `worker-<PR>-<rev>`, e.g. `worker-1987-A`.
-  Ephemeral; join `#pr-<PR>` on assignment, leave on completion.
-- **Per-PR reviewers** — `reviewer-<PR>`, e.g. `reviewer-1987`.
-  Join `#pr-<PR>` on CI green, leave on conclude.
-- **Watchers / observers** — descriptive (`dispatch-watcher`,
-  `metrics-A`).
+- **Standing agents** — stable nicks for long-lived roles. One instance
+  per role.
+- **Per-PR workers** — `worker-<PR>-<rev>`, e.g. `worker-123-A`.
+  Ephemeral; join their channel on assignment, leave on completion.
+- **Per-PR reviewers** — `reviewer-<PR>`, e.g. `reviewer-123`.
+  Join on CI green, leave on conclude.
+- **Watchers / observers** — descriptive (`ci-watcher`, `metrics-A`).
 - **Permbot side daemons** — `permbot-{worker}`, automatically named
   by `--perm-irc` (don't pick a worker nick that would collide with an
   existing `permbot-*` nick).
@@ -196,7 +160,7 @@ with `roost status` (which lists running tmux sessions).
 
 ## Lifecycle = channel membership
 
-- Worker pickup = `roost spawn worker-NNN-X -c '#pr-NNN'`.
+- Worker pickup = `roost spawn worker-NNN-X -c '#pr-NNN' --cwd <worktree>`.
 - Hard restart = `roost shutdown worker-NNN-X`, then spawn fresh.
 - Assignment end = shutdown when the work is merged.
 - A worker leaving `#pr-NNN` (via shutdown or channel_leave) ends
@@ -207,22 +171,21 @@ with `roost status` (which lists running tmux sessions).
 **Pick up a PR:**
 
 ```bash
-roost spawn worker-1987-A -c '#pr-1987'
-roost attach worker-1987-A   # one-time prompt to bootstrap, then detach
+roost spawn worker-123-A -c '#pr-123' --cwd ~/Dev/myproject
+roost attach worker-123-A   # one-time prompt to bootstrap, then detach
 ```
 
 **Bring up a watcher on a noisy channel:**
 
 ```bash
-roost spawn dispatch-watcher -c '#dispatch-feed'
+roost spawn ci-watcher -c '#ci-feed'
 ```
 
-**Coordinate via a shared channel without ProductOps in the loop:**
+**Coordinate via a shared channel:**
 
 ```bash
-roost spawn reviewer-1987 -c '#pr-1987'
-# worker-1987-A and reviewer-1987 now both on #pr-1987, can talk
-# directly without a relay
+roost spawn reviewer-123 -c '#pr-123' --cwd ~/Dev/myproject
+# worker-123-A and reviewer-123 now both on #pr-123
 ```
 
 **See what's running:**
@@ -235,13 +198,13 @@ roost status
 **Peek at a session's TUI without attaching:**
 
 ```bash
-roost tail worker-1987-A -n 50
+roost tail worker-123-A -n 50
 ```
 
 **Tear down a session:**
 
 ```bash
-roost shutdown worker-1987-A
+roost shutdown worker-123-A
 ```
 
 The bun MCP subprocess and the IRC connection close as part of the
