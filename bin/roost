@@ -238,9 +238,24 @@ cmd_spawn() {
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}")
   [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}")
+
+  # Build the inner zsh command. Bash expands its own ${vars} here, then
+  # we append the prompt placeholder as a single-quoted literal so $(...)
+  # is evaluated by the inner zsh — not bash and not the tmux shell.
+  # Embedding multi-line file contents directly via printf %q produces
+  # $'...' ANSI-C quoting, which doesn't survive the shell-layer chain
+  # (bash → tmux shell → zsh -c). Reading the file inside the inner zsh
+  # via $(< $ROOST_PROMPT_FILE) sidesteps that entirely. The leading `--`
+  # is required so the prompt isn't absorbed by --dangerously-load-development-channels
+  # (variadic flag — eats all subsequent non-flag args).
+  local inner_cmd="claude --model ${model} --permission-mode auto --mcp-config ${mcp_config} --dangerously-load-development-channels server:roost-irc${extra_str}"
+  if [ -n "${prompt_file}" ]; then
+    inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
+    tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
+  fi
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
-    "exec zsh -l -c \"claude --model ${model} --permission-mode auto --mcp-config ${mcp_config} --dangerously-load-development-channels server:roost-irc${extra_str}\""
+    "exec zsh -l -c $(printf '%q' "${inner_cmd}")"
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
@@ -258,18 +273,6 @@ cmd_spawn() {
   if [ "${dismissed}" -eq 0 ]; then
     echo "  warning: dev-channels prompt did not appear within 30s; session may need manual attention" >&2
     echo "  attach with: roost attach ${nick}" >&2
-  fi
-
-  sleep 4
-
-  if [ -n "${prompt_file}" ]; then
-    # Paste the file's contents into the TUI input box, then submit.
-    local buf="roost-prompt-${nick}-$$"
-    tmux load-buffer -b "${buf}" "${prompt_file}"
-    tmux paste-buffer -t "${session_name}" -b "${buf}" -p
-    tmux send-keys -t "${session_name}" Enter
-    tmux delete-buffer -b "${buf}" 2>/dev/null
-    echo "  pasted prompt from ${prompt_file}"
   fi
 
   echo "  ready. attach with: roost attach ${nick}"
