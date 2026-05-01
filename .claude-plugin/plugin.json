@@ -5,5 +5,6 @@
   "author": {
     "name": "Alex Scarborough"
   },
-  "license": "MIT"
+  "repository": "https://github.com/AlexSc/roost",
+  "license": "Apache-2.0"
 }

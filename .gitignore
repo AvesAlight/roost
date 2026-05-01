@@ -8,3 +8,6 @@ var/
 
 # Test artifacts
 tests/logs/
+
+# Local project settings (user-specific)
+.claude/settings.local.json

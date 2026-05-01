@@ -28,9 +28,10 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 
 - macOS or Linux
 - [bun](https://bun.sh) ≥ 1.0
-- [ergo](https://ergo.chat) — release tarball already extracted at
-  `var/ergo/ergo` (v2.18.0). Re-fetch from
-  https://github.com/ergochat/ergo/releases if you need to upgrade.
+- An IRCv3 server on `127.0.0.1:6667`. [ergo](https://ergo.chat) is
+  recommended — download a release from
+  https://github.com/ergochat/ergo/releases and use `etc/ergo.yaml`
+  as your starting config.
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
@@ -52,14 +53,15 @@ cd "$(roost root)"
 bun install
 ```
 
-### 2. Start ergo
+### 2. Start your IRC server
 
-Run from `var/ergo` so relative paths in the config resolve correctly.
+Roost needs an IRCv3 server on `127.0.0.1:6667`. With ergo, run it
+from a working directory of your choice — relative paths in the config
+(`logs/`, `ircd.db`, etc.) resolve from there:
 
 ```bash
-cd "$(roost root)/var/ergo"
-nohup ./ergo run --conf "$(roost root)/etc/ergo.yaml" \
-  > /tmp/ergo.out 2>&1 &
+mkdir -p ~/roost-ircd && cd ~/roost-ircd
+nohup ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
 ```
 
 Verify it's up:
@@ -67,10 +69,6 @@ Verify it's up:
 ```bash
 lsof -nP -iTCP:6667 -sTCP:LISTEN
 ```
-
-Server-side audit log at `var/ergo/logs/audit.log` captures every
-PRIVMSG/NOTICE line — useful for "what did the agents actually say"
-forensics.
 
 To stop:
 
@@ -109,11 +107,18 @@ To do it by hand without the wrapper:
 ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
   claude --model opus \
     --permission-mode auto \
-    --dangerously-load-development-channels server:roost-irc
+    --dangerously-load-development-channels server:plugin:roost:roost-irc
 ```
 
-(The MCP auto-loads if the plugin is installed. Pass `--mcp-config
-$(roost root)/.mcp.json` if using the MCP without the plugin.)
+Without the plugin, pass `--mcp-config` and use `server:roost-irc`:
+
+```bash
+ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
+  claude --model opus \
+    --permission-mode auto \
+    --mcp-config "$(roost root)/.mcp.json" \
+    --dangerously-load-development-channels server:roost-irc
+```
 
 On first launch you'll get a `1. I am using this for local development
 / 2. Exit` prompt — hit Enter to accept.
@@ -224,8 +229,7 @@ roost/
 │   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
 │   ├── roost-permbot       IRC permission oversight daemon.
 │   └── irc-permission-prompt  PreToolUse hook (thin socket client).
-├── etc/ergo.yaml           Localhost-only IRC server config.
-├── var/ergo/               Ergo binary, datastore, MOTD, logs (gitignored).
+├── etc/ergo.yaml           Sample ergo IRC server config.
 ├── extras/weechat/         Optional weechat notification script.
 ├── ARCHITECTURE.md         Channel topology, roles, routing, lifecycle.
 ├── docs/LEARNINGS.md       Load-bearing assumptions, findings, hardening passes.

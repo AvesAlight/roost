@@ -106,8 +106,8 @@ Ergo must be running on `127.0.0.1:6667`. `roost status` checks;
 `roost spawn` aborts with a hint if it's down. Start with:
 
 ```bash
-cd "$(roost root)/var/ergo"
-nohup ./ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
+mkdir -p ~/roost-ircd && cd ~/roost-ircd
+nohup ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
 ```
 
 Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
