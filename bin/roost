@@ -249,8 +249,12 @@ cmd_spawn() {
   # is required so the prompt isn't absorbed by --dangerously-load-development-channels
   # (variadic flag — eats all subsequent non-flag args).
   local mcp_flag=""
-  [ -n "${mcp_config}" ] && mcp_flag=" --mcp-config ${mcp_config}"
-  local inner_cmd="claude --model ${model} --permission-mode auto${mcp_flag} --dangerously-load-development-channels server:roost-irc${extra_str}"
+  local channel_server="server:plugin:roost:roost-irc"
+  if [ -n "${mcp_config}" ]; then
+    mcp_flag=" --mcp-config ${mcp_config}"
+    channel_server="server:roost-irc"
+  fi
+  local inner_cmd="claude --model ${model} --permission-mode auto${mcp_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
