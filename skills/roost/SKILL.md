@@ -5,11 +5,10 @@ description: Use this skill when the user asks to spawn, launch, manage, attach 
 
 # roost — manage Claude sessions on the IRC roost
 
-The `bin/roost` wrapper at `/Users/alex/Dev/GoCarrot/roost/bin/roost`
-brings up, observes, and tears down Claude Code sessions that join the
-local roost IRC server. Each session is a tmux pane running `claude`
-with the `roost-irc` MCP loaded, joined to the channels you specify.
-The wrapper hides the env-var dance, mcp-config path, dev-channels
+The `roost` command brings up, observes, and tears down Claude Code
+sessions that join the local roost IRC server. Each session is a tmux
+pane running `claude` with the `roost-irc` MCP loaded, joined to the
+channels you specify. The wrapper hides the env-var dance, dev-channels
 prompt dismissal, and tmux session naming convention.
 
 ## When to use
@@ -23,9 +22,9 @@ prompt dismissal, and tmux session naming convention.
   "list what's running."
 
 If the user is asking about roost the system (architecture, channel
-topology, what roost *is*), point them at
-`/Users/alex/Dev/GoCarrot/roost/ARCHITECTURE.md` instead — that's
-prose, not a tool surface.
+topology, what roost *is*), point them at `ARCHITECTURE.md` in the
+roost plugin root (`roost root` prints the path) — that's prose, not
+a tool surface.
 
 ## Command surface
 
@@ -47,7 +46,7 @@ Defaults:
 - permission mode: `auto`
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
-- mcp-config: `<roost>/mcp-config-irc.json` (resolved from script dir)
+- mcp server: auto-loaded via plugin (override with `--mcp-config`)
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
@@ -88,32 +87,15 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
   --perm-irc --perm-target mynick
 ```
 
-Worker prerequisite: the worker's cwd must have a `.claude/settings.json`
-(or `settings.local.json`) that wires `PreToolUse` to
-`bin/irc-permission-prompt`. The hook degrades gracefully when no
-daemon is running (returns `ask`, terminal prompt fires as normal), so
-it's safe to install at the project level even for sessions that don't
-use `--perm-irc`.
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "/Users/alex/Dev/GoCarrot/roost/bin/irc-permission-prompt",
-        "timeout": 45
-      }]
-    }]
-  }
-}
-```
+Worker prerequisite: the worker must have the roost plugin active.
+The plugin's `hooks/hooks.json` wires `PreToolUse` to
+`irc-permission-prompt` automatically. The hook degrades gracefully
+when no daemon is running (returns `ask`, terminal prompt fires as
+normal), so it's safe to have wired at all times.
 
 The hook auto-passes any `mcp__roost-irc__*` tool through without
 asking — otherwise the worker couldn't talk on IRC, including replying
-to its own approver. Reference sandbox at
-`/Users/alex/Dev/GoCarrot/roost-permtest/` is preconfigured for testing.
+to its own approver.
 
 Daemon logs land at `/tmp/roost-permbot-{worker}.log` if anything looks
 off (registration failures, IRC disconnects, etc.).
@@ -124,9 +106,8 @@ Ergo must be running on `127.0.0.1:6667`. `roost status` checks;
 `roost spawn` aborts with a hint if it's down. Start with:
 
 ```bash
-cd /Users/alex/Dev/GoCarrot/roost/var/ergo
-nohup ./ergo run --conf /Users/alex/Dev/GoCarrot/roost/etc/ergo.yaml \
-  > /tmp/ergo.out 2>&1 &
+cd "$(roost root)/var/ergo"
+nohup ./ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
 ```
 
 Stop with `pkill -f 'ergo run.*roost/etc/ergo.yaml'`.
@@ -232,9 +213,8 @@ for the most recent JSONL log; common causes:
 
 ## See also
 
-- `/Users/alex/Dev/GoCarrot/roost/README.md` — how to use roost
-  start to finish.
-- `/Users/alex/Dev/GoCarrot/roost/ARCHITECTURE.md` — channel
-  topology, roles, routing, lifecycle.
-- `/Users/alex/Dev/GoCarrot/roost/docs/LEARNINGS.md` — empirical
-  test log, findings, hardening passes.
+Use `roost root` to get the plugin directory, then read:
+
+- `README.md` — how to use roost start to finish.
+- `ARCHITECTURE.md` — channel topology, roles, routing, lifecycle.
+- `docs/LEARNINGS.md` — empirical test log, findings, hardening passes.

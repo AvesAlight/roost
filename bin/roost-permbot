@@ -29,7 +29,7 @@ operator can only meaningfully answer one at a time anyway.)
 Configuration (env, all required unless noted):
   ROOST_PERM_NICK       Daemon's IRC nick (e.g., `permbot-permtest`)
   ROOST_PERM_SOCK       Unix socket path (e.g., `/tmp/roost-permbot-permtest.sock`)
-  ROOST_PERM_TARGET     Operator's nick (default: alex2)
+  ROOST_PERM_TARGET     Operator's nick (required)
   ROOST_PERM_HOST       IRC server (default: 127.0.0.1)
   ROOST_PERM_PORT       IRC port   (default: 6667)
   ROOST_PERM_WORKER     Worker nick to display in prompts (default: same as NICK without permbot- prefix)
@@ -46,7 +46,7 @@ from collections import deque
 
 NICK = os.environ.get("ROOST_PERM_NICK") or sys.exit("ROOST_PERM_NICK required")
 SOCK_PATH = os.environ.get("ROOST_PERM_SOCK") or sys.exit("ROOST_PERM_SOCK required")
-TARGET = os.environ.get("ROOST_PERM_TARGET", "alex2")
+TARGET = os.environ.get("ROOST_PERM_TARGET") or sys.exit("ROOST_PERM_TARGET required")
 HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
 WORKER = os.environ.get("ROOST_PERM_WORKER") or NICK.removeprefix("permbot-")

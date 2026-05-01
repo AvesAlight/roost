@@ -16,7 +16,6 @@
 set -uo pipefail
 
 ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-DEFAULT_MCP_CONFIG="${ROOST_DIR}/mcp-config-irc.json"
 IRC_PORT=6667
 SESSION_PREFIX="roost-"
 
@@ -32,6 +31,7 @@ Commands:
   attach <nick>            tmux attach to that nick's session.
   tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
   status                   ergo state + roost session count.
+  root                     Print the roost plugin root directory.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -53,8 +53,8 @@ spawn options:
                              path so RVM/bundler/nvm resolve correctly
                              inside the login shell.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
-  --mcp-config PATH          Override mcp-config path.
-                             Default: ${DEFAULT_MCP_CONFIG}
+  --mcp-config PATH          Explicit mcp-config path. Not needed when the
+                             roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
                              after the session boots. Useful for handoff
                              prompts or any spawn that needs an initial
@@ -153,7 +153,7 @@ cmd_spawn() {
   local channels="#roost"
   local model="opus"
   local session_name=""
-  local mcp_config="${DEFAULT_MCP_CONFIG}"
+  local mcp_config=""
   local prompt_file=""
   local cwd="${PWD}"
   local perm_irc=0
@@ -248,7 +248,9 @@ cmd_spawn() {
   # via $(< $ROOST_PROMPT_FILE) sidesteps that entirely. The leading `--`
   # is required so the prompt isn't absorbed by --dangerously-load-development-channels
   # (variadic flag — eats all subsequent non-flag args).
-  local inner_cmd="claude --model ${model} --permission-mode auto --mcp-config ${mcp_config} --dangerously-load-development-channels server:roost-irc${extra_str}"
+  local mcp_flag=""
+  [ -n "${mcp_config}" ] && mcp_flag=" --mcp-config ${mcp_config}"
+  local inner_cmd="claude --model ${model} --permission-mode auto${mcp_flag} --dangerously-load-development-channels server:roost-irc${extra_str}"
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
@@ -376,6 +378,7 @@ case "${cmd}" in
   attach)   cmd_attach "$@" ;;
   tail)     cmd_tail "$@" ;;
   status)   cmd_status "$@" ;;
+  root)     echo "${ROOST_DIR}" ;;
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
 esac

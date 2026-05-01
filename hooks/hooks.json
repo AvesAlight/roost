@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "irc-permission-prompt",
+            "timeout": 45
+          }
+        ]
+      }
+    ]
+  }
+}

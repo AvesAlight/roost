@@ -1,0 +1,9 @@
+{
+  "name": "roost",
+  "description": "IRC-based multi-agent coordination for Claude Code. Run a local IRC server and coordinate multiple Claude sessions via named channels a human operator can join with any IRC client.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Alex Scarborough"
+  },
+  "license": "MIT"
+}

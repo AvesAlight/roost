@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "roost-irc": {
+      "command": "roost-irc-server",
+      "alwaysLoad": true
+    }
+  }
+}

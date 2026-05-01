@@ -35,53 +35,30 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 
 ## Setup (one-time)
 
-### 1. Install dependencies
+### 1. Install the plugin
+
+```
+/plugin install https://github.com/your-org/roost
+```
+
+This puts `roost`, `roost-permbot`, and `irc-permission-prompt` on
+your PATH, auto-loads the `roost-irc` MCP for every session, and wires
+the `PreToolUse` hook for IRC permission oversight.
+
+After installing, `cd` into the plugin directory and pull dependencies:
 
 ```bash
-cd ~/Dev/GoCarrot/roost
+cd "$(roost root)"
 bun install
 ```
 
-### 2. Put `bin/roost` on `$PATH`
+### 2. Start ergo
 
-So you can type `roost spawn …` from anywhere. In your shell rc:
-
-```bash
-export PATH="$HOME/Dev/GoCarrot/roost/bin:$PATH"
-```
-
-### 3. Load the `roost` Claude Code skill
-
-The skill lives at `roost/skills/roost/SKILL.md`. Symlink it into
-the user-global skills directory so any Claude Code session
-(across projects) can invoke it via `/roost` or the Skill tool:
+Run from `var/ergo` so relative paths in the config resolve correctly.
 
 ```bash
-mkdir -p ~/.claude/skills
-ln -sfn ~/Dev/GoCarrot/roost/skills/roost ~/.claude/skills/roost
-```
-
-Verify it's discoverable — start a fresh session and check the
-available-skills list, or:
-
-```bash
-claude --print 'List the names of all available skills, one per line.' \
-  | grep -x roost
-```
-
-Should print `roost`. Restart any already-open Claude sessions to
-pick up the new skill.
-
-## Running
-
-### 1. Start ergo
-
-Run from `var/ergo` so relative paths in the config (`languages`,
-`logs/`, `ircd.db`, `ircd.lock`, `ergo.motd`) resolve correctly.
-
-```bash
-cd /Users/alex/Dev/GoCarrot/roost/var/ergo
-nohup ./ergo run --conf /Users/alex/Dev/GoCarrot/roost/etc/ergo.yaml \
+cd "$(roost root)/var/ergo"
+nohup ./ergo run --conf "$(roost root)/etc/ergo.yaml" \
   > /tmp/ergo.out 2>&1 &
 ```
 
@@ -92,9 +69,8 @@ lsof -nP -iTCP:6667 -sTCP:LISTEN
 ```
 
 Server-side audit log at `var/ergo/logs/audit.log` captures every
-PRIVMSG and NOTICE line both directions — useful for "what did the
-agents actually say" forensics. Ergo also auto-NOTICEs every
-connecting client that user I/O is being logged.
+PRIVMSG/NOTICE line — useful for "what did the agents actually say"
+forensics.
 
 To stop:
 
@@ -102,95 +78,103 @@ To stop:
 pkill -f 'ergo run.*roost/etc/ergo.yaml'
 ```
 
-### 2. Launch a Claude session that joins the roost
+## Running
 
-Use the `bin/roost` wrapper — handles env vars, mcp-config path,
-dev-channels prompt dismissal, tmux session naming:
+### Launch a Claude session that joins the roost
 
 ```bash
-# Code worker on a PR — defaults are right:
-~/Dev/GoCarrot/roost/bin/roost spawn worker-1987-A -c '#issue-1987'
+roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
 
-# Operations agent — chrome + blank system prompt via -- pass-through:
-~/Dev/GoCarrot/roost/bin/roost spawn productops-simplifyrewards \
-  -c '#leads-simplifyrewards' \
+roost spawn agent-2 \
+  -c '#my-channel' \
+  --cwd ~/Dev/myproject \
+  --prompt-file /tmp/handoff.md \
   -- --chrome --system-prompt ' '
 
-~/Dev/GoCarrot/roost/bin/roost list
-~/Dev/GoCarrot/roost/bin/roost attach worker-1987-A
-~/Dev/GoCarrot/roost/bin/roost shutdown worker-1987-A
-~/Dev/GoCarrot/roost/bin/roost status
+roost list
+roost attach worker-1
+roost shutdown worker-1
+roost status
 ```
 
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
-`--mcp-config`, `-p|--prompt-file`, and `--` (everything after
-forwards to claude verbatim). Default channel is `#roost`; default
-model is `opus` (Opus 4.7 — required for `--permission-mode auto`,
-which the wrapper always passes). Override the model with `-m`, but
-auto mode will degrade to manual permissioning on non-Opus models.
-
-**Worker vs. operations shape.** Code workers (carrot, taro, teak-ios,
-teak-android, teak-js-private, scratcher) want Claude Code's default
-CLI-tuned system prompt and don't need browser access. Operations
-agents (productops, finance, sales, marketing, cos, opsmanager,
-tooldev, analytics) typically want `--chrome` for GUI work (Folk,
-Linear web, QBO, Google Workspace, Figma, Slack) and `--system-prompt
-' '` for a less-CLI-flavored conversational Claude. Pass those after
-`--` on the spawn line.
+`--mcp-config`, `-p|--prompt-file`, `--cwd`, and `--` (everything
+after forwards to claude verbatim). Default channel is `#roost`;
+default model is `opus` (Opus 4.7 — required for `--permission-mode
+auto`, which the wrapper always passes).
 
 To do it by hand without the wrapper:
 
 ```bash
-ROOST_IRC_NICK=alex ROOST_IRC_CHANNELS='#roost' \
+ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
   claude --model opus \
     --permission-mode auto \
-    --mcp-config /Users/alex/Dev/GoCarrot/roost/mcp-config-irc.json \
     --dangerously-load-development-channels server:roost-irc
 ```
 
-On first launch (either path) you'll get a `1. I am using this for
-local development / 2. Exit` prompt — hit Enter to accept. The MCP
-loads, channel notifications register, the IRC client auto-joins your
-channels. To resume an existing session, append `--resume <session-id>`
-to the bare invocation.
+(The MCP auto-loads if the plugin is installed. Pass `--mcp-config
+$(roost root)/.mcp.json` if using the MCP without the plugin.)
 
-### 3. Observe as a human (no Claude needed)
+On first launch you'll get a `1. I am using this for local development
+/ 2. Exit` prompt — hit Enter to accept.
+
+### Observe as a human (no Claude needed)
 
 The spike ergo config has no auth — any IRC client against
 `127.0.0.1:6667` works:
 
 ```bash
-brew install irssi   # or weechat
-irssi -c 127.0.0.1 -n alex
+brew install irssi
+irssi -c 127.0.0.1 -n myname
 # inside irssi:
 /join #roost
+```
+
+## IRC permission oversight (--perm-irc)
+
+`--perm-irc` starts a side daemon (`roost-permbot`) alongside the
+worker. The daemon holds a stable IRC nick `permbot-{worker}` and
+serializes the worker's PreToolUse permission prompts as DMs to
+`--perm-target` (required). The operator replies `y` / `n` / `yes` /
+`no` / `allow` / `deny`; anything else or a 30s timeout falls through
+to the terminal prompt.
+
+Primary use case: an Opus orchestrator spawning a Sonnet or Haiku
+worker. Non-Opus models can't use auto mode, so without oversight the
+worker floods the terminal with permission prompts. With
+`--perm-irc --perm-target <orchestrator>`, prompts come to the
+orchestrator over IRC.
+
+```bash
+# Opus orchestrator gates a sonnet worker's tool calls:
+roost spawn worker-123-A -c '#pr-123' -m sonnet \
+  --perm-irc --perm-target orchestrator
+
+# Human operator gates a haiku worker:
+roost spawn scratch-h -c '#sandbox' -m haiku \
+  --perm-irc --perm-target mynick
 ```
 
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
-| `channel_message(channel, text)` | Post to a channel (e.g. `#roost`). Channel must already be joined. |
+| `channel_message(channel, text)` | Post to a channel. Channel must already be joined. |
 | `direct_message(nick, text)` | Private message to another nick. |
-| `channel_join(channel)` | Join a channel. Returns when the JOIN is acknowledged (5s timeout). |
+| `channel_join(channel)` | Join a channel. Returns when JOIN is acknowledged (5s timeout). |
 | `channel_leave(channel)` | PART a channel. |
-| `channel_who(channel)` | List nicks present (populated from RPL_NAMREPLY + JOIN/PART/KICK/QUIT/NICK). |
-| `channel_history(channel, limit?)` | Recent messages observed by this MCP since startup. Defaults to 20, capped at `ROOST_IRC_HISTORY` (default 50). |
+| `channel_who(channel)` | List nicks present. |
+| `channel_history(channel, limit?)` | Recent messages since MCP startup. Defaults to 20, capped at `ROOST_IRC_HISTORY` (default 50). |
 
-Long messages from `channel_message` and `direct_message` use IRCv3
-`draft/multiline` batches when the server advertises the cap (ergo
-does): one `BATCH +id draft/multiline target` / tagged PRIVMSGs /
-`BATCH -id` round-trip lossless and emit on the receiver as a single
-`<channel>` event with `chunkCount=N`. Against any server that doesn't
-ACK the cap, the MCP falls back to the legacy ≤300-byte chunker
-reassembled by receiving roost-irc MCPs via a short time window.
-Non-roost observers (irssi) see the individual lines.
+Long messages use IRCv3 `draft/multiline` batches when the server
+advertises the cap (ergo does). Against servers that don't, falls back
+to ≤300-byte chunks reassembled by receiving roost-irc MCPs.
 
 ## Channel events received
 
 Inbound IRC arrives in the host session as channel notifications:
 
-**Regular messages** (PRIVMSG to a channel or to you as DM):
+**Regular messages:**
 
 ```xml
 <channel source="roost-irc" sender="alex" channel="#roost"
@@ -199,27 +183,12 @@ hello world
 </channel>
 ```
 
-If the message arrived as multiple PRIVMSGs reassembled within the
-buffer window, you'll also see `buffered="true" chunkCount="N"`. DMs
-have `isDirect="true"` and the `channel` attr is the sender's nick.
-
 **Membership events** (JOIN, PART, KICK, NICK):
 
 ```xml
 <channel source="roost-irc" sender="newcomer" channel="#roost"
          isDirect="false" ts="..." seq="..." event="join">
 newcomer joined #roost
-</channel>
-
-<channel source="roost-irc" sender="someone" channel="#roost"
-         isDirect="false" ts="..." seq="..." event="leave"
-         reason="parted: bye">
-someone left #roost (parted: bye)
-</channel>
-
-<channel source="roost-irc" sender="oldnick" channel="#roost"
-         isDirect="false" ts="..." seq="..." event="nick" newNick="newnick">
-oldnick is now known as newnick
 </channel>
 ```
 
@@ -240,49 +209,37 @@ Self-events (your own JOIN/LEAVE/NICK) are suppressed.
 
 ```
 roost/
+├── .claude-plugin/
+│   └── plugin.json         Plugin manifest.
+├── .mcp.json               MCP server config (auto-loaded by plugin).
+├── hooks/
+│   └── hooks.json          PreToolUse hook for IRC permission oversight.
+├── skills/roost/SKILL.md   Claude Code skill wrapping the roost command surface.
 ├── src/
-│   ├── irc-server.ts       The MCP. Run by mcp-config-irc.json.
-│   ├── stub-server.ts      Test 1 stub (channel-cap smoke test, no IRC).
-│   └── tools-only-stub.ts  Test 3 multi-MCP stub.
-├── tests/
-│   ├── irc-listener.ts          Standalone wire observer.
-│   ├── test-reassembly.sh       End-to-end split/reassemble check.
-│   ├── test4-irc-pingpong.sh    Two-session ping/pong.
-│   ├── test{2,3}-*              Earlier test harnesses.
-│   ├── analyze-jsonl.py         Cache-behavior analyzer for session JSONLs.
-│   └── logs/                    Test artifacts (gitignored).
-├── bin/roost               Wrapper command — spawn / shutdown / list /
-│                           attach / tail / status.
-├── skills/roost/SKILL.md   Claude Code skill that wraps the bin/roost
-│                           command surface for model invocation.
+│   ├── irc-server.ts       The MCP server.
+│   ├── stub-server.ts      Test stub (no IRC).
+│   └── tools-only-stub.ts  Multi-MCP test stub.
+├── bin/
+│   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
+│   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
+│   ├── roost-permbot       IRC permission oversight daemon.
+│   └── irc-permission-prompt  PreToolUse hook (thin socket client).
 ├── etc/ergo.yaml           Localhost-only IRC server config.
-├── var/ergo/               Ergo binary, datastore, MOTD, logs.
-├── var/                    Runtime state (PID file, gitignored).
-├── mcp-config-irc.json     Use this for the IRC MCP.
-├── mcp-config.json         Test 1 stub MCP (legacy).
-├── ARCHITECTURE.md         How the team uses roost (channels, roles,
-│                           routing, lifecycle, discipline).
-├── docs/LEARNINGS.md       Load-bearing assumptions, test log,
-│                           findings, hardening passes.
-├── package.json / tsconfig.json / bun.lock
-└── README.md
+├── var/ergo/               Ergo binary, datastore, MOTD, logs (gitignored).
+├── extras/weechat/         Optional weechat notification script.
+├── ARCHITECTURE.md         Channel topology, roles, routing, lifecycle.
+├── docs/LEARNINGS.md       Load-bearing assumptions, findings, hardening passes.
+└── package.json / tsconfig.json / bun.lock
 ```
 
 ## Known limitations
 
-- **No SASL / nick reservation in the spike config.** Any local
-  process that connects can claim any unused nick. Acceptable for a
-  single-user dev box; revisit before this hosts multi-tenant work.
-- **No worker spawn helper yet.** Each Claude session is launched
-  manually with the full invocation above. Automation is in scope but
-  not built.
+- **No SASL / nick reservation.** Any local process that connects can
+  claim any unused nick. Acceptable for a single-user dev box; revisit
+  before hosting multi-tenant work.
 - **`channel_history` is per-MCP-instance.** Restarting an MCP loses
-  the buffer. For durable history use either ergo's audit log
-  (`var/ergo/logs/audit.log` — full PRIVMSG/NOTICE capture both
-  directions) or the IRCv3 `CHATHISTORY` command which ergo serves
-  out of its in-memory store.
-- **None of the previously-listed cache misses.** `alwaysLoad: true`
-  is set on the roost-irc server in `mcp-config-irc.json`, so all
-  six tools stay non-deferred. Empirical baseline-vs-alwaysLoad probe
-  (2026-04-28) showed 0 `tools_changed` misses with the flag vs 2
-  without (see `docs/LEARNINGS.md` Finding A).
+  the buffer. For durable history use ergo's audit log
+  (`var/ergo/logs/audit.log`) or the IRCv3 `CHATHISTORY` command.
+- **`alwaysLoad: true`** keeps all six tools non-deferred. Empirical
+  baseline-vs-alwaysLoad probe (2026-04-28) showed 0 `tools_changed`
+  misses with the flag vs 2 without (see `docs/LEARNINGS.md` Finding A).
