@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PermissionRequest": [
       {
         "matcher": "",
         "hooks": [

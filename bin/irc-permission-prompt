@@ -47,7 +47,7 @@ def emit(decision: str, reason: str) -> None:
     json.dump(
         {
             "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
+                "hookEventName": "PermissionRequest",
                 "permissionDecision": decision,
                 "permissionDecisionReason": reason,
             }
