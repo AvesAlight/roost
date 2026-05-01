@@ -44,12 +44,15 @@ PASSTHROUGH_PREFIXES = ("mcp__roost-irc__",)
 
 
 def emit(decision: str, reason: str) -> None:
+    if decision == "ask":
+        # No decision → Claude Code shows the terminal permission prompt
+        sys.stderr.write(f"perm-hook: deferring to terminal ({reason})\n")
+        sys.exit(0)
     json.dump(
         {
             "hookSpecificOutput": {
                 "hookEventName": "PermissionRequest",
-                "permissionDecision": decision,
-                "permissionDecisionReason": reason,
+                "decision": {"behavior": decision},
             }
         },
         sys.stdout,
