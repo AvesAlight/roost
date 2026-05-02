@@ -34,7 +34,7 @@ SOCK_PATH = os.environ.get(
 )
 SOCKET_SAFETY_TIMEOUT = 570  # just under Claude Code's 600s hook default
 
-PASSTHROUGH_PREFIXES = ("mcp__roost-irc__",)
+PASSTHROUGH_PREFIXES = ("mcp__roost-irc__", "mcp__plugin_roost_roost-irc__")
 
 
 def emit(decision: str, reason: str) -> None:
