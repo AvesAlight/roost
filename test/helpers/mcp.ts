@@ -63,6 +63,7 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
   await client.connect(transport)
 
   afterAll(async () => {
+    // close() sends stdin EOF then SIGTERM (2s grace each) — terminates subprocess even if IRC reconnect timers are live
     await client.close()
   })
 

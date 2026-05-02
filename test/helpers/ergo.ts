@@ -142,45 +142,7 @@ export async function startErgo(): Promise<ErgoContext | null> {
     throw new Error(`ergo initdb failed: ${new TextDecoder().decode(init.stderr)}`)
   }
 
-  const proc = Bun.spawn([ergo, 'run', '--conf', configPath], {
-    cwd: datadir,
-    stderr: 'pipe',
-    stdout: 'ignore',
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      proc.kill()
-      reject(new Error('ergo did not start within 5s'))
-    }, 5000)
-
-    const decoder = new TextDecoder()
-    let buf = ''
-    const reader = proc.stderr.getReader()
-
-    const pump = async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          const lines = buf.split('\n')
-          buf = lines.pop() ?? ''
-          for (const line of lines) {
-            if (line.includes('now listening on')) {
-              clearTimeout(timeout)
-              resolve()
-              return
-            }
-          }
-        }
-        reject(new Error('ergo exited before becoming ready'))
-      } catch (e) {
-        reject(e)
-      }
-    }
-    void pump()
-  })
+  const proc = await spawnErgoProcess(ergo, configPath, datadir)
 
   afterAll(async () => {
     proc.kill()
