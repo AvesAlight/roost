@@ -239,6 +239,31 @@ def fetch_pr_reviews(repo: str, number: int) -> list[dict]:
     return gh_api(f"repos/{repo}/pulls/{number}/reviews?per_page=100", paginate=True) or []
 
 
+def fetch_pr_linked_issues(repo: str, number: int) -> list[int]:
+    owner, name = repo.split("/", 1)
+    query = (
+        "query($owner:String!,$name:String!,$number:Int!){"
+        "repository(owner:$owner,name:$name){"
+        "pullRequest(number:$number){"
+        "closingIssuesReferences(first:25){nodes{number}}}}}"
+    )
+    result = _gh(["gh", "api", "graphql",
+                  "-f", f"query={query}",
+                  "-F", f"owner={owner}",
+                  "-F", f"name={name}",
+                  "-F", f"number={number}"])
+    if not result:
+        return []
+    nodes = (
+        (result.get("data") or {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("closingIssuesReferences", {})
+        .get("nodes") or []
+    )
+    return sorted(n["number"] for n in nodes if n.get("number") is not None)
+
+
 def fetch_issue(repo: str, number: int) -> dict:
     return gh_api(f"repos/{repo}/issues/{number}")
 
@@ -251,23 +276,31 @@ def fetch_issue_comments(repo: str, number: int) -> list[dict]:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-def snapshot_pr(repo: str, number: int) -> dict:
+def snapshot_pr(repo: str, number: int, prev_snap: dict | None = None) -> dict:
     view = fetch_pr(repo, number)
     review_comments = fetch_pr_review_comments(repo, number)
     conv_comments = fetch_pr_conversation_comments(repo, number)
     reviews = fetch_pr_reviews(repo, number)
+    cur_head = view.get("head_oid")
+    # Re-use cached linked_issues when head hasn't changed; closing issues are
+    # stable per branch so a new fetch is only needed on a new push.
+    if prev_snap and prev_snap.get("head_oid") == cur_head:
+        linked_issues = prev_snap.get("linked_issues") or []
+    else:
+        linked_issues = fetch_pr_linked_issues(repo, number)
     return {
         "repo": repo,
         "number": number,
         "title": view.get("title"),
         "url": view.get("url"),
         "head_ref": view.get("head_ref"),
-        "head_oid": view.get("head_oid"),
+        "head_oid": cur_head,
         "is_draft": view.get("is_draft", False),
         "merged": view.get("merged_at") is not None,
         "state": view.get("state"),
         "labels": label_names(view.get("labels")),
         "ci_state": view.get("ci_state"),
+        "linked_issues": linked_issues,
         "seen_review_comment_ids": sorted(c["id"] for c in review_comments if c.get("id") is not None),
         "seen_conversation_comment_ids": sorted(c["id"] for c in conv_comments if c.get("id") is not None),
         "seen_review_ids": sorted(r["id"] for r in reviews if r.get("id") is not None),
@@ -310,7 +343,8 @@ def _issue_key(repo: str, number: int) -> str:
 
 def format_comment_event(c: dict, *, kind: str, repo: str | None, pr: int | None,
                          issue: int | None, url: str,
-                         agent_logins: set[str] | None = None) -> dict:
+                         agent_logins: set[str] | None = None,
+                         linked_issues: list[int] | None = None) -> dict:
     author = (c.get("user") or {}).get("login")
     body = c.get("body") or ""
     is_agent_author = bool(agent_logins) and author in (agent_logins or set())
@@ -332,6 +366,8 @@ def format_comment_event(c: dict, *, kind: str, repo: str | None, pr: int | None
     if pr is not None:
         ev["pr"] = pr
         ev["pr_url"] = url
+        if linked_issues:
+            ev["linked_issues"] = linked_issues
     if issue is not None:
         ev["issue"] = issue
         ev["issue_url"] = url
@@ -345,7 +381,10 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
     events: list[dict] = []
     n = cur["number"]
     repo = cur["repo"]
-    base = {"repo": repo, "pr": n, "url": cur["url"], "title": cur["title"]}
+    linked = cur.get("linked_issues") or []
+    base: dict = {"repo": repo, "pr": n, "url": cur["url"], "title": cur["title"]}
+    if linked:
+        base["linked_issues"] = linked
 
     if prev.get("is_draft") and not cur["is_draft"]:
         events.append({"kind": "pr_ready_for_review", **base})
@@ -361,11 +400,9 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
     cur_labels = set(cur.get("labels") or [])
     if prev_labels != cur_labels:
         events.append({
+            **base,
             "kind": "labels_changed",
             "subject": "pr",
-            "repo": repo,
-            "pr": n,
-            "url": cur["url"],
             "added": sorted(cur_labels - prev_labels),
             "removed": sorted(prev_labels - cur_labels),
         })
@@ -378,31 +415,39 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
     cur_ci = cur.get("ci_state")
     head_changed = prev_head != cur_head
     if head_changed and cur_ci in ("SUCCESS", "FAILURE"):
-        events.append({
+        ci_ev: dict = {
             "kind": "ci_transitioned",
             "repo": repo, "pr": n, "url": cur["url"],
             "from": "PENDING", "to": cur_ci, "head_oid": cur_head,
-        })
+        }
+        if linked:
+            ci_ev["linked_issues"] = linked
+        events.append(ci_ev)
     elif not head_changed and prev_ci != cur_ci:
-        events.append({
+        ci_ev = {
             "kind": "ci_transitioned",
             "repo": repo, "pr": n, "url": cur["url"],
             "from": prev_ci, "to": cur_ci, "head_oid": cur_head,
-        })
+        }
+        if linked:
+            ci_ev["linked_issues"] = linked
+        events.append(ci_ev)
 
     prev_rc = set(prev.get("seen_review_comment_ids") or [])
     cur_rc_idx = cur["_review_comments_by_id"]
     for cid in sorted(set(cur_rc_idx) - prev_rc):
         events.append(format_comment_event(cur_rc_idx[cid], kind="pr_review_comment",
                                            repo=repo, pr=n, issue=None,
-                                           url=cur["url"], agent_logins=agent_logins))
+                                           url=cur["url"], agent_logins=agent_logins,
+                                           linked_issues=linked))
 
     prev_cc = set(prev.get("seen_conversation_comment_ids") or [])
     cur_cc_idx = cur["_conversation_comments_by_id"]
     for cid in sorted(set(cur_cc_idx) - prev_cc):
         events.append(format_comment_event(cur_cc_idx[cid], kind="pr_conversation_comment",
                                            repo=repo, pr=n, issue=None,
-                                           url=cur["url"], agent_logins=agent_logins))
+                                           url=cur["url"], agent_logins=agent_logins,
+                                           linked_issues=linked))
 
     prev_rev = set(prev.get("seen_review_ids") or [])
     cur_rev_idx = cur.get("_reviews_by_id") or {}
@@ -410,7 +455,7 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
         review = cur_rev_idx[rid]
         author = (review.get("user") or {}).get("login")
         is_agent_author = bool(agent_logins) and author in (agent_logins or set())
-        events.append({
+        rev_ev: dict = {
             "kind": "pr_review_submitted",
             "repo": repo, "pr": n, "url": cur["url"],
             "review_id": rid,
@@ -419,7 +464,10 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
             "state": (review.get("state") or "").upper(),
             "body_preview": (review.get("body") or "")[:280],
             "is_worker_reply": is_agent_author,
-        })
+        }
+        if linked:
+            rev_ev["linked_issues"] = linked
+        events.append(rev_ev)
 
     return events
 
@@ -720,11 +768,15 @@ class IrcClient:
 # IRC dispatch
 # ---------------------------------------------------------------------------
 
-def _event_channel(event: dict, default_channel: str) -> str:
-    n = event.get("pr") or event.get("issue")
-    if n is not None:
-        return f"#issue-{n}"
-    return default_channel
+def _event_channels(event: dict, default_channel: str) -> list[str]:
+    if event.get("pr") is not None:
+        linked = event.get("linked_issues") or []
+        if linked:
+            return [f"#issue-{n}" for n in linked]
+        return [f"#issue-{event['pr']}"]
+    if event.get("issue") is not None:
+        return [f"#issue-{event['issue']}"]
+    return [default_channel]
 
 
 def _initial_irc_channels(config: dict, project_channel: str) -> list[str]:
@@ -736,6 +788,11 @@ def _initial_irc_channels(config: dict, project_channel: str) -> list[str]:
     for entry in config.get("watched_issues") or []:
         _, n = _coerce_repo_entry(entry, default_repo)
         chans.add(f"#issue-{n}")
+    state = load_state()
+    if state:
+        for snap in (state.get("prs") or {}).values():
+            for linked_n in (snap.get("linked_issues") or []):
+                chans.add(f"#issue-{linked_n}")
     return sorted(chans)
 
 
@@ -744,14 +801,15 @@ def dispatch_events_irc(events: list[dict], irc: IrcClient, default_channel: str
     for ev in events:
         if not should_push(ev):
             continue
-        target = _event_channel(ev, default_channel)
+        targets = _event_channels(ev, default_channel)
         text = format_event(ev)
-        try:
-            irc.privmsg(target, text)
-        except ConnectionError:
-            raise
-        except Exception as e:
-            failures.append(f"{ev.get('kind')}: {e}")
+        for target in dict.fromkeys(targets):  # de-dup, preserve order
+            try:
+                irc.privmsg(target, text)
+            except ConnectionError:
+                raise
+            except Exception as e:
+                failures.append(f"{ev.get('kind')} -> {target}: {e}")
     if failures:
         raise RuntimeError("; ".join(failures))
 
@@ -795,26 +853,30 @@ def _run_one_tick_collect(args: argparse.Namespace, config: dict) -> list[dict]:
 
     for entry in watched_prs:
         repo, number = _coerce_repo_entry(entry, default_repo)
-        snap = snapshot_pr(repo, number)
         key = _pr_key(repo, number)
+        prev_pr = (prev.get("prs") or {}).get(key) if (prev and not seeding) else None
+        snap = snapshot_pr(repo, number, prev_snap=prev_pr)
         if not seeding:
-            prev_pr = (prev.get("prs") or {}).get(key) if prev else None
             if prev_pr:
                 events.extend(diff_pr(prev_pr, snap, agent_logins=agent_logins))
             else:
                 existing_rev = list(snap.get("seen_review_comment_ids") or [])
                 existing_conv = list(snap.get("seen_conversation_comment_ids") or [])
-                events.append({"kind": "pr_added_to_watch", "repo": repo, "pr": number,
-                                "url": snap["url"], "title": snap["title"]})
+                linked = snap.get("linked_issues") or []
+                seed_base: dict = {"repo": repo, "pr": number,
+                                   "url": snap["url"], "title": snap["title"]}
+                if linked:
+                    seed_base["linked_issues"] = linked
+                events.append({"kind": "pr_added_to_watch", **seed_base})
                 if existing_rev or existing_conv:
-                    events.append({"kind": "pr_has_existing_comments", "repo": repo, "pr": number,
-                                   "url": snap["url"], "title": snap["title"],
+                    events.append({"kind": "pr_has_existing_comments",
                                    "review_comment_count": len(existing_rev),
-                                   "conversation_comment_count": len(existing_conv)})
+                                   "conversation_comment_count": len(existing_conv),
+                                   **seed_base})
                 if snap.get("ci_state") in ("SUCCESS", "FAILURE"):
-                    events.append({"kind": "pr_has_existing_ci_state", "repo": repo, "pr": number,
-                                   "url": snap["url"], "title": snap["title"],
-                                   "ci_state": snap["ci_state"]})
+                    events.append({"kind": "pr_has_existing_ci_state",
+                                   "ci_state": snap["ci_state"],
+                                   **seed_base})
         cur_state["prs"][key] = strip_internals(snap)
 
     for entry in watched_issues:
@@ -1000,6 +1062,81 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_self_test() -> int:
+    failures: list[str] = []
+    total = 0
+
+    def check(name: str, got: object, want: object) -> None:
+        nonlocal total
+        total += 1
+        if got != want:
+            failures.append(f"FAIL {name}: got {got!r}, want {want!r}")
+
+    # _event_channels: no linked issues → PR's own channel
+    check("pr_no_linked",
+          _event_channels({"pr": 25}, "#proj"),
+          ["#issue-25"])
+
+    # _event_channels: linked issues → linked issue channels, not PR channel
+    check("pr_with_linked",
+          _event_channels({"pr": 25, "linked_issues": [14, 7]}, "#proj"),
+          ["#issue-14", "#issue-7"])
+
+    # _event_channels: issue event
+    check("issue_event",
+          _event_channels({"issue": 14}, "#proj"),
+          ["#issue-14"])
+
+    # _event_channels: unrelated event falls back to default
+    check("fallback",
+          _event_channels({"kind": "dispatcher_error"}, "#proj"),
+          ["#proj"])
+
+    # _event_channels: de-dup is handled by dispatch caller; single linked issue
+    check("pr_single_linked",
+          _event_channels({"pr": 99, "linked_issues": [3]}, "#proj"),
+          ["#issue-3"])
+
+    # _initial_irc_channels: picks up linked issues from state
+    fake_state = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "prs": {
+            "MyOrg/repo#25": {
+                "repo": "MyOrg/repo", "number": 25,
+                "linked_issues": [14, 7],
+            }
+        },
+        "issues": {},
+    }
+    import unittest.mock as mock
+    with mock.patch(f"{__name__}.load_state", return_value=fake_state):
+        chans = _initial_irc_channels(
+            {"repo": "MyOrg/repo", "watched_prs": [25], "watched_issues": []},
+            "#proj",
+        )
+    check("initial_channels_linked",
+          chans,
+          sorted({"#proj", "#issue-25", "#issue-14", "#issue-7"}))
+
+    # _initial_irc_channels: no state → just config channels
+    with mock.patch(f"{__name__}.load_state", return_value=None):
+        chans2 = _initial_irc_channels(
+            {"repo": "MyOrg/repo", "watched_prs": [25], "watched_issues": [14]},
+            "#proj",
+        )
+    check("initial_channels_no_state",
+          chans2,
+          sorted({"#proj", "#issue-25", "#issue-14"}))
+
+    if failures:
+        for f in failures:
+            sys.stderr.write(f + "\n")
+        return 1
+    sys.stdout.write(f"self-test: {total}/{total} passed\n")
+    return 0
+
+
 def _record_error() -> None:
     tb = traceback.format_exc()
     try:
@@ -1017,6 +1154,8 @@ def main() -> int:
                     help="One-shot: PRIVMSG qualifying events to per-issue IRC channels.")
     ap.add_argument("--daemon", action="store_true",
                     help="Long-running: persistent IRC connection, poll → dispatch → sleep loop.")
+    ap.add_argument("--self-test", action="store_true",
+                    help="Run pure-function routing self-tests against fixture data.")
     ap.add_argument("--config-dir", default=None,
                     help="Override state directory (default: <repo>/.orchestrator).")
     args = ap.parse_args()
@@ -1030,6 +1169,8 @@ def main() -> int:
         LAST_ERROR_PATH = STATE_DIR / "last-error.txt"
 
     try:
+        if getattr(args, "self_test", False):
+            return _run_self_test()
         if args.daemon:
             return _run_daemon(args)
         if args.dispatch_irc:
