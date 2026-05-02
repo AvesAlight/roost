@@ -6,8 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/irc-permission-prompt",
-            "timeout": 45
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/irc-permission-prompt"
           }
         ]
       }

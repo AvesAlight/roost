@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
 """
-roost — PreToolUse hook (thin socket client over the permbot daemon).
+roost — PermissionRequest hook (thin socket client over the permbot daemon).
 
-Reads PreToolUse JSON on stdin, asks the worker's permbot daemon (over
-its unix socket) whether the operator approves, and emits
-hookSpecificOutput.permissionDecision = allow|deny|ask.
+Reads PermissionRequest JSON on stdin, asks the worker's permbot daemon
+(over its unix socket) whether the operator approves, and emits a
+PermissionRequest decision of allow or deny.
 
-The daemon (bin/roost-permbot) is what actually talks to IRC. This hook
-is just a pipe: stdin payload → one-line JSON request → one-line JSON
-response → decision.
-
-If the daemon's socket is missing or unreachable, emit "ask" so the
-terminal prompt is still the safety net. Same fallback for ambiguous
-replies and timeouts.
+The daemon (bin/roost-permbot) is what actually talks to IRC and owns the
+operator reply timeout. This hook blocks on the socket until the daemon
+responds or the socket closes. Falls back to the terminal prompt if the
+daemon is unreachable or returns an unrecognized reply.
 
 Configuration (env, all optional):
-  ROOST_PERM_SOCK       Daemon socket path. Defaults to
-                        /tmp/roost-permbot-{ROOST_IRC_NICK}.sock
-  ROOST_PERM_TIMEOUT    Operator reply timeout (seconds, default 30).
-                        Sent to the daemon as part of the request;
-                        the local socket-read timeout is timeout + 5.
-  ROOST_IRC_NICK        Worker nick (set by bin/roost spawn). Used to
-                        derive the default socket path.
+  ROOST_PERM_SOCK   Daemon socket path. Defaults to
+                    /tmp/roost-permbot-{ROOST_IRC_NICK}.sock
+  ROOST_IRC_NICK    Worker nick (set by bin/roost spawn). Used to
+                    derive the default socket path.
 
 Tools whose names start with `mcp__roost-irc__` are passthrough
 (allowed without asking) — otherwise the worker couldn't talk on IRC,
@@ -38,7 +32,7 @@ SOCK_PATH = os.environ.get(
     "ROOST_PERM_SOCK",
     f"/tmp/roost-permbot-{WORKER}.sock",
 )
-TIMEOUT = float(os.environ.get("ROOST_PERM_TIMEOUT", "30"))
+SOCKET_SAFETY_TIMEOUT = 570  # just under Claude Code's 600s hook default
 
 PASSTHROUGH_PREFIXES = ("mcp__roost-irc__",)
 
@@ -189,18 +183,18 @@ def ask_daemon(summary: str):
         return None
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(TIMEOUT + 5)
+        sock.settimeout(SOCKET_SAFETY_TIMEOUT)
         sock.connect(SOCK_PATH)
     except OSError as e:
         sys.stderr.write(f"perm-hook: connect {SOCK_PATH} failed: {e}\n")
         return None
 
     try:
-        req = json.dumps({"summary": summary, "timeout": TIMEOUT})
+        req = json.dumps({"summary": summary})
         sock.sendall((req + "\n").encode("utf-8"))
         # Read response. Should be one line.
         buf = b""
-        deadline = time.time() + TIMEOUT + 5
+        deadline = time.time() + SOCKET_SAFETY_TIMEOUT
         while time.time() < deadline and b"\n" not in buf:
             try:
                 chunk = sock.recv(4096)
