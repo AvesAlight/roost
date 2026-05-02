@@ -16,7 +16,7 @@ export interface PeerContext {
   leaveChannel(channel: string): Promise<void>
   say(channel: string, text: string): void
   kick(channel: string, nick: string, reason?: string): void
-  changeNick(newNick: string): Promise<void>
+  changeNick(newNick: string, timeoutMs?: number): Promise<void>
   waitForMessage(
     channel: string,
     pred: (msg: PeerMessage) => boolean,
@@ -111,19 +111,15 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
     },
 
     kick(channel, nick, reason) {
-      if (reason) {
-        client.raw('KICK', channel, nick, reason)
-      } else {
-        client.raw('KICK', channel, nick)
-      }
+      client.raw('KICK', channel, nick, ...(reason ? [reason] : []))
     },
 
-    changeNick(newNick) {
+    changeNick(newNick, timeoutMs = 5000) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           client.removeListener('nick', onNick)
           reject(new Error(`changeNick to ${newNick} timed out`))
-        }, 5000)
+        }, timeoutMs)
         const onNick = (event: { nick: string; new_nick: string }) => {
           if (event.new_nick === newNick) {
             client.removeListener('nick', onNick)
