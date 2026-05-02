@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { join } from 'node:path'
 import { afterAll } from 'bun:test'
 import type { ErgoContext } from './ergo.js'
+import { sleep } from './tool.js'
 
 const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
@@ -70,7 +71,7 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
     const text = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
     if (!text.includes('not ready')) break // unexpected error — don't loop forever
     if (Date.now() > deadline) throw new Error(`startMcp: IRC not ready within 5s (nick=${clientNick})`)
-    await new Promise<void>(res => setTimeout(res, 50))
+    await sleep(50)
   }
 
   afterAll(async () => {
