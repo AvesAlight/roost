@@ -1,17 +1,16 @@
 import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
 
-let ergo: ErgoContext | null
+describe.if(isErgoAvailable())('irc-server MCP tools', () => {
+  let ergo: ErgoContext
 
-describe('irc-server MCP tools', () => {
   beforeAll(async () => {
-    ergo = await startErgo()
+    ergo = (await startErgo())!
   })
 
   it('tools/list returns 6 tools with correct schemas', async () => {
-    if (!ergo) { console.log('skipped — ergo not found'); return }
     const mcp = await startMcp(ergo, 'list-test-mcp')
     const { tools } = await mcp.client.listTools()
 
@@ -29,7 +28,6 @@ describe('irc-server MCP tools', () => {
   })
 
   it('channel_join resolves on ack; channel_who includes own nick', async () => {
-    if (!ergo) { console.log('skipped — ergo not found'); return }
     const mcp = await startMcp(ergo, 'join-test-mcp')
 
     const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#join-test' } })
@@ -40,7 +38,6 @@ describe('irc-server MCP tools', () => {
   })
 
   it('channel_who reflects peer join and leave', async () => {
-    if (!ergo) { console.log('skipped — ergo not found'); return }
     const mcp = await startMcp(ergo, 'who-test-mcp')
     const peer = await connectPeer(ergo, 'who-test-peer')
 
@@ -59,7 +56,6 @@ describe('irc-server MCP tools', () => {
   })
 
   it('channel_leave parts cleanly', async () => {
-    if (!ergo) { console.log('skipped — ergo not found'); return }
     const mcp = await startMcp(ergo, 'leave-test-mcp')
     const peer = await connectPeer(ergo, 'leave-test-peer')
 

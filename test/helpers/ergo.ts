@@ -7,6 +7,10 @@ import { afterAll } from 'bun:test'
 
 const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
+export function isErgoAvailable(): boolean {
+  return findErgoBin() !== null
+}
+
 function findErgoBin(): string | null {
   const candidates: string[] = [
     ...(process.env.ERGO_BIN ? [resolve(process.env.ERGO_BIN)] : []),
