@@ -62,6 +62,17 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
 
   await client.connect(transport)
 
+  // Poll until the IRC client has registered — tools return isError before that.
+  const deadline = Date.now() + 5000
+  while (true) {
+    const r = await client.callTool({ name: 'channel_who', arguments: { channel: '#_ready' } })
+    if (!r.isError) break
+    const text = ((r.content[0] ?? {}) as { text?: string }).text ?? ''
+    if (!text.includes('not ready')) break // unexpected error — don't loop forever
+    if (Date.now() > deadline) throw new Error(`startMcp: IRC not ready within 5s (nick=${clientNick})`)
+    await new Promise<void>(res => setTimeout(res, 50))
+  }
+
   afterAll(async () => {
     await client.close()
   })
