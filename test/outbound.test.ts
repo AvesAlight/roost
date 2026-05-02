@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
+import { toolText } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('outbound message tools', () => {
   let ergo: ErgoContext
@@ -22,10 +23,9 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { channel: '#out-msg', text: 'hello from mcp' },
     })
     expect(result.isError).toBeFalsy()
-    expect(((result.content as unknown[])[0] as { text: string }).text).toContain('sent to #out-msg')
+    expect(toolText(result)).toContain('sent to #out-msg')
 
-    const msg = await peer.waitForMessage('#out-msg', m => m.nick === 'out-mcp1' && m.text === 'hello from mcp')
-    expect(msg.text).toBe('hello from mcp')
+    await peer.waitForMessage('#out-msg', m => m.nick === 'out-mcp1' && m.text === 'hello from mcp')
   })
 
   it('direct_message: MCP→peer DM arrives', async () => {
@@ -37,11 +37,10 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { nick: 'out-peer2', text: 'dm from mcp' },
     })
     expect(result.isError).toBeFalsy()
-    expect(((result.content as unknown[])[0] as { text: string }).text).toContain('DM to out-peer2')
+    expect(toolText(result)).toContain('DM to out-peer2')
 
     // For DMs in irc-framework, event.target === recipient nick, so waitForMessage on own nick.
-    const msg = await peer.waitForMessage('out-peer2', m => m.nick === 'out-mcp2' && m.text === 'dm from mcp')
-    expect(msg.text).toBe('dm from mcp')
+    await peer.waitForMessage('out-peer2', m => m.nick === 'out-mcp2' && m.text === 'dm from mcp')
   })
 
   it('direct_message: peer→MCP DM arrives as notification', async () => {
@@ -75,8 +74,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { channel: '#out-ml', text: longText },
     })
     expect(result.isError).toBeFalsy()
-    const resultText = ((result.content as unknown[])[0] as { text: string }).text
-    expect(resultText).toContain('draft/multiline batch')
+    expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#out-ml' && n.meta.sender === 'out-mcp4',
@@ -107,7 +105,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { channel: '#out-hist' },
     })
     expect(hist.isError).toBeFalsy()
-    const text = ((hist.content as unknown[])[0] as { text: string }).text
+    const text = toolText(hist)
     const idx1 = text.indexOf('hist-msg-1')
     const idx2 = text.indexOf('hist-msg-2')
     const idx3 = text.indexOf('hist-msg-3')

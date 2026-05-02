@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
+import { toolText } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   let ergo: ErgoContext
@@ -34,7 +35,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(join.isError).toBeFalsy()
 
     const who = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#join-test' } })
-    expect(((who.content as unknown[])[0] as { type: 'text'; text: string }).text).toContain('join-test-mcp')
+    expect(toolText(who)).toContain('join-test-mcp')
   })
 
   it('channel_who reflects peer join and leave', async () => {
@@ -64,7 +65,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     const result = await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#leave-test' } })
     expect(result.isError).toBeFalsy()
-    expect(((result.content as unknown[])[0] as { type: 'text'; text: string }).text).toBe('parted #leave-test')
+    expect(toolText(result)).toBe('parted #leave-test')
 
     await peer.waitForPart('#leave-test', 'leave-test-mcp')
   })
