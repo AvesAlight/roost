@@ -34,7 +34,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(join.isError).toBeFalsy()
 
     const who = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#join-test' } })
-    expect((who.content[0] as { type: 'text'; text: string }).text).toContain('join-test-mcp')
+    expect(((who.content as unknown[])[0] as { type: 'text'; text: string }).text).toContain('join-test-mcp')
   })
 
   it('channel_who reflects peer join and leave', async () => {
@@ -46,13 +46,13 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'who-test-peer')
 
     const whoBefore = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#who-test' } })
-    expect((whoBefore.content[0] as { type: 'text'; text: string }).text).toContain('who-test-peer')
+    expect(((whoBefore.content as unknown[])[0] as { type: 'text'; text: string }).text).toContain('who-test-peer')
 
     await peer.leaveChannel('#who-test')
     await mcp.waitForNotification(n => n.meta.event === 'leave' && n.meta.sender === 'who-test-peer')
 
     const whoAfter = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#who-test' } })
-    expect((whoAfter.content[0] as { type: 'text'; text: string }).text).not.toContain('who-test-peer')
+    expect(((whoAfter.content as unknown[])[0] as { type: 'text'; text: string }).text).not.toContain('who-test-peer')
   })
 
   it('channel_leave parts cleanly', async () => {
@@ -64,7 +64,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     const result = await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#leave-test' } })
     expect(result.isError).toBeFalsy()
-    expect((result.content[0] as { type: 'text'; text: string }).text).toBe('parted #leave-test')
+    expect(((result.content as unknown[])[0] as { type: 'text'; text: string }).text).toBe('parted #leave-test')
 
     await peer.waitForPart('#leave-test', 'leave-test-mcp')
   })
