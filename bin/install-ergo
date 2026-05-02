@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Downloads an ergo release into var/ergo-bin/. Idempotent.
+set -euo pipefail
+
+ERGO_VERSION="2.18.0"
+DEST_DIR="$(cd "$(dirname "$0")/.." && pwd)/var/ergo-bin"
+DEST="$DEST_DIR/ergo"
+
+if [[ -x "$DEST" ]]; then
+  echo "ergo already installed at $DEST"
+  exit 0
+fi
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$OS" in
+  darwin) OS="macos" ;;
+  linux)  OS="linux" ;;
+  *)
+    echo "install-ergo: unsupported OS: $OS" >&2
+    exit 1
+    ;;
+esac
+
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64)        ARCH="x86_64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *)
+    echo "install-ergo: unsupported arch: $ARCH" >&2
+    exit 1
+    ;;
+esac
+
+TARBALL="ergo-${ERGO_VERSION}-${OS}-${ARCH}.tar.gz"
+URL="https://github.com/ergochat/ergo/releases/download/v${ERGO_VERSION}/${TARBALL}"
+
+echo "Downloading $URL"
+mkdir -p "$DEST_DIR"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+curl -fsSL "$URL" -o "$TMP/$TARBALL"
+tar -xzf "$TMP/$TARBALL" -C "$TMP"
+mv "$TMP/ergo-${ERGO_VERSION}-${OS}-${ARCH}/ergo" "$DEST"
+chmod +x "$DEST"
+
+echo "Installed ergo $ERGO_VERSION -> $DEST"
