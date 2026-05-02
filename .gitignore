@@ -16,3 +16,7 @@ tests/logs/
 .orchestrator/last-tick.txt
 .orchestrator/last-error.txt
 .orchestrator/.state.*.tmp
+
+# Python bytecode cache (orchestrator_poll runs as a script)
+__pycache__/
+*.pyc
