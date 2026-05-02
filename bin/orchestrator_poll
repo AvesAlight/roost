@@ -276,24 +276,31 @@ def fetch_issue_comments(repo: str, number: int) -> list[dict]:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-def snapshot_pr(repo: str, number: int) -> dict:
+def snapshot_pr(repo: str, number: int, prev_snap: dict | None = None) -> dict:
     view = fetch_pr(repo, number)
     review_comments = fetch_pr_review_comments(repo, number)
     conv_comments = fetch_pr_conversation_comments(repo, number)
     reviews = fetch_pr_reviews(repo, number)
+    cur_head = view.get("head_oid")
+    # Re-use cached linked_issues when head hasn't changed; closing issues are
+    # stable per branch so a new fetch is only needed on a new push.
+    if prev_snap and prev_snap.get("head_oid") == cur_head:
+        linked_issues = prev_snap.get("linked_issues") or []
+    else:
+        linked_issues = fetch_pr_linked_issues(repo, number)
     return {
         "repo": repo,
         "number": number,
         "title": view.get("title"),
         "url": view.get("url"),
         "head_ref": view.get("head_ref"),
-        "head_oid": view.get("head_oid"),
+        "head_oid": cur_head,
         "is_draft": view.get("is_draft", False),
         "merged": view.get("merged_at") is not None,
         "state": view.get("state"),
         "labels": label_names(view.get("labels")),
         "ci_state": view.get("ci_state"),
-        "linked_issues": fetch_pr_linked_issues(repo, number),
+        "linked_issues": linked_issues,
         "seen_review_comment_ids": sorted(c["id"] for c in review_comments if c.get("id") is not None),
         "seen_conversation_comment_ids": sorted(c["id"] for c in conv_comments if c.get("id") is not None),
         "seen_review_ids": sorted(r["id"] for r in reviews if r.get("id") is not None),
@@ -392,18 +399,13 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
     prev_labels = set(prev.get("labels") or [])
     cur_labels = set(cur.get("labels") or [])
     if prev_labels != cur_labels:
-        ev: dict = {
+        events.append({
+            **base,
             "kind": "labels_changed",
             "subject": "pr",
-            "repo": repo,
-            "pr": n,
-            "url": cur["url"],
             "added": sorted(cur_labels - prev_labels),
             "removed": sorted(prev_labels - cur_labels),
-        }
-        if linked:
-            ev["linked_issues"] = linked
-        events.append(ev)
+        })
 
     # Track head_oid so a new push landing at the same terminal CI state
     # still fires a ci_transitioned event for the new commit.
@@ -437,7 +439,7 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
         events.append(format_comment_event(cur_rc_idx[cid], kind="pr_review_comment",
                                            repo=repo, pr=n, issue=None,
                                            url=cur["url"], agent_logins=agent_logins,
-                                           linked_issues=linked or None))
+                                           linked_issues=linked))
 
     prev_cc = set(prev.get("seen_conversation_comment_ids") or [])
     cur_cc_idx = cur["_conversation_comments_by_id"]
@@ -445,7 +447,7 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
         events.append(format_comment_event(cur_cc_idx[cid], kind="pr_conversation_comment",
                                            repo=repo, pr=n, issue=None,
                                            url=cur["url"], agent_logins=agent_logins,
-                                           linked_issues=linked or None))
+                                           linked_issues=linked))
 
     prev_rev = set(prev.get("seen_review_ids") or [])
     cur_rev_idx = cur.get("_reviews_by_id") or {}
@@ -851,10 +853,10 @@ def _run_one_tick_collect(args: argparse.Namespace, config: dict) -> list[dict]:
 
     for entry in watched_prs:
         repo, number = _coerce_repo_entry(entry, default_repo)
-        snap = snapshot_pr(repo, number)
         key = _pr_key(repo, number)
+        prev_pr = (prev.get("prs") or {}).get(key) if (prev and not seeding) else None
+        snap = snapshot_pr(repo, number, prev_snap=prev_pr)
         if not seeding:
-            prev_pr = (prev.get("prs") or {}).get(key) if prev else None
             if prev_pr:
                 events.extend(diff_pr(prev_pr, snap, agent_logins=agent_logins))
             else:
@@ -1062,8 +1064,11 @@ def _run(args: argparse.Namespace) -> int:
 
 def _run_self_test() -> int:
     failures: list[str] = []
+    total = 0
 
     def check(name: str, got: object, want: object) -> None:
+        nonlocal total
+        total += 1
         if got != want:
             failures.append(f"FAIL {name}: got {got!r}, want {want!r}")
 
@@ -1104,8 +1109,6 @@ def _run_self_test() -> int:
         },
         "issues": {},
     }
-    orig_load = globals().get("load_state")
-
     import unittest.mock as mock
     with mock.patch(f"{__name__}.load_state", return_value=fake_state):
         chans = _initial_irc_channels(
@@ -1130,7 +1133,7 @@ def _run_self_test() -> int:
         for f in failures:
             sys.stderr.write(f + "\n")
         return 1
-    sys.stdout.write(f"self-test: {6 - len(failures)}/6 passed\n")
+    sys.stdout.write(f"self-test: {total}/{total} passed\n")
     return 0
 
 
