@@ -63,6 +63,11 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
 
   await client.connect(transport)
 
+  afterAll(async () => {
+    // close() sends stdin EOF then SIGTERM (2s grace each) — terminates subprocess even if IRC reconnect timers are live
+    await client.close()
+  })
+
   // Poll until the IRC client has registered — tools return isError before that.
   const deadline = Date.now() + 5000
   while (true) {
@@ -73,10 +78,6 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
     if (Date.now() > deadline) throw new Error(`startMcp: IRC not ready within 5s (nick=${clientNick})`)
     await sleep(50)
   }
-
-  afterAll(async () => {
-    await client.close()
-  })
 
   return {
     client,

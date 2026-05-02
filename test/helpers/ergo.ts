@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, unlink } from 'node:fs/promises'
 import { accessSync, constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
@@ -111,6 +111,15 @@ export interface ErgoContext {
   host: string
 }
 
+export interface ErgoLifecycle extends ErgoContext {
+  /** Graceful shutdown (SIGTERM). Waits for process exit. */
+  kill(): Promise<void>
+  /** Start a new ergo process on the same port/datadir. */
+  restart(): Promise<void>
+  /** Kill process (if alive) and delete the tmp datadir. */
+  cleanup(): Promise<void>
+}
+
 export async function startErgo(): Promise<ErgoContext | null> {
   const ergo = findErgoBin()
   if (!ergo) {
@@ -133,6 +142,21 @@ export async function startErgo(): Promise<ErgoContext | null> {
     throw new Error(`ergo initdb failed: ${new TextDecoder().decode(init.stderr)}`)
   }
 
+  const proc = await spawnErgoProcess(ergo, configPath, datadir)
+
+  afterAll(async () => {
+    proc.kill()
+    await rm(datadir, { recursive: true, force: true })
+  })
+
+  return { port, host: '127.0.0.1' }
+}
+
+async function spawnErgoProcess(
+  ergo: string,
+  configPath: string,
+  datadir: string,
+): Promise<ReturnType<typeof Bun.spawn>> {
   const proc = Bun.spawn([ergo, 'run', '--conf', configPath], {
     cwd: datadir,
     stderr: 'pipe',
@@ -153,30 +177,77 @@ export async function startErgo(): Promise<ErgoContext | null> {
       try {
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
+          if (done) {
+            reader.releaseLock()
+            reject(new Error('ergo exited before becoming ready'))
+            return
+          }
           buf += decoder.decode(value, { stream: true })
           const lines = buf.split('\n')
           buf = lines.pop() ?? ''
           for (const line of lines) {
             if (line.includes('now listening on')) {
               clearTimeout(timeout)
+              reader.releaseLock() // release so proc.exited resolves cleanly
               resolve()
               return
             }
           }
         }
-        reject(new Error('ergo exited before becoming ready'))
       } catch (e) {
+        try { reader.releaseLock() } catch { /* already released */ }
         reject(e)
       }
     }
     void pump()
   })
 
-  afterAll(async () => {
-    proc.kill()
-    await rm(datadir, { recursive: true, force: true })
-  })
+  return proc
+}
 
-  return { port, host: '127.0.0.1' }
+/**
+ * Start a private ergo instance with lifecycle control (kill/restart/cleanup).
+ * The caller owns cleanup — no afterAll is registered.
+ * Returns null if ergo binary is not available (test should skip).
+ */
+export async function startErgoDedicated(): Promise<ErgoLifecycle | null> {
+  const ergo = findErgoBin()
+  if (!ergo) return null
+
+  const port = await getFreePort()
+  const datadir = await mkdtemp(join(tmpdir(), 'roost-test-'))
+  const configPath = join(datadir, 'ircd.yaml')
+  const lockPath = join(datadir, 'ircd.lock')
+
+  await writeFile(configPath, makeErgoConfig(port, datadir))
+
+  const init = Bun.spawnSync([ergo, 'initdb', '--conf', configPath], { cwd: datadir })
+  if (init.exitCode !== 0) {
+    await rm(datadir, { recursive: true, force: true })
+    throw new Error(`ergo initdb failed: ${new TextDecoder().decode(init.stderr)}`)
+  }
+
+  let proc = await spawnErgoProcess(ergo, configPath, datadir)
+
+  return {
+    port,
+    host: '127.0.0.1',
+
+    async kill() {
+      proc.kill() // SIGTERM — ergo cleans up lock file on graceful exit
+      await proc.exited
+      await new Promise<void>(res => setTimeout(res, 100)) // let OS release the port
+    },
+
+    async restart() {
+      // Remove lock in case previous kill was unclean
+      await unlink(lockPath).catch(() => {})
+      proc = await spawnErgoProcess(ergo, configPath, datadir)
+    },
+
+    async cleanup() {
+      try { proc.kill() } catch { /* already dead */ }
+      await rm(datadir, { recursive: true, force: true })
+    },
+  }
 }
