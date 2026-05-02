@@ -435,7 +435,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 // Helper: format an inbound IRC message as a channel-event payload.
 const emitChannelEvent = (
   msg: IrcMessage,
-  extras: { buffered?: boolean; chunkCount?: number } = {},
+  extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
 ) => {
   const seq = ++receiveSeq
   const meta: Record<string, string> = {
@@ -452,12 +452,15 @@ const emitChannelEvent = (
       meta.chunkCount = String(extras.chunkCount)
     }
   }
+  if (extras.historical) {
+    meta.historical = 'true'
+  }
   void mcp.notification({
     method: 'notifications/claude/channel',
     params: { content: msg.text, meta },
   })
   process.stderr.write(
-    `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${extras.buffered ? ` [BUFFERED x${extras.chunkCount}]` : ''}\n`,
+    `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${extras.buffered ? ` [BUFFERED x${extras.chunkCount}]` : ''}${extras.historical ? ' [HISTORY]' : ''}\n`,
   )
 }
 
@@ -739,9 +742,10 @@ client.on('message', (event: {
   batch?: { id: string; type: string; params: string[] }
 }) => {
   if (event.nick === NICK) return // don't loop our own messages back
-  // draft/multiline batch members are reassembled in the batch-end
-  // handler below — skip them here to avoid double-emit.
+  // draft/multiline and chathistory batch members are handled in their
+  // respective batch-end handlers below — skip here to avoid double-emit.
   if (event.batch?.type === 'draft/multiline') return
+  if (event.batch?.type === 'chathistory') return
   const isDirect = event.target === NICK
   const channel = isDirect ? event.nick : event.target
   const ts = new Date().toISOString()
@@ -834,6 +838,39 @@ client.on(
     }
     pushHistory(channel, msg)
     emitChannelEvent(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
+  },
+)
+
+// Emit chathistory backfill (sent by ergo on channel join) as individual
+// channel events marked historical=true so agents don't treat them as new.
+client.on(
+  'batch end chathistory',
+  (event: {
+    id: string
+    params: string[]
+    commands: Array<{
+      command: string
+      params: string[]
+      nick: string
+      tags: Record<string, unknown>
+      getServerTime?: () => number | undefined
+    }>
+  }) => {
+    const target = event.params[0]
+    if (!target) return
+    for (const c of event.commands) {
+      if (c.command !== 'PRIVMSG') continue
+      const sender = c.nick
+      if (!sender || sender === NICK) continue
+      const text = c.params[c.params.length - 1] ?? ''
+      const isDirect = target === NICK
+      const channel = isDirect ? sender : target
+      const serverTimeMs = c.getServerTime?.()
+      const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
+      const msg: IrcMessage = { channel, sender, text, ts, isDirect }
+      pushHistory(channel, msg)
+      emitChannelEvent(msg, { historical: true })
+    }
   },
 )
 
