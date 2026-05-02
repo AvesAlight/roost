@@ -13,12 +13,14 @@ export interface PeerMessage {
 export interface PeerContext {
   nick: string
   joinChannel(channel: string): Promise<void>
+  leaveChannel(channel: string): Promise<void>
   say(channel: string, text: string): void
   waitForMessage(
     channel: string,
     pred: (msg: PeerMessage) => boolean,
     timeoutMs?: number,
   ): Promise<PeerMessage>
+  waitForPart(channel: string, nick: string, timeoutMs?: number): Promise<void>
 }
 
 export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<PeerContext> {
@@ -60,6 +62,22 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
     client.quit()
   })
 
+  const waitForPart = (channel: string, nick: string, timeoutMs = 5000): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.removeListener('part', onPart)
+        reject(new Error(`waitForPart ${nick} in ${channel} timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      const onPart = (event: { nick: string; channel: string }) => {
+        if (event.nick === nick && event.channel === channel) {
+          client.removeListener('part', onPart)
+          clearTimeout(timer)
+          resolve()
+        }
+      }
+      client.on('part', onPart)
+    })
+
   return {
     nick: peerNick,
 
@@ -81,9 +99,16 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
       })
     },
 
+    leaveChannel(channel) {
+      client.part(channel)
+      return waitForPart(channel, peerNick)
+    },
+
     say(channel, text) {
       client.say(channel, text)
     },
+
+    waitForPart,
 
     waitForMessage(channel, pred, timeoutMs = 5000) {
       return new Promise((resolve, reject) => {
