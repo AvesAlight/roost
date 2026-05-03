@@ -572,14 +572,20 @@ def format_event(event: dict) -> str:
         path = event.get("path")
         line = event.get("line")
         where = f" at {path}:{line}" if path else ""
-        snippet = (event.get("body_preview") or "").strip().splitlines()[:1]
-        snippet = snippet[0][:160] if snippet else ""
-        return f"PR {tag} comment by {author}{where}: {snippet}"
+        body_preview = (event.get("body_preview") or "").strip()
+        snippet_lines = body_preview.splitlines()[:1]
+        snippet = snippet_lines[0][:160] if snippet_lines else ""
+        ellipsis = "…" if body_preview != snippet else ""
+        url = event.get("comment_url") or event.get("url", "")
+        return f"PR {tag} comment by {author}{where}: {snippet}{ellipsis} — {url}"
     if kind == "issue_comment":
         author = event.get("author") or "?"
-        snippet = (event.get("body_preview") or "").strip().splitlines()[:1]
-        snippet = snippet[0][:160] if snippet else ""
-        return f"Issue {tag} comment by {author}: {snippet}"
+        body_preview = (event.get("body_preview") or "").strip()
+        snippet_lines = body_preview.splitlines()[:1]
+        snippet = snippet_lines[0][:160] if snippet_lines else ""
+        ellipsis = "…" if body_preview != snippet else ""
+        url = event.get("comment_url") or event.get("url", "")
+        return f"Issue {tag} comment by {author}: {snippet}{ellipsis} — {url}"
     if kind == "pr_review_submitted":
         author = event.get("author") or "?"
         state = event.get("state") or "?"
@@ -1128,6 +1134,74 @@ def _run_self_test() -> int:
     check("initial_channels_no_state",
           chans2,
           sorted({"#proj", "#issue-25", "#issue-14"}))
+
+    # format_event: pr_review_comment short body → no ellipsis, permalink appended
+    check("review_comment_short",
+          format_event({
+              "kind": "pr_review_comment",
+              "repo": "org/repo", "pr": 46, "url": "https://github.com/org/repo/pull/46",
+              "author": "alice",
+              "body_preview": "Looks good",
+              "comment_url": "https://github.com/org/repo/pull/46#issuecomment-111",
+          }),
+          "PR org/repo#46 comment by alice: Looks good — https://github.com/org/repo/pull/46#issuecomment-111")
+
+    # format_event: pr_review_comment 161-char body → ellipsis + permalink
+    long_body = "A" * 161
+    check("review_comment_truncated",
+          format_event({
+              "kind": "pr_review_comment",
+              "repo": "org/repo", "pr": 46, "url": "https://github.com/org/repo/pull/46",
+              "author": "alice",
+              "body_preview": long_body,
+              "comment_url": "https://github.com/org/repo/pull/46#issuecomment-222",
+          }),
+          f"PR org/repo#46 comment by alice: {'A' * 160}… — https://github.com/org/repo/pull/46#issuecomment-222")
+
+    # format_event: pr_review_comment multiline → ellipsis + permalink
+    check("review_comment_multiline",
+          format_event({
+              "kind": "pr_review_comment",
+              "repo": "org/repo", "pr": 46, "url": "https://github.com/org/repo/pull/46",
+              "author": "alice",
+              "path": "src/foo.ts", "line": 10,
+              "body_preview": "Line one\nLine two",
+              "comment_url": "https://github.com/org/repo/pull/46#pullrequestreview-333",
+          }),
+          "PR org/repo#46 comment by alice at src/foo.ts:10: Line one… — https://github.com/org/repo/pull/46#pullrequestreview-333")
+
+    # format_event: pr_conversation_comment short → no ellipsis, permalink appended
+    check("conv_comment_short",
+          format_event({
+              "kind": "pr_conversation_comment",
+              "repo": "org/repo", "pr": 46, "url": "https://github.com/org/repo/pull/46",
+              "author": "bob",
+              "body_preview": "Short comment",
+              "comment_url": "https://github.com/org/repo/pull/46#issuecomment-444",
+          }),
+          "PR org/repo#46 comment by bob: Short comment — https://github.com/org/repo/pull/46#issuecomment-444")
+
+    # format_event: issue_comment short → no ellipsis, permalink appended
+    check("issue_comment_short",
+          format_event({
+              "kind": "issue_comment",
+              "repo": "org/repo", "issue": 47, "url": "https://github.com/org/repo/issues/47",
+              "author": "carol",
+              "body_preview": "Hi there",
+              "comment_url": "https://github.com/org/repo/issues/47#issuecomment-555",
+          }),
+          "Issue org/repo#47 comment by carol: Hi there — https://github.com/org/repo/issues/47#issuecomment-555")
+
+    # format_event: issue_comment multiline → ellipsis + permalink
+    check("issue_comment_multiline",
+          format_event({
+              "kind": "issue_comment",
+              "repo": "org/repo", "issue": 47, "url": "https://github.com/org/repo/issues/47",
+              "author": "carol",
+              "body_preview": "First line\nSecond line",
+              "comment_url": "https://github.com/org/repo/issues/47#issuecomment-666",
+          }),
+          "Issue org/repo#47 comment by carol: First line… — https://github.com/org/repo/issues/47#issuecomment-666")
 
     if failures:
         for f in failures:
