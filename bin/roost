@@ -36,10 +36,7 @@ Commands:
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
-  -m, --model MODEL          Override --model. Default: opus. Auto mode
-                             requires Opus 4.7; passing a non-Opus model
-                             will silently degrade auto mode to manual
-                             permissioning.
+  -m, --model MODEL          Override --model. Default: opus.
   --perm-irc                 Start a permbot side daemon (bin/roost-permbot)
                              that surfaces this worker's tool-permission
                              prompts as DMs to --perm-target. Useful for
@@ -49,7 +46,8 @@ spawn options:
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --permission-mode MODE     Override --permission-mode passed to claude.
-                             Default: auto.
+                             Default: auto for opus models, acceptEdits for
+                             all others.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -65,8 +63,9 @@ spawn options:
                              Use for --chrome, --system-prompt, etc.
 
 Sessions launch under \`zsh -l\` (login shell) so .zprofile loads — required
-for RVM, nvm, and other shell-rc-managed toolchains. Default permission mode
-is auto (Opus 4.7 auto-mode classifier); override with --permission-mode.
+for RVM, nvm, and other shell-rc-managed toolchains. Permission mode defaults
+to auto for opus and acceptEdits for all other models; override with
+--permission-mode.
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
@@ -160,7 +159,7 @@ cmd_spawn() {
   local cwd="${PWD}"
   local perm_irc=0
   local perm_target=""
-  local permission_mode="auto"
+  local permission_mode=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -203,6 +202,12 @@ cmd_spawn() {
   if [ "${perm_irc}" -eq 1 ] && [ -z "${perm_target}" ]; then
     echo "error: --perm-irc requires --perm-target NICK" >&2
     exit 1
+  fi
+  if [ -z "${permission_mode}" ]; then
+    case "${model}" in
+      *opus*) permission_mode="auto" ;;
+      *)      permission_mode="acceptEdits" ;;
+    esac
   fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
