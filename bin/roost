@@ -371,10 +371,11 @@ cmd_status() {
 
 if [ "$#" -eq 0 ]; then
   usage
-  exit 1
+  exit 0
 fi
 cmd="$1"
 shift
+case "$1" in -h|--help) usage; exit 0 ;; esac
 case "${cmd}" in
   spawn)    cmd_spawn "$@" ;;
   shutdown) cmd_shutdown "$@" ;;
