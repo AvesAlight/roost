@@ -96,6 +96,48 @@ const pushHistory = (key: string, msg: IrcMessage) => {
   history.set(key, buf)
 }
 
+// ---- Replay dedupe (issue #44) -----------------------------------------
+
+// Per-channel seen-fingerprint sets. Each channel's set is capped at
+// HISTORY_SIZE; eviction uses Set insertion order (oldest first).
+const seenFingerprints = new Map<string, Set<string>>()
+
+const msgFingerprint = (msg: IrcMessage): string =>
+  `${msg.sender}|${msg.ts}|${msg.text}`
+
+const addFingerprint = (msg: IrcMessage) => {
+  let set = seenFingerprints.get(msg.channel)
+  if (!set) {
+    set = new Set()
+    seenFingerprints.set(msg.channel, set)
+  }
+  const fp = msgFingerprint(msg)
+  if (set.has(fp)) return
+  set.add(fp)
+  while (set.size > HISTORY_SIZE) set.delete(set.values().next().value!)
+}
+
+const hasFingerprint = (msg: IrcMessage): boolean =>
+  seenFingerprints.get(msg.channel)?.has(msgFingerprint(msg)) ?? false
+
+// SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
+// after reconnect re-delivers messages compacted out of the agent's context.
+process.on('SIGUSR1', () => {
+  seenFingerprints.clear()
+  process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
+})
+
+// Write our PID so the PreCompact hook can signal us. Only when ROOST_DATA_DIR
+// is set — that's always true for sessions spawned by bin/roost.
+const DATA_DIR = env('ROOST_DATA_DIR', '')
+if (DATA_DIR) {
+  try {
+    await Bun.write(`${DATA_DIR}/mcp.pid`, String(process.pid))
+  } catch (e) {
+    process.stderr.write(`roost-irc[${NICK}]: warn: could not write pidfile: ${e}\n`)
+  }
+}
+
 // ---- Send-side splitting + receive-side buffering ----------------------
 //
 // Two paths, picked at runtime based on CAP negotiation:
@@ -453,6 +495,7 @@ const emitChannelEvent = (
   msg: IrcMessage,
   extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
 ) => {
+  addFingerprint(msg)
   const seq = ++receiveSeq
   const meta: Record<string, string> = {
     sender: msg.sender,
@@ -777,6 +820,7 @@ client.on('message', (event: {
   message: string
   type: 'privmsg' | 'notice' | 'action' | string
   batch?: { id: string; type: string; params: string[] }
+  tags?: Record<string, string>
 }) => {
   if (event.nick === NICK) return // don't loop our own messages back
   // draft/multiline and chathistory batch members are handled in their
@@ -785,7 +829,9 @@ client.on('message', (event: {
   if (event.batch?.type === CAP_CHATHISTORY) return
   const isDirect = event.target === NICK
   const channel = isDirect ? event.nick : event.target
-  const ts = new Date().toISOString()
+  // Use server-time tag when available (server-time cap) so the fingerprint
+  // matches what ergo records and replays in chathistory batches.
+  const ts = event.tags?.['time'] ?? new Date().toISOString()
 
   // Strip legacy [roost-split:...] marker if present (backward compat
   // with senders not yet on the buffering build).
@@ -913,6 +959,10 @@ client.on(
     // Take the most-recent N (ergo sends oldest-first).
     const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
     for (const msg of limited) {
+      if (hasFingerprint(msg)) {
+        process.stderr.write(`roost-irc[${NICK}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
+        continue
+      }
       pushHistory(msg.channel, msg)
       emitChannelEvent(msg, { historical: true })
     }
@@ -931,7 +981,10 @@ client.on('socket error', (err: Error) => {
 // Ask the server for the IRCv3 caps we need beyond irc-framework's
 // defaults. labeled-response isn't strictly required for multiline, but
 // it pairs well with future features (await-able send confirmations).
-client.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY])
+// server-time: ergo stamps every message with @time; we use this timestamp
+// in replay-dedupe fingerprints so live-message and chathistory-replay
+// fingerprints match (both keyed on server time, not client-arrival time).
+client.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY, 'server-time'])
 
 client.connect({
   host: SERVER,

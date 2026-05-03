@@ -102,7 +102,6 @@ perm_paths() {
   PERM_SOCK="${data_dir}/permbot.sock"
   PERM_PID="${data_dir}/permbot.pid"
   PERM_LOG="${data_dir}/permbot.log"
-  PERM_SETTINGS="${data_dir}/perm-settings.json"
 }
 
 start_permbot() {
@@ -247,21 +246,19 @@ cmd_spawn() {
     exit 3
   fi
 
-  # Start the permbot side daemon if --perm-irc was passed. Done before
-  # spawning the worker so the unix socket exists when the worker fires
-  # its first PermissionRequest hook.
-  # Also writes a per-session settings file that wires the PermissionRequest
-  # hook only for this session; cleaned up by cmd_shutdown → stop_permbot.
+  # Write per-session roost-settings.json with hooks that need to be active
+  # for all roost sessions. PreCompact is always present; PermissionRequest is
+  # added when --perm-irc is passed. Cleaned up implicitly when data_dir is
+  # rm -rf'd on shutdown. ROOST_DIR is cd-derived (no spaces/backslashes).
   local perm_sock=""
-  local perm_settings_flag=""
+  local perm_hook_json=""
   if [ "${perm_irc}" -eq 1 ]; then
     start_permbot "${nick}" "${perm_target}" "${ROOST_DATA_DIR}" || true
     perm_sock="${PERM_SOCK}"
-    # ROOST_DIR is derived from the script's own path (cd … && pwd) so it won't
-    # contain quotes or backslashes — the printf JSON embedding is safe.
-    printf '%s\n' "{\"hooks\":{\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]}}" > "${PERM_SETTINGS}"
-    perm_settings_flag=" --settings ${PERM_SETTINGS}"
+    perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
+  local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
+  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}]${perm_hook_json}}}" > "${ROOST_SETTINGS}"
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
@@ -286,7 +283,7 @@ cmd_spawn() {
     mcp_flag=" --mcp-config ${mcp_config}"
     channel_server="server:roost-irc"
   fi
-  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag}${perm_settings_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --settings ${ROOST_SETTINGS} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
