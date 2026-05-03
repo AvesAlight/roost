@@ -10,6 +10,8 @@ const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 export interface ChannelNotification {
   content: string
   meta: Record<string, string>
+  /** Pass as `fromCursor` on the next call to skip past this notification. */
+  cursor: number
 }
 
 export interface McpContext {
@@ -19,6 +21,7 @@ export interface McpContext {
   waitForNotification(
     pred: (n: ChannelNotification) => boolean,
     timeoutMs?: number,
+    fromCursor?: number,
   ): Promise<ChannelNotification>
 }
 
@@ -51,7 +54,7 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
   client.fallbackNotificationHandler = async (notification) => {
     if (notification.method !== 'notifications/claude/channel') return
     const params = notification.params as { content: string; meta: Record<string, string> }
-    const n: ChannelNotification = { content: params.content, meta: params.meta }
+    const n: ChannelNotification = { content: params.content, meta: params.meta, cursor: notifications.length + 1 }
     notifications.push(n)
     for (let i = waiters.length - 1; i >= 0; i--) {
       if (waiters[i].pred(n)) {
@@ -83,10 +86,11 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
     client,
     nick: clientNick,
     notifications,
-    waitForNotification(pred, timeoutMs = 5000) {
+    waitForNotification(pred, timeoutMs = 5000, fromCursor = 0) {
       return new Promise((resolve, reject) => {
-        const existing = notifications.find(pred)
-        if (existing) { resolve(existing); return }
+        for (let i = fromCursor; i < notifications.length; i++) {
+          if (pred(notifications[i])) { resolve(notifications[i]); return }
+        }
 
         const timer = setTimeout(() => {
           const idx = waiters.findIndex(w => w.resolve === resolve)

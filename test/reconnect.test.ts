@@ -73,13 +73,15 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
     // recv buffer, so N messages → N separate flush timers → N notifications
     peers.forEach((p, i) => p.say('#seq-test', `seq-msg-${i}`))
 
-    const seen = new Set<ChannelNotification>()
+    let cursor = 0
     const notifs: ChannelNotification[] = []
     for (let i = 0; i < N; i++) {
       const n = await mcp.waitForNotification(
-        n => n.meta.channel === '#seq-test' && n.content.startsWith('seq-msg-') && !seen.has(n),
+        n => n.meta.channel === '#seq-test' && n.content.startsWith('seq-msg-'),
+        5000,
+        cursor,
       )
-      seen.add(n)
+      cursor = n.cursor
       notifs.push(n)
     }
 
