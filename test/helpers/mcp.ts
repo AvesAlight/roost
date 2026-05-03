@@ -88,8 +88,9 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
     notifications,
     waitForNotification(pred, timeoutMs = 5000, fromCursor = 0) {
       return new Promise((resolve, reject) => {
-        const existing = notifications.slice(fromCursor).find(pred)
-        if (existing) { resolve(existing); return }
+        for (let i = fromCursor; i < notifications.length; i++) {
+          if (pred(notifications[i])) { resolve(notifications[i]); return }
+        }
 
         const timer = setTimeout(() => {
           const idx = waiters.findIndex(w => w.resolve === resolve)
