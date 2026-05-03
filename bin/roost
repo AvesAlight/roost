@@ -49,8 +49,7 @@ spawn options:
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --permission-mode MODE     Override --permission-mode passed to claude.
-                             Default: auto. Known values: auto, acceptEdits,
-                             plan, default, bypassPermissions.
+                             Default: auto.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -205,13 +204,6 @@ cmd_spawn() {
     echo "error: --perm-irc requires --perm-target NICK" >&2
     exit 1
   fi
-  case "${permission_mode}" in
-    auto|acceptEdits|plan|default|bypassPermissions) ;;
-    *) echo "error: unknown --permission-mode '${permission_mode}'" >&2
-       echo "  valid values: auto, acceptEdits, plan, default, bypassPermissions" >&2
-       exit 1 ;;
-  esac
-
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
