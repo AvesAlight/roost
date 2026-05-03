@@ -30,7 +30,7 @@ a tool surface.
 
 ```bash
 roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
-                   [--cwd PATH] [-p PROMPT_FILE] \
+                   [--cwd PATH] [-p PROMPT_FILE] [--permission-mode MODE] \
                    [--perm-irc --perm-target NICK]
 roost shutdown <nick>
 roost list
@@ -42,18 +42,17 @@ roost status
 Defaults:
 
 - channels: `#roost`
-- model: `opus` (Opus 4.7 — required for auto mode)
-- permission mode: `auto`
+- model: `opus`
+- permission mode: `auto` for opus models, `acceptEdits` for all others
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
-`--permission-mode auto` flag (auto-mode classifier; only Opus 4.7
-supports it — `-m` overrides to a non-Opus model will degrade auto
-mode to manual permissioning), and the dev-channels confirmation
-prompt that appears on first launch.
+`--permission-mode` flag (smart-defaulted: `auto` for opus, `acceptEdits`
+for non-opus; override with `--permission-mode`), and the dev-channels
+confirmation prompt that appears on first launch.
 
 Anything passed after `--` is forwarded verbatim to claude — use this
 for `--chrome`, `--system-prompt`, `--thinking-display`, or any other
@@ -70,11 +69,10 @@ serializes the worker's PreToolUse permission prompts as DMs to
 net. `roost shutdown` reaps the daemon and its socket/pidfile.
 
 Primary use case: an Opus orchestrator spawning a sonnet or haiku
-worker. Non-Opus models can't use auto mode, so without oversight the
-worker would hit the terminal permission prompt for every tool call —
-unusable headlessly. With `--perm-irc --perm-target <orchestrator>`,
-the prompts come to the orchestrator over IRC and the orchestrator
-acts as the gate. Same pattern works for a human at any roost-attached
+worker. Non-Opus workers default to `acceptEdits` (edits auto-approved;
+Bash and MCP still gate). With `--perm-irc --perm-target <orchestrator>`,
+those remaining prompts come to the orchestrator over IRC instead of
+blocking the terminal. Same pattern works for a human at any roost-attached
 IRC client.
 
 ```bash

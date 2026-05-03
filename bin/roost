@@ -36,10 +36,7 @@ Commands:
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
-  -m, --model MODEL          Override --model. Default: opus. Auto mode
-                             requires Opus 4.7; passing a non-Opus model
-                             will silently degrade auto mode to manual
-                             permissioning.
+  -m, --model MODEL          Override --model. Default: opus.
   --perm-irc                 Start a permbot side daemon (bin/roost-permbot)
                              that surfaces this worker's tool-permission
                              prompts as DMs to --perm-target. Useful for
@@ -48,6 +45,9 @@ spawn options:
                              prompts. Daemon is killed by 'roost shutdown'.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
+  --permission-mode MODE     Override --permission-mode passed to claude.
+                             Default: auto for opus models, acceptEdits for
+                             all others.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -62,9 +62,10 @@ spawn options:
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
 
-Sessions launch with --permission-mode auto (Opus 4.7 auto-mode classifier)
-under \`zsh -l\` (login shell) so .zprofile loads — required for RVM, nvm,
-and other shell-rc-managed toolchains.
+Sessions launch under \`zsh -l\` (login shell) so .zprofile loads — required
+for RVM, nvm, and other shell-rc-managed toolchains. Permission mode defaults
+to auto for opus and acceptEdits for all other models; override with
+--permission-mode.
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
@@ -158,6 +159,7 @@ cmd_spawn() {
   local cwd="${PWD}"
   local perm_irc=0
   local perm_target=""
+  local permission_mode=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -177,6 +179,7 @@ cmd_spawn() {
       --cwd)            cwd="$2"; shift 2 ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
+      --permission-mode) permission_mode="$2"; shift 2 ;;
       -h|--help)        usage; exit 0 ;;
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -200,7 +203,12 @@ cmd_spawn() {
     echo "error: --perm-irc requires --perm-target NICK" >&2
     exit 1
   fi
-
+  if [ -z "${permission_mode}" ]; then
+    case "${model}" in
+      *opus*) permission_mode="auto" ;;
+      *)      permission_mode="acceptEdits" ;;
+    esac
+  fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
@@ -231,7 +239,7 @@ cmd_spawn() {
     perm_sock="${PERM_SOCK}"
   fi
 
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: auto, cwd: ${cwd})"
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
   # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
@@ -254,7 +262,7 @@ cmd_spawn() {
     mcp_flag=" --mcp-config ${mcp_config}"
     channel_server="server:roost-irc"
   fi
-  local inner_cmd="claude --model ${model} --permission-mode auto${mcp_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
