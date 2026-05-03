@@ -32,7 +32,7 @@ Commands:
   tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
   status                   ergo state + roost session count.
   root                     Print the roost plugin root directory.
-  send <nick> <message...> Send a DM to a nick (agent or human).
+  send <nick> <message...> Send a message directly to a nick's session.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -387,67 +387,13 @@ cmd_send() {
   local nick="$1"
   shift
   local message="$*"
-  require_ircd
-  ROOST_SEND_TARGET="${nick}" ROOST_SEND_MESSAGE="${message}" ROOST_SEND_PORT="${IRC_PORT}" python3 - <<'PYEOF'
-import os, socket, sys, time
-
-HOST = os.environ.get("ROOST_SEND_HOST", "127.0.0.1")
-PORT = int(os.environ.get("ROOST_SEND_PORT", "6667"))
-target = os.environ["ROOST_SEND_TARGET"]
-message = os.environ["ROOST_SEND_MESSAGE"]
-nick = f"roost-send-{os.getpid()}"
-
-sock = socket.create_connection((HOST, PORT), timeout=5)
-buf = b""
-
-def send_line(s):
-    sock.sendall((s + "\r\n").encode())
-
-def read_lines(timeout_sec):
-    global buf
-    deadline = time.monotonic() + timeout_sec
-    while time.monotonic() < deadline:
-        sock.settimeout(max(0.05, deadline - time.monotonic()))
-        try:
-            chunk = sock.recv(4096)
-        except socket.timeout:
-            break
-        if not chunk:
-            break
-        buf += chunk
-        while b"\r\n" in buf:
-            raw, buf = buf.split(b"\r\n", 1)
-            yield raw.decode("utf-8", errors="replace")
-
-send_line(f"NICK {nick}")
-send_line(f"USER {nick} 0 * :roost-send")
-
-registered = False
-for line in read_lines(10):
-    parts = line.split(" ", 3)
-    code = parts[1] if len(parts) >= 2 else ""
-    if code == "001":
-        registered = True
-        break
-    if code in ("432", "433", "436"):
-        sys.exit(f"error: nick rejected: {line}")
-    if line.startswith("PING "):
-        send_line("PONG " + line[5:])
-
-if not registered:
-    sys.exit("error: IRC registration timed out")
-
-send_line(f"PRIVMSG {target} :{message}")
-
-for line in read_lines(1):
-    parts = line.split(" ", 3)
-    if len(parts) >= 2 and parts[1] == "401":
-        send_line("QUIT :done")
-        sys.exit(f"error: no such nick '{target}'")
-
-send_line("QUIT :done")
-sock.close()
-PYEOF
+  local session_name="${SESSION_PREFIX}${nick}"
+  if ! tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "error: no session for nick '${nick}'" >&2
+    exit 4
+  fi
+  tmux send-keys -t "${session_name}" -l "${message}"
+  tmux send-keys -t "${session_name}" Enter
 }
 
 if [ "$#" -eq 0 ]; then
