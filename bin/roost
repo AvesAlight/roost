@@ -99,9 +99,7 @@ perm_paths() {
   PERM_SOCK="/tmp/roost-permbot-${nick}.sock"
   PERM_PID="/tmp/roost-permbot-${nick}.pid"
   PERM_LOG="/tmp/roost-permbot-${nick}.log"
-  # Pointer to the actual (mktemp'd) settings file path; allows shutdown to
-  # find and clean up the file without knowing its random suffix.
-  PERM_SETTINGS_PTR="/tmp/roost-perm-settings-ptr-${nick}"
+  PERM_SETTINGS="/tmp/roost-perm-settings-${nick}.json"
 }
 
 start_permbot() {
@@ -131,17 +129,11 @@ start_permbot() {
   return 1
 }
 
-_cleanup_perm_settings() {
-  local settings_file
-  settings_file="$(cat "${PERM_SETTINGS_PTR}" 2>/dev/null || true)"
-  rm -f "${settings_file}" "${PERM_SETTINGS_PTR}"
-}
-
 stop_permbot() {
   local nick="$1"
   perm_paths "${nick}"
   if [ ! -f "${PERM_PID}" ]; then
-    _cleanup_perm_settings
+    rm -f "${PERM_SETTINGS}"
     return 0
   fi
   local pid
@@ -158,8 +150,7 @@ stop_permbot() {
     kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
     echo "  killed permbot (pid ${pid})"
   fi
-  _cleanup_perm_settings
-  rm -f "${PERM_PID}" "${PERM_SOCK}"
+  rm -f "${PERM_PID}" "${PERM_SOCK}" "${PERM_SETTINGS}"
 }
 
 cmd_spawn() {
@@ -250,17 +241,12 @@ cmd_spawn() {
   local perm_settings_flag=""
   if [ "${perm_irc}" -eq 1 ]; then
     start_permbot "${nick}" "${perm_target}" || true
-    # perm_paths already called inside start_permbot; PERM_SOCK/PERM_SETTINGS_PTR are set.
+    # perm_paths already called inside start_permbot; PERM_SOCK/PERM_SETTINGS are set.
     perm_sock="${PERM_SOCK}"
-    # mktemp keeps the settings file isolated even if two repos share the same nick.
-    # Write its path to PERM_SETTINGS_PTR so stop_permbot can find and clean it up.
     # ROOST_DIR is derived from the script's own path (cd … && pwd) so it won't
     # contain quotes or backslashes — the printf JSON embedding is safe.
-    local perm_settings_file
-    perm_settings_file="$(mktemp /tmp/roost-perm-settings-XXXXXX.json)"
-    printf '%s\n' "{\"hooks\":{\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]}}" > "${perm_settings_file}"
-    printf '%s\n' "${perm_settings_file}" > "${PERM_SETTINGS_PTR}"
-    perm_settings_flag=" --settings ${perm_settings_file}"
+    printf '%s\n' "{\"hooks\":{\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]}}" > "${PERM_SETTINGS}"
+    perm_settings_flag=" --settings ${PERM_SETTINGS}"
   fi
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
