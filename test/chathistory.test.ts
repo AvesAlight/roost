@@ -56,6 +56,29 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     expect(Number(n2.meta.seq)).toBeGreaterThan(Number(n1.meta.seq))
   })
 
+  it('ROOST_IRC_JOIN_HISTORY_LINES caps how many historical messages are emitted', async () => {
+    const peer = await connectPeer(ergo, 'hist-peer-limit')
+    // Only replay last 2 messages, even though 4 exist.
+    const mcp = await startMcp(ergo, 'hist-mcp-limit', { ROOST_IRC_JOIN_HISTORY_LINES: '2' })
+
+    await peer.joinChannel('#hist-limit')
+    peer.say('#hist-limit', 'limit-one')
+    peer.say('#hist-limit', 'limit-two')
+    peer.say('#hist-limit', 'limit-three')
+    peer.say('#hist-limit', 'limit-four')
+    await sleep(200)
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-limit' } })
+
+    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'limit-three')
+    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'limit-four')
+
+    // Earlier messages are outside the limit and must not appear.
+    const all = mcp.notifications.filter(n => n.meta.historical === 'true' && n.meta.channel === '#hist-limit')
+    expect(all.some(n => n.content === 'limit-one')).toBe(false)
+    expect(all.some(n => n.content === 'limit-two')).toBe(false)
+  })
+
   it('channel_history includes backfilled messages in order', async () => {
     const peer = await connectPeer(ergo, 'hist-peer3')
     const mcp = await startMcp(ergo, 'hist-mcp3')

@@ -27,7 +27,7 @@ export interface McpContext {
 
 let instanceCounter = 0
 
-export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpContext> {
+export async function startMcp(ergo: ErgoContext, nick?: string, extraEnv?: Record<string, string>): Promise<McpContext> {
   const clientNick = nick ?? `mcp${++instanceCounter}`
 
   const transport = new StdioClientTransport({
@@ -38,6 +38,7 @@ export async function startMcp(ergo: ErgoContext, nick?: string): Promise<McpCon
       ROOST_IRC_SERVER: ergo.host,
       ROOST_IRC_PORT: String(ergo.port),
       ROOST_IRC_NICK: clientNick,
+      ...extraEnv,
     },
     stderr: 'inherit',
   })

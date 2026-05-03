@@ -18,7 +18,9 @@
  *   ROOST_IRC_NICK       Nick       (REQUIRED, no default)
  *   ROOST_IRC_REALNAME   Realname   (default: same as nick)
  *   ROOST_IRC_CHANNELS   Comma-separated auto-join list (default: none)
- *   ROOST_IRC_HISTORY    Per-channel history buffer size (default: 50)
+ *   ROOST_IRC_HISTORY              Per-channel history buffer size (default: 50)
+ *   ROOST_IRC_JOIN_HISTORY_LINES   Max historical messages emitted on join (default: 20)
+ *   ROOST_IRC_JOIN_HISTORY_MINUTES Time window for join history in minutes (default: 30)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -51,6 +53,10 @@ const AUTO_JOIN = (env('ROOST_IRC_CHANNELS', '') || '')
   .map(s => s.trim())
   .filter(Boolean)
 const HISTORY_SIZE = Number(env('ROOST_IRC_HISTORY', '50'))
+// History replayed to the agent on channel join (via IRCv3 chathistory autoreplay).
+// If the server doesn't ack the chathistory cap, no batch is sent and these are unused.
+const JOIN_HISTORY_LINES = Number(env('ROOST_IRC_JOIN_HISTORY_LINES', '20'))
+const JOIN_HISTORY_MINUTES = Number(env('ROOST_IRC_JOIN_HISTORY_MINUTES', '30'))
 
 // ---- IRC client wiring -------------------------------------------------
 
@@ -378,7 +384,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'channel_join',
-      description: 'Join a channel. Returns when the JOIN is acknowledged.',
+      description: 'Join a channel. Returns when the JOIN is acknowledged. Recent channel history (up to ROOST_IRC_JOIN_HISTORY_LINES messages within ROOST_IRC_JOIN_HISTORY_MINUTES minutes) is then pushed as historical notifications.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -650,6 +656,11 @@ client.on('registered', () => {
       `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}); falling back to legacy chunker\n`,
     )
   }
+  process.stderr.write(
+    enabled.includes('chathistory')
+      ? `roost-irc[${NICK}]: chathistory cap active — will replay up to ${JOIN_HISTORY_LINES} msgs / ${JOIN_HISTORY_MINUTES}min on join\n`
+      : `roost-irc[${NICK}]: chathistory cap NOT active — no history replay on join\n`,
+  )
   for (const ch of AUTO_JOIN) {
     client.join(ch)
     process.stderr.write(`roost-irc[${NICK}]: auto-joining ${ch}\n`)
@@ -883,6 +894,8 @@ client.on(
   }) => {
     const target = event.params[0]
     if (!target) return
+    const cutoffMs = JOIN_HISTORY_MINUTES > 0 ? Date.now() - JOIN_HISTORY_MINUTES * 60_000 : 0
+    const batch: IrcMessage[] = []
     for (const c of event.commands) {
       if (c.command !== 'PRIVMSG') continue
       const sender = c.nick
@@ -891,9 +904,15 @@ client.on(
       const isDirect = target === NICK
       const channel = isDirect ? sender : target
       const serverTimeMs = c.getServerTime?.()
+      // Drop messages outside the time window (skip filter if no server-time tag).
+      if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-      const msg: IrcMessage = { channel, sender, text, ts, isDirect }
-      pushHistory(channel, msg)
+      batch.push({ channel, sender, text, ts, isDirect })
+    }
+    // Take the most-recent N (ergo sends oldest-first).
+    const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
+    for (const msg of limited) {
+      pushHistory(msg.channel, msg)
       emitChannelEvent(msg, { historical: true })
     }
   },
@@ -911,7 +930,7 @@ client.on('socket error', (err: Error) => {
 // Ask the server for the IRCv3 caps we need beyond irc-framework's
 // defaults. labeled-response isn't strictly required for multiline, but
 // it pairs well with future features (await-able send confirmations).
-client.requestCap(['draft/multiline', 'labeled-response'])
+client.requestCap(['draft/multiline', 'labeled-response', 'chathistory'])
 
 client.connect({
   host: SERVER,

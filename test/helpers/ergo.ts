@@ -99,7 +99,7 @@ history:
   enabled: true
   channel-length: 256
   client-length: 64
-  autoreplay-on-join: 10
+  autoreplay-on-join: 100
   chathistory-maxmessages: 100
   persistent:
     enabled: false
