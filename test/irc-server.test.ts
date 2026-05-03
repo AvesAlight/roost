@@ -11,11 +11,10 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     ergo = (await startErgo())!
   })
 
-  it('tools/list returns 6 tools with correct schemas', async () => {
+  it('tools/list returns correct schemas', async () => {
     const mcp = await startMcp(ergo, 'list-test-mcp')
     const { tools } = await mcp.client.listTools()
 
-    expect(tools).toHaveLength(6)
     const byName = Object.fromEntries(
       tools.map(t => [t.name, (t.inputSchema as unknown as { required?: string[] }).required]),
     )
@@ -26,6 +25,8 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(byName['channel_leave']).toEqual(['channel'])
     expect(byName['channel_who']).toEqual(['channel'])
     expect(byName['channel_history']).toEqual(['channel'])
+    expect(tools.map(t => t.name)).toContain('channel_list')
+    expect(byName['channel_list']).toEqual([])
   })
 
   it('channel_join resolves on ack; channel_who includes own nick', async () => {
@@ -54,6 +55,24 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     const whoAfter = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#who-test' } })
     expect(((whoAfter.content as unknown[])[0] as { type: 'text'; text: string }).text).not.toContain('who-test-peer')
+  })
+
+  it('channel_list returns joined channels', async () => {
+    const mcp = await startMcp(ergo, 'list-chan-mcp')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-a' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#list-test-b' } })
+
+    const result = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(result.isError).toBeFalsy()
+    const text = toolText(result)
+    expect(text).toContain('#list-test-a')
+    expect(text).toContain('#list-test-b')
+
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#list-test-a' } })
+    const after = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(after)).not.toContain('#list-test-a')
+    expect(toolText(after)).toContain('#list-test-b')
   })
 
   it('channel_leave parts cleanly', async () => {

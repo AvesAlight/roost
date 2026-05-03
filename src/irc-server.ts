@@ -400,7 +400,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'channel_who',
-      description: 'List nicks currently present in a channel.',
+      description: 'List nicks currently present in a channel. Served from a local cache (no network round-trip); the cache is kept current via JOIN/PART/KICK/QUIT events.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -427,6 +427,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['channel'],
+      },
+    },
+    {
+      name: 'channel_list',
+      description: 'List all channels currently joined by this MCP instance. Served from a local cache (no network round-trip); the cache is kept current via JOIN/PART/KICK/QUIT events.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: [],
       },
     },
   ],
@@ -585,6 +594,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           `[${m.ts}] ${m.isDirect ? `(DM from ${m.sender})` : `${m.channel} <${m.sender}>`} ${m.text}`,
       )
       return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+    case 'channel_list': {
+      const channels = [...channelUsers.keys()].sort()
+      return {
+        content: [
+          {
+            type: 'text',
+            text: channels.length
+              ? channels.join(', ')
+              : '(no channels joined)',
+          },
+        ],
+      }
     }
     default:
       return {
