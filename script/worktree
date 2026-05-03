@@ -1,0 +1,101 @@
+#!/bin/bash
+set -euo pipefail
+
+# script/worktree — Create a git worktree with bun install + local config
+#
+# Usage:
+#   script/worktree <branch> [--from <base>] [path]
+#
+# Examples:
+#   script/worktree feat/my-feature                        # branch off HEAD
+#   script/worktree feat/my-feature --from main            # fetch & branch off main
+#   script/worktree fix/bug-123 --from main ~/custom       # explicit path + base
+
+if [ -z "${1:-}" ]; then
+  echo "Usage: script/worktree <branch> [--from <base>] [path]"
+  echo ""
+  echo "  branch       Branch name to create or check out (e.g. feat/my-feature)"
+  echo "  --from base  Base branch to branch from (fetches and fast-forwards first)"
+  echo "  path         Worktree path (default: sibling of main repo)"
+  exit 1
+fi
+
+branch="$1"
+shift
+
+base=""
+worktree_path=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --from)
+      base="$2"
+      shift 2
+      ;;
+    *)
+      worktree_path="$1"
+      shift
+      ;;
+  esac
+done
+
+# Always derive sibling paths from the main worktree so naming is consistent
+# regardless of which worktree you run this from.
+main_tree="$(git worktree list --porcelain | head -1 | sed 's/worktree //')"
+
+if [ -z "$worktree_path" ]; then
+  sanitized_branch="$(echo "$branch" | tr '/' '-')"
+  worktree_path="$(dirname "$main_tree")/roost-${sanitized_branch}"
+fi
+
+# --- Resolve the base commit ---
+
+if [ -n "$base" ]; then
+  echo "Fetching origin/$base..."
+
+  # Try to fast-forward the local branch (works if not checked out elsewhere)
+  if git fetch origin "$base:$base" 2>/dev/null; then
+    echo "Fast-forwarded local $base"
+  else
+    git fetch origin "$base"
+    echo "Could not fast-forward local $base (may be checked out), using origin/$base"
+  fi
+fi
+
+echo ""
+echo "Creating worktree:"
+echo "  Path:   $worktree_path"
+echo "  Branch: $branch"
+if [ -n "$base" ]; then
+  echo "  Base:   origin/$base"
+fi
+echo ""
+
+# Create the worktree — use existing branch if it exists, otherwise create it
+if git show-ref --verify --quiet "refs/heads/$branch"; then
+  git worktree add "$worktree_path" "$branch"
+elif [ -n "$base" ]; then
+  git worktree add -b "$branch" "$worktree_path" "origin/$base"
+else
+  git worktree add -b "$branch" "$worktree_path"
+fi
+
+# --- Dependencies & local config ---
+
+echo "Installing dependencies..."
+(cd "$worktree_path" && bun install)
+
+# Copy .claude/settings.local.json from main worktree if it exists
+claude_src="${main_tree}/.claude/settings.local.json"
+if [ -f "$claude_src" ]; then
+  mkdir -p "$worktree_path/.claude"
+  cp "$claude_src" "$worktree_path/.claude/settings.local.json"
+  echo "Copied .claude/settings.local.json"
+else
+  echo "No .claude/settings.local.json found in main worktree, skipping"
+fi
+
+echo ""
+echo "Worktree ready at: $worktree_path"
+echo ""
+echo "To spawn a worker in this worktree:"
+echo "  roost spawn <nick> --cwd $worktree_path"
