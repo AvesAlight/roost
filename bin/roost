@@ -48,7 +48,7 @@ spawn options:
                              prompts. Daemon is killed by 'roost shutdown'.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
-  -P, --permission-mode MODE Override --permission-mode passed to claude.
+  --permission-mode MODE     Override --permission-mode passed to claude.
                              Default: auto. Known values: auto, acceptEdits,
                              plan, default, bypassPermissions.
   --cwd PATH                 Working directory for the spawned session.
@@ -67,7 +67,7 @@ spawn options:
 
 Sessions launch under \`zsh -l\` (login shell) so .zprofile loads — required
 for RVM, nvm, and other shell-rc-managed toolchains. Default permission mode
-is auto (Opus 4.7 auto-mode classifier); override with -P.
+is auto (Opus 4.7 auto-mode classifier); override with --permission-mode.
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
@@ -181,7 +181,7 @@ cmd_spawn() {
       --cwd)            cwd="$2"; shift 2 ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
-      -P|--permission-mode) permission_mode="$2"; shift 2 ;;
+      --permission-mode) permission_mode="$2"; shift 2 ;;
       -h|--help)        usage; exit 0 ;;
       --)               shift; extra_args=("$@"); break ;;
       *)
