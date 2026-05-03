@@ -542,6 +542,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
     }
     case 'channel_join': {
       const channel = String(args.channel ?? '')
+      if (channelUsers.has(channel.toLowerCase())) {
+        return { content: [{ type: 'text', text: `already in ${channel}` }] }
+      }
       const ok = await new Promise<boolean>((resolve) => {
         const list = join_resolvers.get(channel) ?? []
         list.push(resolve)
