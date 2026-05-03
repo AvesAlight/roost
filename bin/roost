@@ -32,6 +32,7 @@ Commands:
   tail <nick> [-n LINES]   Show recent pane output (default 30 lines).
   status                   ergo state + roost session count.
   root                     Print the roost plugin root directory.
+  send <nick> <message...> Inject text into a nick's tmux pane.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -387,6 +388,27 @@ cmd_status() {
   fi
 }
 
+cmd_send() {
+  if [ "$#" -lt 2 ]; then
+    echo "error: send requires a nick and message" >&2
+    echo "usage: roost send <nick> <message...>" >&2
+    exit 1
+  fi
+  local nick="$1"
+  shift
+  local message="$*"
+  local session_name="${SESSION_PREFIX}${nick}"
+  if ! tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "no tmux session named '${session_name}'" >&2
+    exit 4
+  fi
+  local buf="roost-send-${nick}-$$"
+  printf '%s' "${message}" | tmux load-buffer -b "${buf}" -
+  tmux paste-buffer -t "${session_name}" -b "${buf}" -p
+  tmux send-keys -t "${session_name}" Enter
+  tmux delete-buffer -b "${buf}" 2>/dev/null || true
+}
+
 if [ "$#" -eq 0 ]; then
   usage
   exit 0
@@ -401,6 +423,7 @@ case "${cmd}" in
   attach)   cmd_attach "$@" ;;
   tail)     cmd_tail "$@" ;;
   status)   cmd_status "$@" ;;
+  send)     cmd_send "$@" ;;
   root)     echo "${ROOST_DIR}" ;;
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
