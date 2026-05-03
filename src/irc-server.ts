@@ -429,6 +429,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['channel'],
       },
     },
+    {
+      name: 'channel_list',
+      description: 'List all channels currently joined by this MCP instance.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
   ],
 }))
 
@@ -585,6 +594,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           `[${m.ts}] ${m.isDirect ? `(DM from ${m.sender})` : `${m.channel} <${m.sender}>`} ${m.text}`,
       )
       return { content: [{ type: 'text', text: lines.join('\n') }] }
+    }
+    case 'channel_list': {
+      const channels = [...channelUsers.keys()].sort()
+      return {
+        content: [
+          {
+            type: 'text',
+            text: channels.length
+              ? channels.join(', ')
+              : '(no channels joined)',
+          },
+        ],
+      }
     }
     default:
       return {
