@@ -190,7 +190,7 @@ def ask_daemon(summary: str):
         return None
 
     try:
-        req = json.dumps({"summary": summary})
+        req = json.dumps({"summary": summary, "timeout": SOCKET_SAFETY_TIMEOUT})
         sock.sendall((req + "\n").encode("utf-8"))
         # Read response. Should be one line.
         buf = b""

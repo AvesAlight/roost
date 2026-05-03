@@ -273,8 +273,9 @@ def main() -> None:
                             in_flight = None
                             maybe_dispatch_next()
                         else:
-                            # Unsolicited DM — log and ignore (could echo a hint).
+                            # Unsolicited DM — log and send hint back.
                             dlog(f"unsolicited DM from {sender}: {body!r}")
+                            irc.send_line(f"PRIVMSG {sender} :late — request already timed out (no in-flight prompt)")
                 except (ConnectionResetError, OSError) as e:
                     dlog(f"IRC connection lost: {e}")
                     running = False
