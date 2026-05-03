@@ -35,6 +35,7 @@ import IRC from 'irc-framework'
 const SOURCE_NAME = 'roost-irc'
 
 const env = (k: string, def?: string) => process.env[k] ?? def
+const numericEnv = (k: string, def: number) => Number(env(k, String(def)))
 const required = (k: string): string => {
   const v = process.env[k]
   if (!v) {
@@ -45,18 +46,18 @@ const required = (k: string): string => {
 }
 
 const SERVER = env('ROOST_IRC_SERVER', '127.0.0.1')!
-const PORT = Number(env('ROOST_IRC_PORT', '6667'))
+const PORT = numericEnv('ROOST_IRC_PORT', 6667)
 const NICK = required('ROOST_IRC_NICK')
 const REALNAME = env('ROOST_IRC_REALNAME', NICK)!
 const AUTO_JOIN = (env('ROOST_IRC_CHANNELS', '') || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean)
-const HISTORY_SIZE = Number(env('ROOST_IRC_HISTORY', '50'))
-// History replayed to the agent on channel join (via IRCv3 chathistory autoreplay).
-// If the server doesn't ack the chathistory cap, no batch is sent and these are unused.
-const JOIN_HISTORY_LINES = Number(env('ROOST_IRC_JOIN_HISTORY_LINES', '20'))
-const JOIN_HISTORY_MINUTES = Number(env('ROOST_IRC_JOIN_HISTORY_MINUTES', '30'))
+const HISTORY_SIZE = numericEnv('ROOST_IRC_HISTORY', 50)
+// No-op if the server doesn't ack the chathistory cap — the batch end handler simply never fires.
+const JOIN_HISTORY_LINES = numericEnv('ROOST_IRC_JOIN_HISTORY_LINES', 20)
+const JOIN_HISTORY_MINUTES = numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30)
+const CAP_CHATHISTORY = 'chathistory'
 
 // ---- IRC client wiring -------------------------------------------------
 
@@ -657,7 +658,7 @@ client.on('registered', () => {
     )
   }
   process.stderr.write(
-    enabled.includes('chathistory')
+    enabled.includes(CAP_CHATHISTORY)
       ? `roost-irc[${NICK}]: chathistory cap active — will replay up to ${JOIN_HISTORY_LINES} msgs / ${JOIN_HISTORY_MINUTES}min on join\n`
       : `roost-irc[${NICK}]: chathistory cap NOT active — no history replay on join\n`,
   )
@@ -781,7 +782,7 @@ client.on('message', (event: {
   // draft/multiline and chathistory batch members are handled in their
   // respective batch-end handlers below — skip here to avoid double-emit.
   if (event.batch?.type === 'draft/multiline') return
-  if (event.batch?.type === 'chathistory') return
+  if (event.batch?.type === CAP_CHATHISTORY) return
   const isDirect = event.target === NICK
   const channel = isDirect ? event.nick : event.target
   const ts = new Date().toISOString()
@@ -904,7 +905,7 @@ client.on(
       const isDirect = target === NICK
       const channel = isDirect ? sender : target
       const serverTimeMs = c.getServerTime?.()
-      // Drop messages outside the time window (skip filter if no server-time tag).
+      // Skip filter if no server-time tag.
       if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
       batch.push({ channel, sender, text, ts, isDirect })
@@ -930,7 +931,7 @@ client.on('socket error', (err: Error) => {
 // Ask the server for the IRCv3 caps we need beyond irc-framework's
 // defaults. labeled-response isn't strictly required for multiline, but
 // it pairs well with future features (await-able send confirmations).
-client.requestCap(['draft/multiline', 'labeled-response', 'chathistory'])
+client.requestCap(['draft/multiline', 'labeled-response', CAP_CHATHISTORY])
 
 client.connect({
   host: SERVER,
