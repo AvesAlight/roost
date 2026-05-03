@@ -97,44 +97,26 @@ const pushHistory = (key: string, msg: IrcMessage) => {
 }
 
 // ---- Replay dedupe (issue #44) -----------------------------------------
-//
-// Tracks fingerprints of every message emitted to the agent. On chathistory
-// backfill (join or reconnect), messages whose fingerprints are already
-// present are skipped — they're already in the agent's context window.
-//
-// "Same context window" = same MCP process. If the process restarts, the
-// set is empty and full backfill is delivered. For compaction (which does
-// NOT restart the process), the PreCompact hook sends SIGUSR1 to clear the
-// set so the next backfill after reconnect delivers the compacted history.
-//
-// Fingerprint: channel|sender|server-ts|text-prefix. The text prefix handles
-// the (rare) case of two senders posting at the same millisecond.
-//
-// Cap: HISTORY_SIZE × joined-channels × 2, enforced by evicting the oldest
-// entry. Evaluated dynamically so it scales as channels are joined/parted.
 
 const seenFingerprints = new Set<string>()
-const fingerprintQueue: string[] = []
 
-const msgFingerprint = (channel: string, sender: string, ts: string, text: string): string =>
-  `${channel}|${sender}|${ts}|${text.slice(0, 64)}`
+const msgFingerprint = (msg: IrcMessage): string =>
+  `${msg.channel}|${msg.sender}|${msg.ts}|${msg.text}`
 
 const addFingerprint = (fp: string) => {
   if (seenFingerprints.has(fp)) return
   seenFingerprints.add(fp)
-  fingerprintQueue.push(fp)
+  // Evict oldest (Set iterates insertion order) when over cap.
   const cap = HISTORY_SIZE * Math.max(1, channelUsers.size) * 2
-  while (fingerprintQueue.length > cap) {
-    const oldest = fingerprintQueue.shift()!
-    seenFingerprints.delete(oldest)
+  while (seenFingerprints.size > cap) {
+    seenFingerprints.delete(seenFingerprints.values().next().value!)
   }
 }
 
-// SIGUSR1: clear the seen-set so the next chathistory backfill (after
-// reconnect) delivers messages that were compacted out of context.
+// SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
+// after reconnect re-delivers messages compacted out of the agent's context.
 process.on('SIGUSR1', () => {
   seenFingerprints.clear()
-  fingerprintQueue.length = 0
   process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
 })
 
@@ -504,7 +486,7 @@ const emitChannelEvent = (
   msg: IrcMessage,
   extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
 ) => {
-  addFingerprint(msgFingerprint(msg.channel, msg.sender, msg.ts, msg.text))
+  addFingerprint(msgFingerprint(msg))
   const seq = ++receiveSeq
   const meta: Record<string, string> = {
     sender: msg.sender,
@@ -968,7 +950,7 @@ client.on(
     // Take the most-recent N (ergo sends oldest-first).
     const limited = JOIN_HISTORY_LINES > 0 ? batch.slice(-JOIN_HISTORY_LINES) : batch
     for (const msg of limited) {
-      const fp = msgFingerprint(msg.channel, msg.sender, msg.ts, msg.text)
+      const fp = msgFingerprint(msg)
       if (seenFingerprints.has(fp)) {
         process.stderr.write(`roost-irc[${NICK}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
         continue
