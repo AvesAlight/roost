@@ -82,6 +82,8 @@ const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 // `draft/multiline=max-bytes=16384,max-lines=200`); we cache them here.
 let multilineEnabled = false
 let multilineMaxBytes = 4096
+// Pre-negotiation placeholder; overwritten by cap value once multilineEnabled=true.
+// TODO: could be undefined until cap negotiation lands
 let multilineMaxLines = 100
 
 // Per-channel ring buffer of recent messages — gives us

@@ -7,9 +7,6 @@ import { afterAll } from 'bun:test'
 
 const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
-/** Matches `max-lines` in makeErgoConfig below. */
-export const ERGO_MAX_LINES = 200
-
 export function isErgoAvailable(): boolean {
   return findErgoBin() !== null
 }
