@@ -1,6 +1,7 @@
 [test]
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
+coverageSkipTestFiles = true
 
 # Global thresholds (not per-file — bun lacks file-pattern filtering; follow-up in #62).
 [test.coverageThreshold]

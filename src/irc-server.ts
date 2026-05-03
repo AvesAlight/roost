@@ -32,6 +32,19 @@ import {
 // @ts-expect-error — irc-framework lacks first-class type defs
 import IRC from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
+import {
+  MAX_CHUNK_BODY,
+  INITIAL_BUFFER_MS,
+  EXTENDED_BUFFER_MS,
+  LEGACY_MARKER_RE,
+  IrcMessage,
+  findNaturalBoundary,
+  splitText,
+  splitLineForMultiline,
+  newBatchId,
+  stripLegacyMarker,
+  reassembleMultilineBatch,
+} from './irc-lib.js'
 
 const SOURCE_NAME = 'roost-irc'
 
@@ -61,14 +74,6 @@ const JOIN_HISTORY_MINUTES = numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30)
 const CAP_CHATHISTORY = 'chathistory'
 
 // ---- IRC client wiring -------------------------------------------------
-
-interface IrcMessage {
-  channel: string // "#room" for channel messages, sender's nick for DMs
-  sender: string
-  text: string
-  ts: string
-  isDirect: boolean
-}
 
 const client = new IRC.Client()
 let irc_ready = false
@@ -169,16 +174,6 @@ if (DATA_DIR) {
 // chunks still arrive in fast succession, so the time-window heuristic
 // reassembles them correctly.
 
-const MAX_CHUNK_BODY = 300
-// Adaptive buffer window — first chunk gets the short window so single
-// PRIVMSGs flush fast (and two genuine quick sends from same sender
-// stay separate). Once we see a second chunk arrive, we know it's a
-// multi-chunk logical message and extend the window so server-side
-// rate-limit pauses (ngircd appears to drip-feed at ~1s intervals
-// after a 3-burst, observed 2026-04-27) don't cause premature flush.
-const INITIAL_BUFFER_MS = 250
-const EXTENDED_BUFFER_MS = 2000
-const LEGACY_MARKER_RE = /^\[roost-split:[0-9a-f]{8}:\d+\/\d+\] /
 
 // Per-MCP monotonic receive counter — gives downstream consumers a
 // strictly-monotonic ordering even when two events resolve to the same
@@ -216,61 +211,6 @@ interface RecvBuf {
 }
 const recvBuffers = new Map<string, RecvBuf>()
 
-// Split at natural boundaries when possible — prefer sentence end, then
-// any whitespace. Search backward within the last 1/3 of the chunk so we
-// don't produce tiny chunks chasing a boundary. Falls back to mid-
-// character split only if no boundary is in range (e.g., a long URL or
-// token-stream with no spaces).
-//
-// Important: ngircd strips trailing whitespace from PRIVMSG bodies but
-// preserves leading whitespace. We therefore put boundary whitespace at
-// the START of chunk-N+1 (chunk-N ends with non-whitespace; chunk-N+1
-// starts with the boundary character). When the receiver concatenates,
-// the original byte content is preserved.
-//
-// We also avoid Pass-1-style newline splits — irc-framework's say()
-// pre-splits its input on \r\n|\n|\r, which would shred a chunk whose
-// boundary character is a newline. Sentence and whitespace boundaries
-// are sufficient for the v0 case.
-const findNaturalBoundary = (text: string, start: number, end: number): number => {
-  const minViable = start + Math.floor((end - start) * 2 / 3)
-  // Pass 1: sentence end (period/!/? followed by space or end-of-string).
-  // Split AFTER the punctuation so chunk-N ends with `.` (no trailing
-  // whitespace), chunk-N+1 starts with the space.
-  for (let j = end; j > minViable; j--) {
-    const c = text[j - 1]
-    const next = text[j]
-    if ((c === '.' || c === '!' || c === '?') && (next === ' ' || next === undefined)) {
-      return j
-    }
-  }
-  // Pass 2: any whitespace. Split at the space — chunk-N ends with last
-  // non-whitespace char, chunk-N+1 starts with the whitespace.
-  for (let j = end; j > minViable; j--) {
-    const c = text[j]
-    if (c === ' ' || c === '\t') return j
-  }
-  // Pass 3: hard cut (no boundary in range — long URL etc.)
-  return end
-}
-
-const splitText = (text: string): string[] | null => {
-  if (text.length <= MAX_CHUNK_BODY) return null
-  const out: string[] = []
-  let i = 0
-  while (i < text.length) {
-    const remaining = text.length - i
-    if (remaining <= MAX_CHUNK_BODY) {
-      out.push(text.slice(i))
-      break
-    }
-    const split = findNaturalBoundary(text, i, i + MAX_CHUNK_BODY)
-    out.push(text.slice(i, split))
-    i = split
-  }
-  return out
-}
-
 const sendLegacyChunks = (target: string, text: string): { chunks: number; mode: 'single' | 'chunked' } => {
   const chunks = splitText(text)
   if (!chunks) {
@@ -285,30 +225,6 @@ const sendLegacyChunks = (target: string, text: string): { chunks: number; mode:
   )
   return { chunks: chunks.length, mode: 'chunked' }
 }
-
-// Split a single logical line (no internal \n) into ≤MULTILINE_LINE_BYTES
-// chunks at natural boundaries. First chunk has no concat tag (so it
-// retains the implicit newline-from-prior-line); subsequent chunks carry
-// +draft/multiline-concat so they reassemble onto the first.
-const splitLineForMultiline = (line: string): string[] => {
-  if (line.length <= MULTILINE_LINE_BYTES) return [line]
-  const out: string[] = []
-  let i = 0
-  while (i < line.length) {
-    const remaining = line.length - i
-    if (remaining <= MULTILINE_LINE_BYTES) {
-      out.push(line.slice(i))
-      break
-    }
-    const split = findNaturalBoundary(line, i, i + MULTILINE_LINE_BYTES)
-    out.push(line.slice(i, split))
-    i = split
-  }
-  return out
-}
-
-const newBatchId = (): string =>
-  Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
 
 const sendMultiline = (target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } => {
   // Single-line, single-chunk fast path: no batch overhead.
@@ -835,9 +751,7 @@ client.on('message', (event: {
 
   // Strip legacy [roost-split:...] marker if present (backward compat
   // with senders not yet on the buffering build).
-  let body = event.message
-  const legacy = LEGACY_MARKER_RE.exec(body)
-  if (legacy) body = body.slice(legacy[0].length)
+  const body = stripLegacyMarker(event.message)
 
   const key = `${event.nick}|${event.target}`
   const existing = recvBuffers.get(key)
@@ -890,23 +804,7 @@ client.on(
     const sender = cmds[0].nick
     if (sender === NICK) return // don't loop our own messages back
 
-    // Reassemble.
-    let text = ''
-    cmds.forEach((c, i) => {
-      const body = c.params[c.params.length - 1] ?? ''
-      // Tag is on the wire as `draft/multiline-concat` (no `+` prefix;
-      // see send-side note). Use presence-check — valueless tags
-      // decode to "" which is falsy under !!.
-      const concat = 'draft/multiline-concat' in c.tags
-      if (i === 0) {
-        text = body
-      } else if (concat) {
-        text += body
-      } else {
-        text += '\n' + body
-      }
-    })
-
+    const text = reassembleMultilineBatch(event.commands)
     const isDirect = target === NICK
     const channel = isDirect ? sender : target
     // Prefer server-time of the first chunk if available.
