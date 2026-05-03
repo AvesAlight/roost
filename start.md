@@ -19,6 +19,9 @@ To work on an issue:
 1. Join #issue-<N> on Roost
 2. Add the issue to the watch list in .orchestrator/config.json
 3. Create a new branch and worktree for the issue. Install dependencies in the worktree (bun or yarn)
+
+   Before continuing: read the issue. If the body is < ~3 sentences or scope-ambiguous, ask the human in #leads-roost-dev for a one-line clarification before spawning the worker — much cheaper than a full PR rewrite after the worker builds the wrong thing.
+
 4. Start a new agent with Roost using
   - Model: Sonnet
   - Name: worker-<N>
