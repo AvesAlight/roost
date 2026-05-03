@@ -1,13 +1,8 @@
 [test]
-coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
 
-# Global thresholds (not per-file). Issue #19 called for per-file but bun's
-# coverage tooling doesn't expose file-pattern filtering, so we ship global for
-# now and revisit if bun adds per-file support. Gate is aspirational until
-# src/ grows importable modules — irc-server.ts runs as a subprocess and never
-# appears in coverage regardless of threshold.
+# Global thresholds (not per-file — bun lacks file-pattern filtering; follow-up in #62).
 [test.coverageThreshold]
 line = 0.85
 branch = 0.75
