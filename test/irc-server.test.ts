@@ -75,6 +75,15 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(after)).toContain('#list-test-b')
   })
 
+  it('channel_join on already-joined channel returns success immediately', async () => {
+    const mcp = await startMcp(ergo, 'rejoin-test-mcp')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#rejoin-test' } })
+    const result = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#rejoin-test' } })
+
+    expect(result.isError).toBeFalsy()
+  })
+
   it('channel_leave parts cleanly', async () => {
     const mcp = await startMcp(ergo, 'leave-test-mcp')
     const peer = await connectPeer(ergo, 'leave-test-peer')
