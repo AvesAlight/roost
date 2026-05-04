@@ -226,6 +226,10 @@ cmd_spawn() {
       exit 1
     fi
     prompt_text="$(cat)"
+    if [ -z "${prompt_text}" ]; then
+      echo "error: --prompt-stdin: stdin was empty" >&2
+      exit 1
+    fi
   fi
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
@@ -262,6 +266,10 @@ cmd_spawn() {
   ROOST_DATA_DIR="$(mktemp -d "/tmp/roost-${nick}.XXXXXXXX")"
   chmod 700 "${ROOST_DATA_DIR}"
   perm_paths "${ROOST_DATA_DIR}"
+  if [ -n "${prompt_text}" ]; then
+    prompt_file="${ROOST_DATA_DIR}/prompt.txt"
+    printf '%s' "${prompt_text}" > "${prompt_file}"
+  fi
   # On any failure before the tmux session is created, clean up the data dir
   # (and any permbot that was started) so we don't leak orphans.
   trap 'stop_permbot "${ROOST_DATA_DIR}"' EXIT
@@ -315,9 +323,6 @@ cmd_spawn() {
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
-  elif [ -n "${prompt_text}" ]; then
-    inner_cmd="${inner_cmd} --"' "$ROOST_PROMPT_TEXT"'
-    tmux_env+=(-e "ROOST_PROMPT_TEXT=${prompt_text}")
   fi
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
