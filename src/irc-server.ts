@@ -90,14 +90,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     history.set(key, buf)
   }
 
-  // ---- Unread tracking (issue #9) ----------------------------------------
-  //
-  // Tracks unread message counts per channel (or DM peer nick). A channel is
-  // "unread" when messages have arrived since the agent last gave it attention.
-  // The count clears on: outbound send to that channel, channel_history call,
-  // or explicit channel_ack. Historical messages replayed on join do NOT
-  // increment unread — the agent "saw" them as part of joining.
-
   interface UnreadInfo {
     count: number
     lastSender: string
@@ -276,7 +268,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
   ) => {
     addFingerprint(msg)
-    // Historical replay (join backfill) doesn't count — agent saw those on join.
     if (!extras.historical) {
       const prev = unread.get(msg.channel)
       const preview = msg.text.length > 80 ? msg.text.slice(0, 77) + '...' : msg.text
@@ -575,7 +566,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         }
         const lines = channels.map(ch => {
           const info = unread.get(ch)
-          return info && info.count > 0
+          return info
             ? `${ch} (${info.count} unread, last: ${info.lastSender}: "${info.lastPreview}")`
             : ch
         })
@@ -869,7 +860,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   })
 
   const emitUnreadSummary = () => {
-    const entries = [...unread.entries()].filter(([, info]) => info.count > 0)
+    const entries = [...unread.entries()]
     const seq = ++receiveSeq
     let text: string
     if (entries.length === 0) {
@@ -943,12 +934,7 @@ if (import.meta.main) {
     process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
   })
 
-  // SIGUSR2: PostCompact hook fires this to emit an unread-channel summary.
-  // The agent's context just shrank; the summary nudges it back toward any
-  // channel that accumulated messages while it was focused elsewhere.
-  process.on('SIGUSR2', () => {
-    emitUnreadSummary()
-  })
+  process.on('SIGUSR2', emitUnreadSummary)
 
   await mcp.connect(new StdioServerTransport())
   process.stderr.write(`roost-irc[${NICK}]: MCP transport up at ${new Date().toISOString()}\n`)
