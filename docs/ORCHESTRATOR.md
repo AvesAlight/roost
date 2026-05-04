@@ -11,7 +11,7 @@ Create `.orchestrator/config.json`:
 
 ```json
 {
-  "repo": "GoCarrot/roost",
+  "repo": "AlexSc/roost",
   "agent_logins": ["TeakBuilds"],
   "irc": {
     "nick": "dispatcher-roost",

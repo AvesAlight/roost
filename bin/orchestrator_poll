@@ -15,7 +15,7 @@ Modes:
 Config (.orchestrator/config.json):
 
     {
-      "repo": "GoCarrot/roost",
+      "repo": "AlexSc/roost",
       "agent_logins": ["TeakBuilds"],
       "irc": {
         "nick": "dispatcher-roost",
