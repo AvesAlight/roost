@@ -70,13 +70,14 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-msg1' } })
     await peer.joinChannel('#ip-msg1')
 
+    const messageSeen = peer.waitForMessage('#ip-msg1', m => m.nick === 'ip-msg1' && m.text === 'hello in-process')
     const result = await mcp.client.callTool({
       name: 'channel_message',
       arguments: { channel: '#ip-msg1', text: 'hello in-process' },
     })
     expect(result.isError).toBeFalsy()
     expect(toolText(result)).toContain('sent to #ip-msg1')
-    await peer.waitForMessage('#ip-msg1', m => m.nick === 'ip-msg1' && m.text === 'hello in-process')
+    await messageSeen
   })
 
   it('inbound channel message arrives as notification', async () => {
@@ -339,10 +340,11 @@ describe.if(isErgoAvailable())('irc-server MCP tools (subprocess)', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#leave-test' } })
     await peer.joinChannel('#leave-test')
 
+    const partSeen = peer.waitForPart('#leave-test', 'leave-test-mcp')
     const result = await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#leave-test' } })
     expect(result.isError).toBeFalsy()
     expect(toolText(result)).toBe('parted #leave-test')
 
-    await peer.waitForPart('#leave-test', 'leave-test-mcp', 10000)
-  }, 15000)
+    await partSeen
+  })
 })

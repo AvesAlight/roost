@@ -54,6 +54,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     await peer.joinChannel('#ip-ml-ec3')
 
     const text = 'x'.repeat(MULTILINE_LINE_BYTES) // exactly at threshold — single PRIVMSG
+    const messageSeen = peer.waitForMessage('#ip-ml-ec3', m => m.nick === 'ip-ml-ec3-s' && m.text === text)
     const result = await mcp.client.callTool({
       name: 'channel_message',
       arguments: { channel: '#ip-ml-ec3', text },
@@ -61,7 +62,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     expect(result.isError).toBeFalsy()
     expect(toolText(result)).not.toContain('batch')
 
-    await peer.waitForMessage('#ip-ml-ec3', m => m.nick === 'ip-ml-ec3-s' && m.text === text)
+    await messageSeen
   })
 
   it('message one byte over boundary sends as draft/multiline batch', async () => {

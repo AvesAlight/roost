@@ -18,6 +18,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-msg' } })
     await peer.joinChannel('#ip-out-msg')
 
+    const messageSeen = peer.waitForMessage('#ip-out-msg', m => m.nick === 'ip-out-mcp1' && m.text === 'hello from mcp')
     const result = await mcp.client.callTool({
       name: 'channel_message',
       arguments: { channel: '#ip-out-msg', text: 'hello from mcp' },
@@ -25,13 +26,15 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(result.isError).toBeFalsy()
     expect(toolText(result)).toContain('sent to #ip-out-msg')
 
-    await peer.waitForMessage('#ip-out-msg', m => m.nick === 'ip-out-mcp1' && m.text === 'hello from mcp')
+    await messageSeen
   })
 
   it('direct_message: MCP→peer DM arrives', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-mcp2')
     const peer = await connectPeer(ergo, 'ip-out-peer2')
 
+    // For DMs in irc-framework, event.target === recipient nick, so waitForMessage on own nick.
+    const dmSeen = peer.waitForMessage('ip-out-peer2', m => m.nick === 'ip-out-mcp2' && m.text === 'dm from mcp')
     const result = await mcp.client.callTool({
       name: 'direct_message',
       arguments: { nick: 'ip-out-peer2', text: 'dm from mcp' },
@@ -39,8 +42,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(result.isError).toBeFalsy()
     expect(toolText(result)).toContain('DM to ip-out-peer2')
 
-    // For DMs in irc-framework, event.target === recipient nick, so waitForMessage on own nick.
-    await peer.waitForMessage('ip-out-peer2', m => m.nick === 'ip-out-mcp2' && m.text === 'dm from mcp')
+    await dmSeen
   })
 
   it('direct_message: peer→MCP DM arrives as notification', async () => {
