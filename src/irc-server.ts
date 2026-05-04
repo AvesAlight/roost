@@ -64,6 +64,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   let irc_ready = false
   let hasRegistered = false
   const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
+  const part_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 
   // Max lines per draft/multiline batch, from the cap value
   // (`draft/multiline=max-bytes=16384,max-lines=200`). Pre-negotiation
@@ -458,9 +459,20 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         }
       }
       case 'channel_leave': {
-        const channel = String(args.channel ?? '')
-        ircClient.part(channel)
-        return { content: [{ type: 'text', text: `parted ${channel}` }] }
+        const channel = String(args.channel ?? '').toLowerCase()
+        const ok = await new Promise<boolean>((resolve) => {
+          const list = part_resolvers.get(channel) ?? []
+          list.push(resolve)
+          part_resolvers.set(channel, list)
+          ircClient.part(channel)
+          setTimeout(() => resolve(false), 5000).unref?.()
+        })
+        return {
+          content: [
+            { type: 'text', text: ok ? `parted ${channel}` : `part ${channel} timed out` },
+          ],
+          isError: !ok,
+        }
       }
       case 'channel_who': {
         const channel = String(args.channel ?? '')
@@ -614,6 +626,11 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     'part',
     (event: { nick: string; channel: string; message?: string }) => {
       if (event.nick === NICK) {
+        const list = part_resolvers.get(event.channel)
+        if (list?.length) {
+          for (const r of list) r(true)
+          part_resolvers.delete(event.channel)
+        }
         channelUsers.delete(event.channel)
         return
       }
