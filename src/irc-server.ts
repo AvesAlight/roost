@@ -208,6 +208,14 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     return { chunks: wireLines.length, mode: 'multiline' }
   }
 
+  const pushNotification = (content: string, meta: Record<string, string>) => {
+    const seq = ++receiveSeq
+    mcp.notification({
+      method: 'notifications/claude/channel',
+      params: { content, meta: { ...meta, source: SOURCE_NAME, seq: String(seq) } },
+    }).catch(() => { /* transport closed during teardown */ })
+  }
+
   // Helper: format an inbound IRC message as a channel-event payload.
   const emitChannelEvent = (
     msg: IrcMessage,
@@ -218,14 +226,11 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       const prev = unread.get(msg.channel)
       unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
     }
-    const seq = ++receiveSeq
     const meta: Record<string, string> = {
       sender: msg.sender,
       channel: msg.channel,
       isDirect: String(msg.isDirect),
       ts: msg.ts,
-      seq: String(seq),
-      source: SOURCE_NAME,
     }
     if (extras.buffered) {
       meta.buffered = 'true'
@@ -236,10 +241,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     if (extras.historical) {
       meta.historical = 'true'
     }
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: { content: msg.text, meta },
-    }).catch(() => { /* transport closed during teardown */ })
+    pushNotification(msg.text, meta)
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${extras.buffered ? ` [BUFFERED x${extras.chunkCount}]` : ''}${extras.historical ? ' [HISTORY]' : ''}\n`,
     )
@@ -256,14 +258,11 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     extras: { reason?: string; newNick?: string } = {},
   ) => {
     const ts = new Date().toISOString()
-    const seq = ++receiveSeq
     const meta: Record<string, string> = {
       sender: nick,
       channel,
       isDirect: 'false',
       ts,
-      seq: String(seq),
-      source: SOURCE_NAME,
       event: kind,
     }
     if (extras.reason) meta.reason = extras.reason
@@ -272,10 +271,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       kind === 'join' ? `${nick} joined ${channel}`
       : kind === 'nick' ? `${nick} is now known as ${extras.newNick}`
       : `${nick} left ${channel}${extras.reason ? ` (${extras.reason})` : ''}`
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: { content: summary, meta },
-    }).catch(() => { /* transport closed during teardown */ })
+    pushNotification(summary, meta)
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
   }
 
@@ -283,14 +279,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   // channel notification. Not scoped to a channel — channel/sender are empty.
   const emitSystemEvent = (event: 'disconnected' | 'reconnected', content: string) => {
     const ts = new Date().toISOString()
-    const seq = ++receiveSeq
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content,
-        meta: { source: SOURCE_NAME, event, channel: '', sender: '', isDirect: 'false', ts, seq: String(seq) },
-      },
-    }).catch(() => { /* transport closed during teardown */ })
+    pushNotification(content, { event, channel: '', sender: '', isDirect: 'false', ts })
     process.stderr.write(`roost-irc[${NICK}]: [${event}] ${content}\n`)
   }
 
@@ -802,7 +791,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
 
   const emitUnreadSummary = () => {
     const entries = [...unread.entries()]
-    const seq = ++receiveSeq
     let text: string
     if (entries.length === 0) {
       text = '[roost] all caught up — no unread messages'
@@ -810,13 +798,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       const lines = entries.map(([ch, info]) => `  ${formatUnreadLine(ch, info)}`)
       text = `[roost] unread activity:\n${lines.join('\n')}`
     }
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: text,
-        meta: { source: SOURCE_NAME, event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString(), seq: String(seq) },
-      },
-    }).catch(() => { /* transport closed during teardown */ })
+    pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString() })
     process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
   }
 
