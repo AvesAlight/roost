@@ -43,4 +43,12 @@ When making a commit, ensure you include a human/claude interaction log. This is
    → Claude: [How Claude adjusted]
 
 [Continue numbering ALL prompts - don't skip any or judge importance]
+
+```
+
+Be sure to end your commit with Claude attribution
+
+```
+🤖 Generated with Claude Code
+Co-Authored-By: Claude <noreply@anthropic.com>
 ```
