@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { spawnSync } from 'child_process'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-const BIN_DIR = join(import.meta.dir, '../bin')
+const BIN_DIR = join(import.meta.dirname, '../bin')
 
 function isShellScript(file: string): boolean {
   try {
@@ -14,18 +13,19 @@ function isShellScript(file: string): boolean {
   }
 }
 
-function shellcheckAvailable(): boolean {
-  return spawnSync('shellcheck', ['--version']).status === 0
-}
-
 const shellScripts = readdirSync(BIN_DIR).filter(isShellScript)
 
-describe.if(shellcheckAvailable())('shellcheck bin/', () => {
+describe.if(Bun.which('shellcheck') !== null)('shellcheck bin/', () => {
   for (const script of shellScripts) {
-    it(script, () => {
-      const result = spawnSync('shellcheck', [join(BIN_DIR, script)], { encoding: 'utf8' })
-      expect(result.stdout + result.stderr).toBe('')
-      expect(result.status).toBe(0)
+    it(script, async () => {
+      const proc = Bun.spawn(['shellcheck', join(BIN_DIR, script)], { stdout: 'pipe', stderr: 'pipe' })
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      expect(stdout + stderr).toBe('')
+      expect(exitCode).toBe(0)
     })
   }
 })
