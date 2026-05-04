@@ -7,27 +7,25 @@ import {
 } from '../src/irc-lib.js'
 import { MULTILINE_LINE_BYTES } from '../src/constants.js'
 
-const BOUNDARY_SIZE = 300
-
 describe('findNaturalBoundary', () => {
   it('prefers sentence-end boundary (period + space)', () => {
     const text = 'a'.repeat(200) + '. ' + 'b'.repeat(200)
-    const result = findNaturalBoundary(text, 0, BOUNDARY_SIZE)
-    expect(result).toBeLessThan(BOUNDARY_SIZE)
+    const result = findNaturalBoundary(text, 0, MULTILINE_LINE_BYTES)
+    expect(result).toBeLessThan(MULTILINE_LINE_BYTES)
     expect(text[result - 1]).toBe('.')
   })
 
   it('falls back to whitespace boundary', () => {
     const text = 'a'.repeat(250) + ' ' + 'b'.repeat(150)
-    const result = findNaturalBoundary(text, 0, BOUNDARY_SIZE)
-    expect(result).toBeLessThan(BOUNDARY_SIZE)
+    const result = findNaturalBoundary(text, 0, MULTILINE_LINE_BYTES)
+    expect(result).toBeLessThan(MULTILINE_LINE_BYTES)
     expect(text[result]).toBe(' ')
   })
 
   it('hard-cuts when no boundary in range', () => {
     const text = 'a'.repeat(400)
-    const result = findNaturalBoundary(text, 0, BOUNDARY_SIZE)
-    expect(result).toBe(BOUNDARY_SIZE)
+    const result = findNaturalBoundary(text, 0, MULTILINE_LINE_BYTES)
+    expect(result).toBe(MULTILINE_LINE_BYTES)
   })
 
   it('handles end-of-string after sentence punctuation', () => {

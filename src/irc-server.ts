@@ -122,36 +122,13 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   const hasFingerprint = (msg: IrcMessage): boolean =>
     seenFingerprints.get(msg.channel)?.has(msgFingerprint(msg)) ?? false
 
-  // ---- Send-side splitting + receive-side buffering ----------------------
+  // ---- Send-side splitting -----------------------------------------------
   //
-  // Two paths, picked at runtime based on CAP negotiation:
-  //
-  //   1. draft/multiline batch (preferred). When the server advertises
-  //      draft/multiline (ergo does), outbound long messages are sent as
-  //      `BATCH +<id> draft/multiline <target>` followed by tagged
-  //      PRIVMSGs and `BATCH -<id>`. The receiving MCP listens for
-  //      `batch end draft/multiline` and emits a single channel event.
-  //      Lossless: explicit \n's in the source text round-trip exactly
-  //      via the +draft/multiline-concat tag on continuation chunks.
-  //
-  //   2. Legacy time-window heuristic (fallback). If the server doesn't
-  //      speak draft/multiline (ngircd), we pre-split into ≤300-byte
-  //      chunks and reassemble on the receiver by buffering PRIVMSGs from
-  //      the same sender→target pair within a short time window. Lossy
-  //      under genuine fast back-to-back sends from one sender, but
-  //      acceptable for ngircd-era traffic.
-  //
-  // Why not markers in the body? Visible noise to non-MCP observers
-  // (irssi, weechat) — even one-line markers fragment human readability.
-  // Why the path split? ngircd-27 advertises only `multi-prefix` in
-  // CAP LS; tagged PRIVMSGs are silently dropped (probed 2026-04-27).
-  // Ergo unblocks tags + multiline cleanly (added 2026-04-28).
-  //
-  // Backward compat: if an inbound PRIVMSG carries the legacy
-  // [roost-split:<id>:<i>/<n>] body-prefix marker (from a not-yet-cycled
-  // sender on the older code), we strip it before buffering. The
-  // chunks still arrive in fast succession, so the time-window heuristic
-  // reassembles them correctly.
+  // Outbound long messages are sent as a draft/multiline batch:
+  // `BATCH +<id> draft/multiline <target>` followed by tagged PRIVMSGs
+  // and `BATCH -<id>`. The receiving MCP listens for
+  // `batch end draft/multiline` and emits a single channel event.
+  // Lossless: explicit \n's round-trip via the draft/multiline-concat tag.
 
   // Per-MCP monotonic receive counter — gives downstream consumers a
   // strictly-monotonic ordering even when two events resolve to the same
