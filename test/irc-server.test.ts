@@ -27,6 +27,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(byName['channel_history']).toEqual(['channel'])
     expect(tools.map(t => t.name)).toContain('channel_list')
     expect(byName['channel_list']).toEqual([])
+    expect(byName['channel_ack']).toEqual(['channel'])
   })
 
   it('channel_join resolves on ack; channel_who includes own nick', async () => {

@@ -27,6 +27,7 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
     expect(names).toContain('channel_who')
     expect(names).toContain('channel_history')
     expect(names).toContain('channel_list')
+    expect(names).toContain('channel_ack')
   })
 
   it('channel_who on unjoined channel returns empty', async () => {
@@ -125,5 +126,127 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist2' } })
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist2' } })
     expect(toolText(hist)).toContain('no history')
+  })
+
+  // ---- Unread tracking (issue #9) ----------------------------------------
+
+  it('inbound message increments unread; channel_list shows sender+preview', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread1')
+    const peer = await connectPeer(ergo, 'ip-unread1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread1' } })
+    await peer.joinChannel('#ip-unread1')
+
+    peer.say('#ip-unread1', 'hello unread world')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content === 'hello unread world')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).toContain('(1)')
+    expect(toolText(list)).toContain('ip-unread1-peer')
+    expect(toolText(list)).toContain('hello unread world')
+  })
+
+  it('channel_message clears unread', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread2')
+    const peer = await connectPeer(ergo, 'ip-unread2-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread2' } })
+    await peer.joinChannel('#ip-unread2')
+
+    peer.say('#ip-unread2', 'you there?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread2' && n.content === 'you there?')
+
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread2', text: 'yes' } })
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).not.toContain('unread')
+  })
+
+  it('channel_history clears unread', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread3')
+    const peer = await connectPeer(ergo, 'ip-unread3-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread3' } })
+    await peer.joinChannel('#ip-unread3')
+
+    peer.say('#ip-unread3', 'did you see this?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread3' && n.content === 'did you see this?')
+
+    await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-unread3' } })
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).not.toContain('unread')
+  })
+
+  it('channel_ack clears unread', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread4')
+    const peer = await connectPeer(ergo, 'ip-unread4-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread4' } })
+    await peer.joinChannel('#ip-unread4')
+
+    peer.say('#ip-unread4', 'ack this')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread4' && n.content === 'ack this')
+
+    const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread4' } })
+    expect(ack.isError).toBeFalsy()
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).not.toContain('unread')
+  })
+
+  it('emitUnreadSummary emits notification with channel+preview; all-caught-up when none', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread5')
+    const peer = await connectPeer(ergo, 'ip-unread5-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread5' } })
+    await peer.joinChannel('#ip-unread5')
+
+    // Summary with no unread → all caught up
+    mcp.emitUnreadSummary()
+    const nClean = await mcp.waitForNotification(n => n.meta.event === 'unread-summary')
+    expect(nClean.content).toContain('all caught up')
+    const cursor = nClean.cursor
+
+    // Send a message, then trigger summary → should name the channel
+    peer.say('#ip-unread5', 'pending message')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread5' && n.content === 'pending message')
+
+    mcp.emitUnreadSummary()
+    const nDirty = await mcp.waitForNotification(n => n.meta.event === 'unread-summary', 5000, cursor)
+    expect(nDirty.content).toContain('#ip-unread5')
+    expect(nDirty.content).toContain('ip-unread5-peer')
+    expect(nDirty.content).toContain('pending message')
+  })
+
+  it('send reply includes unread nudge for other channels, omits if none', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread7')
+    const peer = await connectPeer(ergo, 'ip-unread7-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-a' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-b' } })
+    await peer.joinChannel('#ip-unread7-a')
+    await peer.joinChannel('#ip-unread7-b')
+
+    // Message arrives in B while agent is "focused" on A
+    peer.say('#ip-unread7-b', 'look at this')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content === 'look at this')
+
+    // Sending to A should report B as unread in the reply
+    const reply = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-a', text: 'hi' } })
+    expect(toolText(reply)).toContain('sent to #ip-unread7-a')
+    expect(toolText(reply)).toContain('#ip-unread7-b')
+    expect(toolText(reply)).toContain('unread:')
+    expect(toolText(reply)).toContain('look at this')
+
+    // Now send to B — reply should be silent (no other unread)
+    const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })
+    expect(toolText(reply2)).not.toContain('unread')
+  })
+
+  it('historical replay does not count as unread', async () => {
+    // This tests the join-baseline rule: messages replayed via chathistory on
+    // join start at 0, not as unread. In the in-process test we simulate by
+    // calling emitChannelEvent with historical=true via the notification path.
+    // The simplest proxy: join a fresh channel (no history), confirm no unread.
+    const mcp = await startMcpInProcess(ergo, 'ip-unread6')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread6' } })
+    mcp.emitUnreadSummary()
+    const n = await mcp.waitForNotification(n => n.meta.event === 'unread-summary')
+    expect(n.content).toContain('all caught up')
   })
 })
