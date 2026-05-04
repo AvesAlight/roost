@@ -1,8 +1,5 @@
 import { MULTILINE_LINE_BYTES } from './constants.js'
 
-export const MAX_CHUNK_BODY = 300
-export const LEGACY_MARKER_RE = /^\[roost-split:[0-9a-f]{8}:\d+\/\d+\] /
-
 export interface IrcMessage {
   channel: string
   sender: string
@@ -14,10 +11,6 @@ export interface IrcMessage {
 // Split at natural boundaries when possible — prefer sentence end, then any
 // whitespace. Searches backward within the last 1/3 of the chunk. Falls back
 // to a hard cut only if no boundary is in range.
-//
-// ngircd strips trailing whitespace, so boundary whitespace goes at the START
-// of chunk N+1 (chunk N ends with non-whitespace; chunk N+1 starts with the
-// boundary character), preserving the original byte content on concatenation.
 export const findNaturalBoundary = (text: string, start: number, end: number): number => {
   const minViable = start + Math.floor((end - start) * 2 / 3)
   for (let j = end; j > minViable; j--) {
@@ -32,23 +25,6 @@ export const findNaturalBoundary = (text: string, start: number, end: number): n
     if (c === ' ' || c === '\t') return j
   }
   return end
-}
-
-export const splitText = (text: string): string[] | null => {
-  if (text.length <= MAX_CHUNK_BODY) return null
-  const out: string[] = []
-  let i = 0
-  while (i < text.length) {
-    const remaining = text.length - i
-    if (remaining <= MAX_CHUNK_BODY) {
-      out.push(text.slice(i))
-      break
-    }
-    const split = findNaturalBoundary(text, i, i + MAX_CHUNK_BODY)
-    out.push(text.slice(i, split))
-    i = split
-  }
-  return out
 }
 
 export const splitLineForMultiline = (line: string): string[] => {
@@ -70,11 +46,6 @@ export const splitLineForMultiline = (line: string): string[] => {
 
 export const newBatchId = (): string =>
   Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
-
-export const stripLegacyMarker = (body: string): string => {
-  const m = LEGACY_MARKER_RE.exec(body)
-  return m ? body.slice(m[0].length) : body
-}
 
 // Reassemble a draft/multiline batch into a single string. Filters to PRIVMSG
 // commands; adjacent lines join with \n unless the line carries

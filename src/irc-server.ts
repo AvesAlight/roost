@@ -34,16 +34,12 @@ import IRC from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
   IrcMessage,
-  splitText,
   splitLineForMultiline,
   newBatchId,
-  stripLegacyMarker,
   reassembleMultilineBatch,
 } from './irc-lib.js'
 
 const SOURCE_NAME = 'roost-irc'
-const INITIAL_BUFFER_MS = 250
-const EXTENDED_BUFFER_MS = 2000
 const CAP_CHATHISTORY = 'chathistory'
 
 export interface McpServerConfig {
@@ -68,16 +64,9 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   let irc_ready = false
   const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 
-  // IRCv3 draft/multiline state. Populated when the server ACKs the cap.
-  // When enabled, outbound long messages go out as a draft/multiline BATCH
-  // (server reassembles cleanly, capable receivers get one message); when
-  // disabled, we fall back to the heuristic chunk + receiver-buffer dance
-  // below. The max-lines limit comes from the cap value (e.g.
-  // `draft/multiline=max-bytes=16384,max-lines=200`); we cache it here so
-  // sendMultiline can fall back to the legacy chunker if the source text
-  // would exceed the server's per-batch ceiling.
-  let multilineEnabled = false
-  // Pre-negotiation placeholder; overwritten by cap value once multilineEnabled=true.
+  // Max lines per draft/multiline batch, from the cap value
+  // (`draft/multiline=max-bytes=16384,max-lines=200`). Pre-negotiation
+  // placeholder; overwritten on registration.
   let multilineMaxLines = 100
 
   // Per-channel ring buffer of recent messages — gives us
@@ -188,32 +177,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     return set
   }
 
-  interface RecvBuf {
-    text: string
-    chunkCount: number
-    channel: string
-    sender: string
-    isDirect: boolean
-    firstTs: string
-    flushTimer: ReturnType<typeof setTimeout>
-  }
-  const recvBuffers = new Map<string, RecvBuf>()
-
-  const sendLegacyChunks = (target: string, text: string): { chunks: number; mode: 'single' | 'chunked' } => {
-    const chunks = splitText(text)
-    if (!chunks) {
-      ircClient.say(target, text)
-      return { chunks: 1, mode: 'single' }
-    }
-    for (const c of chunks) {
-      ircClient.say(target, c)
-    }
-    process.stderr.write(
-      `roost-irc[${NICK}]: split outbound to ${target} into ${chunks.length} naked chunks (receiver buffers)\n`,
-    )
-    return { chunks: chunks.length, mode: 'chunked' }
-  }
-
   const sendMultiline = (target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } => {
     // Single-line, single-chunk fast path: no batch overhead.
     if (text.length <= MULTILINE_LINE_BYTES && !text.includes('\n')) {
@@ -238,10 +201,8 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
 
     if (wireLines.length > multilineMaxLines) {
       process.stderr.write(
-        `roost-irc[${NICK}]: multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${multilineMaxLines}; falling back to legacy chunker\n`,
+        `roost-irc[${NICK}]: multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${multilineMaxLines}; sending anyway\n`,
       )
-      const legacy = sendLegacyChunks(target, text)
-      return { chunks: legacy.chunks, mode: 'single' }
     }
 
     ircClient.raw('BATCH', `+${id}`, 'draft/multiline', target)
@@ -267,11 +228,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       `roost-irc[${NICK}]: multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)\n`,
     )
     return { chunks: wireLines.length, mode: 'multiline' }
-  }
-
-  const sendWithSplit = (target: string, text: string): { chunks: number; mode: 'single' | 'chunked' | 'multiline' } => {
-    if (multilineEnabled) return sendMultiline(target, text)
-    return sendLegacyChunks(target, text)
   }
 
   // Helper: format an inbound IRC message as a channel-event payload.
@@ -343,21 +299,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       params: { content: summary, meta },
     }).catch(() => { /* transport closed during teardown */ })
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
-  }
-
-  const flushBuffer = (key: string) => {
-    const buf = recvBuffers.get(key)
-    if (!buf) return
-    recvBuffers.delete(key)
-    const msg: IrcMessage = {
-      channel: buf.channel,
-      sender: buf.sender,
-      text: buf.text,
-      ts: buf.firstTs,
-      isDirect: buf.isDirect,
-    }
-    pushHistory(buf.channel, msg)
-    emitChannelEvent(msg, { buffered: buf.chunkCount > 1, chunkCount: buf.chunkCount })
   }
 
   // ---- MCP server --------------------------------------------------------
@@ -490,7 +431,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'channel_message': {
         const channel = String(args.channel ?? '')
         const text = String(args.text ?? '')
-        const { chunks, mode } = sendWithSplit(channel, text)
+        const { chunks, mode } = sendMultiline(channel, text)
         unread.delete(channel)
         const suffix = unreadSuffix()
         const note =
@@ -503,7 +444,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'direct_message': {
         const nick = String(args.nick ?? '')
         const text = String(args.text ?? '')
-        const { chunks, mode } = sendWithSplit(nick, text)
+        const { chunks, mode } = sendMultiline(nick, text)
         unread.delete(nick)
         const suffix = unreadSuffix()
         const note =
@@ -606,7 +547,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     const enabled = ircClient.network?.cap?.enabled ?? []
     const available: Map<string, string> = ircClient.network?.cap?.available ?? new Map()
     if (enabled.includes('draft/multiline')) {
-      multilineEnabled = true
       const val = available.get('draft/multiline') || ''
       // val format: "max-bytes=16384,max-lines=200"
       for (const kv of val.split(',')) {
@@ -620,7 +560,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       )
     } else {
       process.stderr.write(
-        `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}); falling back to legacy chunker\n`,
+        `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'})\n`,
       )
     }
     process.stderr.write(
@@ -756,34 +696,9 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     // matches what ergo records and replays in chathistory batches.
     const ts = event.tags?.['time'] ?? new Date().toISOString()
 
-    // Strip legacy [roost-split:...] marker if present (backward compat
-    // with senders not yet on the buffering build).
-    const body = stripLegacyMarker(event.message)
-
-    const key = `${event.nick}|${event.target}`
-    const existing = recvBuffers.get(key)
-    if (existing) {
-      clearTimeout(existing.flushTimer)
-      existing.text += body
-      existing.chunkCount += 1
-      // Once we know it's multi-chunk, extend the window to absorb
-      // server-side rate-limit pauses between chunks.
-      const t = setTimeout(() => flushBuffer(key), EXTENDED_BUFFER_MS)
-      t.unref?.()
-      existing.flushTimer = t
-      return
-    }
-    const t = setTimeout(() => flushBuffer(key), INITIAL_BUFFER_MS)
-    t.unref?.()
-    recvBuffers.set(key, {
-      text: body,
-      chunkCount: 1,
-      channel,
-      sender: event.nick,
-      isDirect,
-      firstTs: ts,
-      flushTimer: t,
-    })
+    const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
+    pushHistory(channel, msg)
+    emitChannelEvent(msg)
   })
 
   // Reassemble a draft/multiline batch into a single channel event.
