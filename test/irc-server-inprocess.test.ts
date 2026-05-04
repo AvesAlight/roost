@@ -140,7 +140,7 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
     await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content === 'hello unread world')
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
-    expect(toolText(list)).toContain('1 unread')
+    expect(toolText(list)).toContain('(1)')
     expect(toolText(list)).toContain('ip-unread1-peer')
     expect(toolText(list)).toContain('hello unread world')
   })

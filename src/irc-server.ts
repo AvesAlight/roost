@@ -97,6 +97,18 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   }
   const unread: Map<string, UnreadInfo> = new Map()
 
+  const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
+    const raw = info.lastPreview.length > previewLength
+      ? info.lastPreview.slice(0, previewLength - 3) + '...'
+      : info.lastPreview
+    return `${ch} (${info.count}) ${info.lastSender}: "${raw.replaceAll('"', "'")}"`
+  }
+
+  const unreadSuffix = (): string => {
+    if (unread.size === 0) return ''
+    return '\nunread:\n' + [...unread.entries()].map(([ch, i]) => `  ${formatUnreadLine(ch, i)}`).join('\n')
+  }
+
   // ---- Replay dedupe (issue #44) -----------------------------------------
 
   // Per-channel seen-fingerprint sets. Each channel's set is capped at
@@ -481,36 +493,26 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(channel, text)
         unread.delete(channel)
-        const unreadSuffix = unread.size > 0
-          ? '\nunread:\n' + [...unread.entries()].map(([ch, i]) => {
-              const raw = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview
-              return `  ${ch} (${i.count}) ${i.lastSender}: "${raw.replaceAll('"', "'")}"`
-            }).join('\n')
-          : ''
+        const suffix = unreadSuffix()
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
           : ''
         const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}${unreadSuffix}` }] }
+        return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}${suffix}` }] }
       }
       case 'direct_message': {
         const nick = String(args.nick ?? '')
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(nick, text)
         unread.delete(nick)
-        const unreadSuffix = unread.size > 0
-          ? '\nunread:\n' + [...unread.entries()].map(([ch, i]) => {
-              const raw = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview
-              return `  ${ch} (${i.count}) ${i.lastSender}: "${raw.replaceAll('"', "'")}"`
-            }).join('\n')
-          : ''
+        const suffix = unreadSuffix()
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
           : ''
         const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}${unreadSuffix}` }] }
+        return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}${suffix}` }] }
       }
       case 'channel_join': {
         const channel = String(args.channel ?? '').toLowerCase()
@@ -578,9 +580,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         }
         const lines = channels.map(ch => {
           const info = unread.get(ch)
-          return info
-            ? `${ch} (${info.count} unread, last: ${info.lastSender}: "${info.lastPreview}")`
-            : ch
+          return info ? formatUnreadLine(ch, info, 80) : ch
         })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
@@ -878,9 +878,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     if (entries.length === 0) {
       text = '[roost] all caught up — no unread messages'
     } else {
-      const lines = entries.map(
-        ([ch, info]) => `  ${ch} (${info.count} unread, last: ${info.lastSender}: "${info.lastPreview}")`,
-      )
+      const lines = entries.map(([ch, info]) => `  ${formatUnreadLine(ch, info)}`)
       text = `[roost] unread activity:\n${lines.join('\n')}`
     }
     mcp.notification({
