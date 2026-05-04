@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
+import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { connectPeer } from './helpers/peer.js'
 
 describe.if(isErgoAvailable())('test helpers', () => {
@@ -32,5 +33,26 @@ describe.if(isErgoAvailable())('test helpers', () => {
       (n) => n.meta.channel === '#smoke-mcp' && n.content.includes('hello from peer'),
     )
     expect(n.meta.sender).toBe('smoke-peer2')
+  })
+
+  it('waitForNotification removes waiter on timeout', async () => {
+    const mcp = await startMcpInProcess(ergo, 'waiter-timeout-mcp')
+    await expect(mcp.waitForNotification(() => false, 50)).rejects.toThrow('timed out')
+    expect(mcp.waiterCount()).toBe(0)
+  })
+
+  it('waitForNotification removes waiter on success', async () => {
+    const mcp = await startMcpInProcess(ergo, 'waiter-success-mcp')
+    const peer = await connectPeer(ergo, 'waiter-success-peer')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#waiter-cleanup' } })
+    await peer.joinChannel('#waiter-cleanup')
+
+    const notifP = mcp.waitForNotification(
+      n => n.meta.channel === '#waiter-cleanup' && n.content.includes('cleanup-probe'),
+    )
+    peer.say('#waiter-cleanup', 'cleanup-probe')
+    await notifP
+    expect(mcp.waiterCount()).toBe(0)
   })
 })

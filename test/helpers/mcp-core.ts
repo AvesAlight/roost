@@ -30,7 +30,7 @@ export async function wireMcpClient(
   transport: Transport,
   nick: string,
   clientName = 'roost-test',
-): Promise<McpHandle> {
+): Promise<McpHandle & { waiterCount: () => number }> {
   const notifications: ChannelNotification[] = []
   const waiters: Array<{
     pred: (n: ChannelNotification) => boolean
@@ -62,6 +62,7 @@ export async function wireMcpClient(
     client,
     nick,
     notifications,
+    waiterCount: () => waiters.length,
     waitForNotification(pred, timeoutMs = 5000, fromCursor = 0) {
       return new Promise((resolve, reject) => {
         for (let i = fromCursor; i < notifications.length; i++) {

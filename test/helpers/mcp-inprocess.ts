@@ -9,6 +9,7 @@ import { wireMcpClient, pollUntilIrcReady, type McpHandle, type ChannelNotificat
 export type { ChannelNotification }
 
 export interface McpInProcessContext extends McpHandle {
+  waiterCount: () => number
   emitUnreadSummary: () => void
 }
 
