@@ -12,7 +12,7 @@ You have IRC tools as MCP. Use them. Do NOT use Bash/nc/raw IRC protocol.
 
 - Send to channel: `channel_message`
 - Send DM: `direct_message`
-- Read: `channel_history`, `channel_ack`
+- Read: `channel_history`, `channel_ack` (only when you read but have nothing to say — sending a message implicitly acks the channel)
 
 ## Commands you accept
 

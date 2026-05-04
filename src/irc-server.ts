@@ -399,7 +399,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       },
       {
         name: 'channel_ack',
-        description: 'Mark a channel (or DM peer nick) as read, clearing its unread count. Use after reviewing a channel\'s activity to signal you\'ve addressed it.',
+        description: 'Mark a channel (or DM peer nick) as read, clearing its unread count. Only needed when you read a channel\'s messages but have nothing to say in response. Posting any message to a channel (channel_message / direct_message) implicitly acks it.',
         inputSchema: {
           type: 'object',
           properties: {
