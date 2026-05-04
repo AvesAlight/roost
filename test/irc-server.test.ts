@@ -157,7 +157,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread2', text: 'yes' } })
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
-    expect(toolText(list)).not.toContain('unread')
+    expect(toolText(list)).not.toMatch(/\(\d+\)/)
   })
 
   it('channel_history clears unread', async () => {
@@ -172,7 +172,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-unread3' } })
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
-    expect(toolText(list)).not.toContain('unread')
+    expect(toolText(list)).not.toMatch(/\(\d+\)/)
   })
 
   it('channel_ack clears unread', async () => {
@@ -188,7 +188,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(ack.isError).toBeFalsy()
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
-    expect(toolText(list)).not.toContain('unread')
+    expect(toolText(list)).not.toMatch(/\(\d+\)/)
   })
 
   it('emitUnreadSummary emits notification with channel+preview; all-caught-up when none', async () => {
@@ -235,7 +235,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     // Now send to B — reply should be silent (no other unread)
     const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })
-    expect(toolText(reply2)).not.toContain('unread')
+    expect(toolText(reply2)).not.toContain('unread:')
   })
 
   it('historical replay does not count as unread', async () => {
