@@ -60,6 +60,11 @@ spawn options:
                              after the session boots. Useful for handoff
                              prompts or any spawn that needs an initial
                              prompt without manual attach.
+     --prompt TEXT           Inline prompt string. Mutually exclusive with
+                             --prompt-file and --prompt-stdin.
+     --prompt-stdin          Read prompt from stdin. Errors if stdin is a
+                             tty. Mutually exclusive with --prompt-file and
+                             --prompt.
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
 
@@ -71,7 +76,11 @@ to auto for opus and acceptEdits for all other models; override with
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
 
-  roost spawn agent-2 \\
+  roost spawn agent-2 --prompt 'hello worker' -c '#my-channel'
+
+  echo 'hello worker' | roost spawn agent-3 --prompt-stdin -c '#my-channel'
+
+  roost spawn agent-4 \\
     -c '#my-channel' \\
     --cwd ~/Dev/myproject \\
     --prompt-file /tmp/handoff.md \\
@@ -164,6 +173,8 @@ cmd_spawn() {
   local session_name=""
   local mcp_config=""
   local prompt_file=""
+  local prompt_text=""
+  local prompt_stdin=0
   local cwd="${PWD}"
   local perm_irc=0
   local perm_target=""
@@ -184,6 +195,8 @@ cmd_spawn() {
       -s|--session)     session_name="$2"; shift 2 ;;
       --mcp-config)     mcp_config="$2"; shift 2 ;;
       -p|--prompt-file) prompt_file="$2"; shift 2 ;;
+      --prompt)         prompt_text="$2"; shift 2 ;;
+      --prompt-stdin)   prompt_stdin=1; shift ;;
       --cwd)            cwd="$2"; shift 2 ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
@@ -199,6 +212,21 @@ cmd_spawn() {
     esac
   done
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
+  local prompt_sources=0
+  [ -n "${prompt_file}" ]     && prompt_sources=$((prompt_sources + 1))
+  [ -n "${prompt_text}" ]     && prompt_sources=$((prompt_sources + 1))
+  [ "${prompt_stdin}" -eq 1 ] && prompt_sources=$((prompt_sources + 1))
+  if [ "${prompt_sources}" -gt 1 ]; then
+    echo "error: --prompt, --prompt-stdin, and --prompt-file are mutually exclusive" >&2
+    exit 1
+  fi
+  if [ "${prompt_stdin}" -eq 1 ]; then
+    if [ -t 0 ]; then
+      echo "error: --prompt-stdin: stdin is a tty, pipe input or use --prompt" >&2
+      exit 1
+    fi
+    prompt_text="$(cat)"
+  fi
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
     exit 1
@@ -287,6 +315,9 @@ cmd_spawn() {
   if [ -n "${prompt_file}" ]; then
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
+  elif [ -n "${prompt_text}" ]; then
+    inner_cmd="${inner_cmd} --"' "$ROOST_PROMPT_TEXT"'
+    tmux_env+=(-e "ROOST_PROMPT_TEXT=${prompt_text}")
   fi
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
