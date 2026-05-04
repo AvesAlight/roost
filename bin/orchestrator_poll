@@ -46,6 +46,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import random
+import re
 import time
 import traceback
 from datetime import datetime, timezone
@@ -59,6 +61,13 @@ HEARTBEAT_PATH = STATE_DIR / "last-tick.txt"
 LAST_ERROR_PATH = STATE_DIR / "last-error.txt"
 
 SCHEMA_VERSION = 1
+
+# Per-line PRIVMSG body cap inside a draft/multiline batch. Matches
+# MULTILINE_LINE_BYTES in irc-lib.ts. IRC wire limit is 512 bytes total;
+# 300 is conservative-safe without knowing the server's prefix length at runtime.
+MULTILINE_LINE_BYTES = 300
+
+CAP_MULTILINE = "draft/multiline"
 
 
 class GhError(RuntimeError):
@@ -359,6 +368,7 @@ def format_comment_event(c: dict, *, kind: str, repo: str | None, pr: int | None
         "comment_url": c.get("html_url"),
         "author": author,
         "is_worker_reply": is_worker,
+        "body": body,
         "body_preview": body[:280],
     }
     if repo:
@@ -462,6 +472,7 @@ def diff_pr(prev: dict, cur: dict, agent_logins: set[str] | None = None) -> list
             "review_url": review.get("html_url"),
             "author": author,
             "state": (review.get("state") or "").upper(),
+            "body": (review.get("body") or ""),
             "body_preview": (review.get("body") or "")[:280],
             "is_worker_reply": is_agent_author,
         }
@@ -562,11 +573,15 @@ def _comment_snippet(event: dict) -> tuple[str, str, str]:
     return snippet, ellipsis, url
 
 
-def format_event(event: dict) -> str:
-    kind = event.get("kind") or "unknown"
+def _event_tag(event: dict) -> str:
     n = event.get("pr") or event.get("issue")
     repo = event.get("repo")
-    tag = f"{repo}#{n}" if (n is not None and repo) else (f"#{n}" if n is not None else "")
+    return f"{repo}#{n}" if (n is not None and repo) else (f"#{n}" if n is not None else "")
+
+
+def format_event(event: dict) -> str:
+    kind = event.get("kind") or "unknown"
+    tag = _event_tag(event)
 
     if kind == "pr_ready_for_review":
         return f"PR {tag} ready for review: {event.get('title', '')} — {event.get('url', '')}"
@@ -632,32 +647,53 @@ def format_event(event: dict) -> str:
 IRC_MAX_CHUNK_BODY = 300
 
 
-def _irc_split_text(text: str) -> list[str]:
-    if len(text.encode("utf-8")) <= IRC_MAX_CHUNK_BODY:
+def _utf8_split(text: str, limit: int, *, boundary: bool) -> list[str]:
+    """Split text into ≤limit-byte chunks. boundary=True seeks sentence/word breaks."""
+    if len(text.encode("utf-8")) <= limit:
         return [text]
     out: list[str] = []
     s = text
     while s:
-        if len(s.encode("utf-8")) <= IRC_MAX_CHUNK_BODY:
+        if len(s.encode("utf-8")) <= limit:
             out.append(s)
             break
-        end = min(len(s), IRC_MAX_CHUNK_BODY)
-        while end > 0 and len(s[:end].encode("utf-8")) > IRC_MAX_CHUNK_BODY:
+        end = min(len(s), limit)
+        while end > 0 and len(s[:end].encode("utf-8")) > limit:
             end -= 1
-        min_viable = max(1, end * 2 // 3)
-        split_at = end
-        for j in range(end, min_viable, -1):
-            if j < len(s) and s[j - 1] in ".!?" and (j == len(s) or s[j] in " \t\n"):
-                split_at = j
-                break
-        else:
+        if boundary:
+            min_viable = max(1, end * 2 // 3)
+            split_at = end
             for j in range(end, min_viable, -1):
-                if j < len(s) and s[j] in " \t":
+                if j < len(s) and s[j - 1] in ".!?" and (j == len(s) or s[j] in " \t\n"):
                     split_at = j
                     break
+            else:
+                for j in range(end, min_viable, -1):
+                    if j < len(s) and s[j] in " \t":
+                        split_at = j
+                        break
+        else:
+            split_at = end
         out.append(s[:split_at])
         s = s[split_at:]
     return out
+
+
+def _irc_split_text(text: str) -> list[str]:
+    return _utf8_split(text, IRC_MAX_CHUNK_BODY, boundary=True)
+
+
+def _multiline_split_line(line: str) -> list[str]:
+    return _utf8_split(line, MULTILINE_LINE_BYTES, boundary=False)
+
+
+# Matches: `:server CAP <nick> <sub> [*] :<caps>`
+# group 1 = subcommand, group 2 = "*" (non-final LS) or None, group 3 = caps string
+_RE_CAP = re.compile(r'^:\S+ CAP \S+ (\w+)(?: (\*))?(?:\s+:?(.*))?')
+_RE_001 = re.compile(r'^:\S+ 001 ')
+# Matches the draft/multiline cap token; group 1 = "key=val,…" params or None
+_RE_MULTILINE_CAP = re.compile(r'(?:^|\s)draft/multiline(?:=(\S+))?(?:\s|$)')
+_RE_MULTILINE_PARAMS = re.compile(r'max-bytes=(\d+)|max-lines=(\d+)')
 
 
 class IrcClient:
@@ -669,6 +705,12 @@ class IrcClient:
         self.sock: socket.socket | None = None
         self._buffer = ""
         self._joined: set[str] = set()
+        self._reset_multiline_state()
+
+    def _reset_multiline_state(self) -> None:
+        self._multiline_enabled = False
+        self._multiline_max_bytes = 16384
+        self._multiline_max_lines = 200
 
     def connect(self) -> None:
         s = socket.create_connection((self.server, self.port), timeout=10)
@@ -676,18 +718,41 @@ class IrcClient:
         self.sock = s
         self._buffer = ""
         self._joined = set()
+        self._reset_multiline_state()
+        self._send_raw("CAP LS 302")
         self._send_raw(f"NICK {self.nick}")
         self._send_raw(f"USER {self.nick} 0 * :{self.nick}")
         deadline = time.time() + 10
         registered = False
+        _cap_req_sent = False
         while time.time() < deadline and not registered:
             for line in self._read_lines(timeout=1.0):
-                parts = line.split(" ", 3)
-                if len(parts) >= 2 and parts[0].startswith(":") and parts[1] == "001":
-                    registered = True
-                    break
                 if line.startswith("PING "):
                     self._send_raw("PONG " + line[5:])
+                    continue
+                cap = _RE_CAP.match(line)
+                if cap:
+                    sub, is_cont, caps = cap.group(1), cap.group(2), cap.group(3) or ""
+                    if sub == "LS":
+                        ml = _RE_MULTILINE_CAP.search(caps)
+                        if ml and not _cap_req_sent:
+                            for mp in _RE_MULTILINE_PARAMS.finditer(ml.group(1) or ""):
+                                if mp.group(1):
+                                    self._multiline_max_bytes = int(mp.group(1))
+                                if mp.group(2):
+                                    self._multiline_max_lines = int(mp.group(2))
+                            self._send_raw(f"CAP REQ :{CAP_MULTILINE}")
+                            _cap_req_sent = True
+                        if is_cont is None and not _cap_req_sent:
+                            self._send_raw("CAP END")
+                    elif sub == "ACK":
+                        self._multiline_enabled = True
+                        self._send_raw("CAP END")
+                    elif sub == "NAK":
+                        self._send_raw("CAP END")
+                elif _RE_001.match(line):
+                    registered = True
+                    break
         if not registered:
             raise RuntimeError(f"IRC registration to {self.server}:{self.port} timed out")
         for ch in self.default_channels:
@@ -770,10 +835,61 @@ class IrcClient:
             self._send_raw(f"PRIVMSG {channel} :{safe}")
             self.pump(timeout=0.0)
 
+    def comment_privmsg(self, channel: str, header: str, body: str, url: str, fallback: str) -> None:
+        """Non-multiline clients still see the URL as a regular PRIVMSG in the flood."""
+        if self._multiline_enabled:
+            logical_lines = [header] + body.splitlines() + [url]
+            wire_lines: list[tuple[str, bool]] = []
+            for logical in logical_lines:
+                chunks = _multiline_split_line(logical)
+                for i, chunk in enumerate(chunks):
+                    wire_lines.append((chunk, i > 0))
+            if (len(wire_lines) <= self._multiline_max_lines
+                    and len(wire_lines) * MULTILINE_LINE_BYTES <= self._multiline_max_bytes):
+                self.join(channel)
+                batch_id = f"{random.randint(0, 0xffffffff):08x}"
+                self._send_raw(f"BATCH +{batch_id} {CAP_MULTILINE} {channel}")
+                for text, is_concat in wire_lines:
+                    tag = (f"batch={batch_id};draft/multiline-concat" if is_concat
+                           else f"batch={batch_id}")
+                    self._send_raw(f"@{tag} PRIVMSG {channel} :{text}")
+                    self.pump(timeout=0.0)
+                self._send_raw(f"BATCH -{batch_id}")
+                return
+        self.privmsg(channel, fallback)
+
 
 # ---------------------------------------------------------------------------
 # IRC dispatch
 # ---------------------------------------------------------------------------
+
+MULTILINE_COMMENT_KINDS = {
+    "pr_review_comment",
+    "pr_conversation_comment",
+    "issue_comment",
+    "pr_review_submitted",
+}
+
+
+def _format_comment_header(event: dict) -> str:
+    """Header line for a comment event — same as format_event minus snippet and URL."""
+    kind = event.get("kind") or ""
+    tag = _event_tag(event)
+    if kind in ("pr_review_comment", "pr_conversation_comment"):
+        author = event.get("author") or "?"
+        path = event.get("path")
+        line = event.get("line")
+        where = f" at {path}:{line}" if path else ""
+        return f"PR {tag} comment by {author}{where}:"
+    if kind == "issue_comment":
+        author = event.get("author") or "?"
+        return f"Issue {tag} comment by {author}:"
+    if kind == "pr_review_submitted":
+        author = event.get("author") or "?"
+        state = event.get("state") or "?"
+        return f"PR {tag} review by {author} ({state}):"
+    return ""
+
 
 def _event_channels(event: dict, default_channel: str) -> list[str]:
     if event.get("pr") is not None:
@@ -809,10 +925,20 @@ def dispatch_events_irc(events: list[dict], irc: IrcClient, default_channel: str
         if not should_push(ev):
             continue
         targets = _event_channels(ev, default_channel)
-        text = format_event(ev)
+        kind = ev.get("kind", "")
+        if kind in MULTILINE_COMMENT_KINDS:
+            header = _format_comment_header(ev)
+            body = ev.get("body") or ""
+            url = ev.get("comment_url") or ev.get("review_url") or ev.get("url", "")
+            fallback = format_event(ev)
+        else:
+            text = format_event(ev)
         for target in dict.fromkeys(targets):  # de-dup, preserve order
             try:
-                irc.privmsg(target, text)
+                if kind in MULTILINE_COMMENT_KINDS:
+                    irc.comment_privmsg(target, header, body, url, fallback)
+                else:
+                    irc.privmsg(target, text)
             except ConnectionError:
                 raise
             except Exception as e:
@@ -1197,6 +1323,91 @@ def _run_self_test() -> int:
               "comment_url": "https://github.com/org/repo/issues/47#issuecomment-666",
           }),
           "Issue org/repo#47 comment by carol: First line… — https://github.com/org/repo/issues/47#issuecomment-666")
+
+    # _format_comment_header
+    check("header_pr_review_comment",
+          _format_comment_header({
+              "kind": "pr_review_comment", "repo": "org/repo", "pr": 46, "author": "alice",
+          }),
+          "PR org/repo#46 comment by alice:")
+
+    check("header_pr_review_comment_path",
+          _format_comment_header({
+              "kind": "pr_review_comment", "repo": "org/repo", "pr": 46,
+              "author": "alice", "path": "src/foo.ts", "line": 10,
+          }),
+          "PR org/repo#46 comment by alice at src/foo.ts:10:")
+
+    check("header_issue_comment",
+          _format_comment_header({
+              "kind": "issue_comment", "repo": "org/repo", "issue": 47, "author": "carol",
+          }),
+          "Issue org/repo#47 comment by carol:")
+
+    check("header_pr_review_submitted",
+          _format_comment_header({
+              "kind": "pr_review_submitted", "repo": "org/repo", "pr": 46,
+              "author": "dave", "state": "APPROVED",
+          }),
+          "PR org/repo#46 review by dave (APPROVED):")
+
+    # _multiline_split_line
+    check("split_short", _multiline_split_line("hello"), ["hello"])
+
+    long_line = "A" * (MULTILINE_LINE_BYTES + 10)
+    split_result = _multiline_split_line(long_line)
+    check("split_long_count", len(split_result) > 1, True)
+    check("split_long_reassemble", "".join(split_result), long_line)
+
+    # format_comment_event includes full body field
+    test_c = {"id": 1, "html_url": "https://example.com/c/1",
+              "user": {"login": "alice"}, "body": "Line one\nLine two"}
+    ev_body = format_comment_event(test_c, kind="issue_comment", repo="org/repo",
+                                   pr=None, issue=47, url="https://example.com/i/47")
+    check("event_full_body", ev_body.get("body"), "Line one\nLine two")
+    check("event_body_preview", ev_body.get("body_preview"), "Line one\nLine two")
+
+    # comment_privmsg: multiline path
+    _cl = IrcClient("127.0.0.1", 6667, "test-nick")
+    _cl._multiline_enabled = True
+    _cl._multiline_max_bytes = 16384
+    _cl._multiline_max_lines = 200
+    _cl._joined = {"#test"}
+    _sent_ml: list[str] = []
+    _cl._send_raw = _sent_ml.append  # type: ignore[method-assign]
+    _cl.pump = lambda timeout=0.0: None  # type: ignore[method-assign]
+    _cl.comment_privmsg("#test", "Header:", "Body line 1\n\nBody line 3",
+                        "https://example.com", "fallback")
+    check("ml_batch_start", any("BATCH +" in l and "draft/multiline" in l for l in _sent_ml), True)
+    check("ml_batch_end", any("BATCH -" in l for l in _sent_ml), True)
+    check("ml_has_header", any(":Header:" in l for l in _sent_ml), True)
+    check("ml_has_url", any("https://example.com" in l for l in _sent_ml), True)
+    check("ml_no_fallback", not any("fallback" in l for l in _sent_ml), True)
+
+    # comment_privmsg: fallback when not enabled
+    _cl2 = IrcClient("127.0.0.1", 6667, "test-nick2")
+    _cl2._multiline_enabled = False
+    _cl2._joined = {"#test"}
+    _sent_fb: list[str] = []
+    _cl2._send_raw = _sent_fb.append  # type: ignore[method-assign]
+    _cl2.pump = lambda timeout=0.0: None  # type: ignore[method-assign]
+    _cl2.comment_privmsg("#test", "Header:", "Body", "https://example.com", "fallback text")
+    check("fb_has_fallback", any("fallback text" in l for l in _sent_fb), True)
+    check("fb_no_batch", not any("BATCH" in l for l in _sent_fb), True)
+
+    # comment_privmsg: fallback when body exceeds server limits
+    _cl3 = IrcClient("127.0.0.1", 6667, "test-nick3")
+    _cl3._multiline_enabled = True
+    _cl3._multiline_max_bytes = 10
+    _cl3._multiline_max_lines = 200
+    _cl3._joined = {"#test"}
+    _sent_ov: list[str] = []
+    _cl3._send_raw = _sent_ov.append  # type: ignore[method-assign]
+    _cl3.pump = lambda timeout=0.0: None  # type: ignore[method-assign]
+    _cl3.comment_privmsg("#test", "Header:", "Body exceeds tiny byte limit",
+                         "https://example.com", "fallback oversized")
+    check("ov_has_fallback", any("fallback oversized" in l for l in _sent_ov), True)
+    check("ov_no_batch", not any("BATCH" in l for l in _sent_ov), True)
 
     if failures:
         for f in failures:
