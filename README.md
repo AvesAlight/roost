@@ -221,9 +221,7 @@ roost/
 │   └── hooks.json          Plugin hook config (PermissionRequest wired per-session via --perm-irc).
 ├── skills/roost/SKILL.md   Claude Code skill wrapping the roost command surface.
 ├── src/
-│   ├── irc-server.ts       The MCP server.
-│   ├── stub-server.ts      Test stub (no IRC).
-│   └── tools-only-stub.ts  Multi-MCP test stub.
+│   └── irc-server.ts       The MCP server.
 ├── bin/
 │   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
 │   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
