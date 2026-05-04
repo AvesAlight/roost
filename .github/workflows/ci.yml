@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,13 +19,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.2.20"
-
-      - name: Cache bun deps
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          cache: true
 
       - name: Install deps
         run: bun install
