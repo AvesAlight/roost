@@ -34,16 +34,19 @@ SOCKET_SAFETY_TIMEOUT = 570  # just under Claude Code's 600s hook default
 PASSTHROUGH_PREFIXES = ("mcp__roost-irc__", "mcp__plugin_roost_roost-irc__")
 
 
-def emit(decision: str, reason: str) -> None:
+def emit(decision: str, reason: str = "") -> None:
     if decision == "ask":
         # No decision → Claude Code shows the terminal permission prompt
         sys.stderr.write(f"perm-hook: deferring to terminal ({reason})\n")
         sys.exit(0)
+    dec: dict = {"behavior": decision}
+    if reason:
+        dec["message"] = reason
     json.dump(
         {
             "hookSpecificOutput": {
                 "hookEventName": "PermissionRequest",
-                "decision": {"behavior": decision},
+                "decision": dec,
             }
         },
         sys.stdout,
@@ -245,11 +248,13 @@ def main() -> None:
     if reply is None:
         emit("ask", "permbot unavailable / timed out; falling back to terminal")
 
-    norm = reply.strip().split(maxsplit=1)[0].lower() if reply.strip() else ""
+    parts = reply.strip().split(maxsplit=1) if reply.strip() else []
+    norm = parts[0].lower() if parts else ""
+    msg = parts[1] if len(parts) > 1 else ""
     if norm in ("y", "yes", "allow", "ok", "approve"):
-        emit("allow", "approved via IRC")
+        emit("allow", msg)
     if norm in ("n", "no", "deny", "block"):
-        emit("deny", f"denied via IRC: {reply!r}")
+        emit("deny", msg)
     emit("ask", f"unrecognized reply {reply!r}; falling back to terminal")
 
 
