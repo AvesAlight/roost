@@ -459,7 +459,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         }
       }
       case 'channel_leave': {
-        const channel = String(args.channel ?? '')
+        const channel = String(args.channel ?? '').toLowerCase()
         const ok = await new Promise<boolean>((resolve) => {
           const list = part_resolvers.get(channel) ?? []
           list.push(resolve)
