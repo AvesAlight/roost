@@ -4,7 +4,6 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "stub": "bun run src/stub-server.ts",
     "test": "bun test"
   },
   "dependencies": {
