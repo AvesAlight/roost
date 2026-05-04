@@ -537,8 +537,9 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       )
     } else {
       process.stderr.write(
-        `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'})\n`,
+        `roost-irc[${NICK}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}) — exiting, server must support draft/multiline\n`,
       )
+      process.exit(1)
     }
     process.stderr.write(
       enabled.includes(CAP_CHATHISTORY)
