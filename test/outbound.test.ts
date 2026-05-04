@@ -4,7 +4,7 @@ import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 
-describe.if(isErgoAvailable())('outbound message tools (in-process)', () => {
+describe.if(isErgoAvailable())('outbound message tools', () => {
   let ergo: ErgoContext
 
   beforeAll(async () => {

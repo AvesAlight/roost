@@ -3,7 +3,7 @@ import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { connectPeer } from './helpers/peer.js'
 
-describe.if(isErgoAvailable())('inbound notifications (in-process)', () => {
+describe.if(isErgoAvailable())('inbound notifications', () => {
   let ergo: ErgoContext
 
   beforeAll(async () => {
