@@ -61,6 +61,24 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
     const r = await mcp1.client.callTool({ name: 'channel_who', arguments: { channel: '#_ready' } })
     expect(r.isError).toBeFalsy()
   }, 15_000)
+
+  it('channel_join force=true bypasses already-in cache', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-force-mcp')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test' } })
+
+    // Normal re-join short-circuits with "already in" — no network call made
+    let r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test' } })
+    const cached = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
+    expect(cached).toContain('already in')
+
+    // force=true bypasses the cache and actually issues JOIN. When the server still
+    // has us (primary use case is stale cache / post-kick), ergo returns 443 and the
+    // join resolver times out — that's fine; the point is we didn't short-circuit.
+    r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test', force: true } })
+    const forced = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
+    expect(forced).not.toContain('already in')
+  }, 10_000)
 })
 
 // Subprocess-only: tests binary reconnect behavior after ergo process death.
@@ -108,4 +126,43 @@ describe.if(isErgoAvailable())('reconnect (subprocess)', () => {
       await dedicated.cleanup()
     }
   }, 30_000)
+
+  it('kill + restart → disconnected then reconnected notification; channels auto-rejoined', async () => {
+    const dedicated = await startErgoDedicated()
+    if (!dedicated) return
+
+    try {
+      const mcp = await startMcp(dedicated, 'rc-notif-mcp')
+
+      // Join a channel before the disruption
+      await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#rc-notif-ch' } })
+
+      // Wait 6s so irc-framework will schedule auto_reconnect after the kill
+      await new Promise<void>(res => setTimeout(res, 6000))
+
+      // Kill ergo — expect a disconnected notification
+      const disconnPromise = mcp.waitForNotification(n => n.meta.event === 'disconnected', 8000)
+      await dedicated.kill()
+      const disconnNotif = await disconnPromise
+      expect(disconnNotif.content).toContain('disconnected from IRC')
+
+      // Restart ergo — expect a reconnected notification listing the channel
+      await dedicated.restart()
+      const reconnNotif = await mcp.waitForNotification(n => n.meta.event === 'reconnected', 15000)
+      expect(reconnNotif.content).toContain('reconnected to IRC')
+      expect(reconnNotif.content).toContain('#rc-notif-ch')
+
+      // Verify the channel is actually re-joined: a new peer can message it and MCP receives it
+      const peer = await connectPeer(dedicated, 'rc-notif-peer')
+      await peer.joinChannel('#rc-notif-ch')
+      peer.say('#rc-notif-ch', 'post-reconnect-hello')
+      const msgNotif = await mcp.waitForNotification(
+        n => n.meta.channel === '#rc-notif-ch' && n.content === 'post-reconnect-hello',
+        10000,
+      )
+      expect(msgNotif.content).toBe('post-reconnect-hello')
+    } finally {
+      await dedicated.cleanup()
+    }
+  }, 50_000)
 })

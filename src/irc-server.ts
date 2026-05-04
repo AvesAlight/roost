@@ -62,6 +62,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   // ---- IRC client wiring -------------------------------------------------
 
   let irc_ready = false
+  let hasRegistered = false
   const join_resolvers = new Map<string, Array<(ok: boolean) => void>>()
 
   // Max lines per draft/multiline batch, from the cap value
@@ -278,6 +279,21 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
   }
 
+  // Emit a synthetic system event (e.g. disconnected, reconnected) as a
+  // channel notification. Not scoped to a channel — channel/sender are empty.
+  const emitSystemEvent = (event: 'disconnected' | 'reconnected', content: string) => {
+    const ts = new Date().toISOString()
+    const seq = ++receiveSeq
+    mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content,
+        meta: { source: SOURCE_NAME, event, channel: '', sender: '', isDirect: 'false', ts, seq: String(seq) },
+      },
+    }).catch(() => { /* transport closed during teardown */ })
+    process.stderr.write(`roost-irc[${NICK}]: [${event}] ${content}\n`)
+  }
+
   // ---- MCP server --------------------------------------------------------
 
   const mcp = new Server(
@@ -325,6 +341,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
           type: 'object',
           properties: {
             channel: { type: 'string', description: 'Channel name including "#".' },
+            force: { type: 'boolean', description: 'Force JOIN even if cache says already joined. Use to recover a wedged cache without restarting the MCP.' },
           },
           required: ['channel'],
         },
@@ -433,7 +450,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_join': {
         const channel = String(args.channel ?? '').toLowerCase()
-        if (channelUsers.has(channel)) {
+        if (!args.force && channelUsers.has(channel)) {
           return { content: [{ type: 'text', text: `already in ${channel}` }] }
         }
         const ok = await new Promise<boolean>((resolve) => {
@@ -546,6 +563,25 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         ? `roost-irc[${NICK}]: chathistory cap active — will replay up to ${JOIN_HISTORY_LINES} msgs / ${JOIN_HISTORY_MINUTES}min on join\n`
         : `roost-irc[${NICK}]: chathistory cap NOT active — no history replay on join\n`,
     )
+
+    if (hasRegistered) {
+      // Reconnect: snapshot channels we were in, clear stale cache, rejoin all.
+      // Two JOINs for the same channel (e.g. a concurrent channel_join call) are
+      // idempotent on ergo — benign if it races.
+      const snapshot = [...channelUsers.keys()].sort()
+      channelUsers.clear()
+      const content = snapshot.length > 0
+        ? `[roost] reconnected to IRC — rejoining: ${snapshot.join(', ')}`
+        : '[roost] reconnected to IRC'
+      emitSystemEvent('reconnected', content)
+      for (const ch of snapshot) {
+        ircClient.join(ch)
+        process.stderr.write(`roost-irc[${NICK}]: reconnect-rejoining ${ch}\n`)
+      }
+      return
+    }
+
+    hasRegistered = true
     for (const ch of AUTO_JOIN) {
       ircClient.join(ch)
       process.stderr.write(`roost-irc[${NICK}]: auto-joining ${ch}\n`)
@@ -757,6 +793,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   ircClient.on('socket close', () => {
     process.stderr.write(`roost-irc[${NICK}]: socket closed\n`)
     irc_ready = false
+    emitSystemEvent('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
   })
 
   ircClient.on('socket error', (err: Error) => {
