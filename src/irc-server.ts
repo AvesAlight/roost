@@ -33,7 +33,6 @@ import {
 import IRC from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
-  MAX_CHUNK_BODY,
   IrcMessage,
   splitText,
   splitLineForMultiline,
@@ -73,10 +72,11 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
   // When enabled, outbound long messages go out as a draft/multiline BATCH
   // (server reassembles cleanly, capable receivers get one message); when
   // disabled, we fall back to the heuristic chunk + receiver-buffer dance
-  // below. Limits come from the cap value (e.g.
-  // `draft/multiline=max-bytes=16384,max-lines=200`); we cache them here.
+  // below. The max-lines limit comes from the cap value (e.g.
+  // `draft/multiline=max-bytes=16384,max-lines=200`); we cache it here so
+  // sendMultiline can fall back to the legacy chunker if the source text
+  // would exceed the server's per-batch ceiling.
   let multilineEnabled = false
-  let multilineMaxBytes = 4096
   // Pre-negotiation placeholder; overwritten by cap value once multilineEnabled=true.
   let multilineMaxLines = 100
 
@@ -175,7 +175,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     channel: string
     sender: string
     isDirect: boolean
-    firstSeen: number
     firstTs: string
     flushTimer: ReturnType<typeof setTimeout>
   }
@@ -572,11 +571,10 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const [k, v] = kv.split('=')
         const n = Number(v)
         if (!Number.isFinite(n) || n <= 0) continue
-        if (k === 'max-bytes') multilineMaxBytes = n
         if (k === 'max-lines') multilineMaxLines = n
       }
       process.stderr.write(
-        `roost-irc[${NICK}]: draft/multiline enabled (max-bytes=${multilineMaxBytes}, max-lines=${multilineMaxLines})\n`,
+        `roost-irc[${NICK}]: draft/multiline enabled (max-lines=${multilineMaxLines})\n`,
       )
     } else {
       process.stderr.write(
@@ -741,7 +739,6 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       channel,
       sender: event.nick,
       isDirect,
-      firstSeen: Date.now(),
       firstTs: ts,
       flushTimer: t,
     })
