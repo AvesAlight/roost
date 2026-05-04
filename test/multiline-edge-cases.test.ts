@@ -1,3 +1,5 @@
+// Tests 5+6 stay subprocess: these time out intermittently under the in-process
+// harness (timing-sensitive boundary cases). Tracked in #83.
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
@@ -86,8 +88,8 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
   })
 
   it('exceeding max-lines: tool succeeds and something arrives', async () => {
-    // 201 lines > ergo's max-lines=200 (see makeErgoConfig in test/helpers/ergo.ts) — triggers legacy fallback.
-    // known: legacy path drops newlines on delivery (client.say pre-splits on \n); see #58
+    // 201 lines > ergo's max-lines=200 (see makeErgoConfig in test/helpers/ergo.ts).
+    // Server emits a stderr warning and sends as a multiline batch anyway; ergo may drop or truncate.
     const sender = await startMcp(ergo, 'ml-ec5-s')
     const receiver = await startMcp(ergo, 'ml-ec5-r')
     await Promise.all([
@@ -102,7 +104,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     })
     expect(result.isError).toBeFalsy()
 
-    // content check deferred to #57 — assert at minimum that something arrived
+    // assert at minimum that something arrived
     await receiver.waitForNotification(
       n => n.meta.channel === '#ml-ec5' && n.meta.sender === 'ml-ec5-s',
     )

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText, sleep } from './helpers/tool.js'
+import { sleep } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('chathistory backfill', () => {
   let ergo: ErgoContext
