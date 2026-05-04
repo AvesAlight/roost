@@ -13,11 +13,18 @@ export interface McpInProcessContext extends McpHandle {
   emitUnreadSummary: () => void
 }
 
+export interface StartMcpInProcessOptions {
+  historySize?: number
+  joinHistoryLines?: number
+  joinHistoryMinutes?: number
+}
+
 let instanceCounter = 0
 
 export async function startMcpInProcess(
   ergo: ErgoContext,
   nick?: string,
+  options?: StartMcpInProcessOptions,
 ): Promise<McpInProcessContext> {
   const clientNick = nick ?? `ip-mcp${++instanceCounter}`
 
@@ -25,9 +32,9 @@ export async function startMcpInProcess(
   const { server, emitUnreadSummary } = createMcpServer(ircClient, {
     nick: clientNick,
     autoJoin: [],
-    historySize: 50,
-    joinHistoryLines: 20,
-    joinHistoryMinutes: 30,
+    historySize: options?.historySize ?? 50,
+    joinHistoryLines: options?.joinHistoryLines ?? 20,
+    joinHistoryMinutes: options?.joinHistoryMinutes ?? 30,
   })
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
