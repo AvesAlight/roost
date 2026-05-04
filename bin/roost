@@ -123,6 +123,8 @@ start_permbot() {
     echo "  permbot already running (pid $(cat "${PERM_PID}")) — reusing"
     return 0
   fi
+  # PERM_LOG appears in both env assignment and redirect; shellcheck thinks they're the same pipeline file, but they're not
+  # shellcheck disable=SC2094
   ROOST_PERM_NICK="permbot-${nick}" \
   ROOST_PERM_SOCK="${PERM_SOCK}" \
   ROOST_PERM_TARGET="${target}" \
@@ -160,7 +162,7 @@ stop_permbot() {
         kill -0 "${pid}" 2>/dev/null || break
         sleep 0.25
       done
-      kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+      if kill -0 "${pid}" 2>/dev/null; then kill -9 "${pid}" 2>/dev/null; fi
       echo "  killed permbot (pid ${pid})"
     fi
   fi
@@ -322,6 +324,8 @@ cmd_spawn() {
   fi
   local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --settings ${ROOST_SETTINGS} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
+    # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
+    # shellcheck disable=SC2016
     inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
   fi
@@ -383,7 +387,7 @@ cmd_list() {
     return 0
   fi
   echo "${sessions}" | while IFS= read -r s; do
-    local nick="${s#${SESSION_PREFIX}}"
+    local nick="${s#"${SESSION_PREFIX}"}"
     local created_unix created
     created_unix="$(tmux display -t "${s}" -p '#{session_created}' 2>/dev/null)"
     if [ -n "${created_unix}" ]; then
@@ -553,7 +557,7 @@ if [ "$#" -eq 0 ]; then
 fi
 cmd="$1"
 shift
-case "$1" in -h|--help) usage; exit 0 ;; esac
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 case "${cmd}" in
   spawn)    cmd_spawn "$@" ;;
   shutdown) cmd_shutdown "$@" ;;
