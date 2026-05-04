@@ -282,8 +282,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     addFingerprint(msg)
     if (!extras.historical) {
       const prev = unread.get(msg.channel)
-      const preview = msg.text.length > 80 ? msg.text.slice(0, 77) + '...' : msg.text
-      unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: preview })
+      unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
     }
     const seq = ++receiveSeq
     const meta: Record<string, string> = {
