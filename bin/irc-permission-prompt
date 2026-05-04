@@ -245,7 +245,7 @@ def main() -> None:
     if reply is None:
         emit("ask", "permbot unavailable / timed out; falling back to terminal")
 
-    norm = reply.strip().lower()
+    norm = reply.strip().split(maxsplit=1)[0].lower() if reply.strip() else ""
     if norm in ("y", "yes", "allow", "ok", "approve"):
         emit("allow", "approved via IRC")
     if norm in ("n", "no", "deny", "block"):
