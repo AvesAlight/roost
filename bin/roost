@@ -33,6 +33,7 @@ Commands:
   status                   ergo state + roost session count.
   root                     Print the roost plugin root directory.
   send <nick> <message...> Inject text into a nick's tmux pane.
+  service <subcommand>     Manage background service processes.
 
 spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -230,6 +231,10 @@ cmd_spawn() {
       echo "error: --prompt-stdin: stdin was empty" >&2
       exit 1
     fi
+  fi
+  # Bare name (no /) resolves to ${ROOST_DIR}/prompts/<name>.md
+  if [ -n "${prompt_file}" ] && [[ "${prompt_file}" != */* ]]; then
+    prompt_file="${ROOST_DIR}/prompts/${prompt_file}.md"
   fi
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
@@ -461,6 +466,93 @@ cmd_send() {
   tmux delete-buffer -b "${buf}" 2>/dev/null || true
 }
 
+SERVICE_SESSION="roost-services"
+
+# Check if a tmux window has a live foreground process (i.e. not just a shell at prompt).
+_service_is_alive() {
+  local name="$1"
+  local current_cmd
+  current_cmd="$(tmux list-panes -t "${SERVICE_SESSION}:${name}" -F '#{pane_current_command}' 2>/dev/null | head -1)"
+  case "${current_cmd}" in
+    zsh|bash|sh|fish|dash|csh|tcsh|'') return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+cmd_service() {
+  if [ "$#" -lt 1 ]; then
+    echo "usage: roost service <start|status|stop> [args]" >&2
+    exit 1
+  fi
+  local subcmd="$1"; shift
+  case "${subcmd}" in
+    start)
+      if [ "$#" -lt 1 ]; then
+        echo "error: service start requires a command" >&2
+        exit 1
+      fi
+      local cmd="$1"
+      local name
+      name="$(basename "${cmd}")"
+      # Idempotency: window exists and process is alive → no-op
+      if tmux list-windows -t "${SERVICE_SESSION}" -F '#{window_name}' 2>/dev/null \
+           | grep -qx "${name}" && _service_is_alive "${name}"; then
+        echo "service ${name}: already running (no-op)"
+        return 0
+      fi
+      # Kill stale window if it exists but process is dead; killing the last
+      # window also kills the session, so re-check session state after.
+      if tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null; then
+        if tmux list-windows -t "${SERVICE_SESSION}" -F '#{window_name}' 2>/dev/null \
+             | grep -qx "${name}"; then
+          tmux kill-window -t "${SERVICE_SESSION}:${name}"
+        fi
+      fi
+      # Create session or window depending on what survived the kill above.
+      if ! tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null; then
+        tmux new-session -d -s "${SERVICE_SESSION}" -n "${name}" "${cmd}"
+      else
+        tmux new-window -t "${SERVICE_SESSION}" -n "${name}" "${cmd}"
+      fi
+      echo "service ${name}: started"
+      ;;
+    status)
+      if ! tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null; then
+        echo "(no services)"
+        return 0
+      fi
+      tmux list-windows -t "${SERVICE_SESSION}" -F '#{window_name}' 2>/dev/null \
+        | while IFS= read -r name; do
+          if _service_is_alive "${name}"; then
+            printf '%-30s up\n' "${name}"
+          else
+            printf '%-30s down\n' "${name}"
+          fi
+        done
+      ;;
+    stop)
+      if [ "$#" -lt 1 ]; then
+        echo "error: service stop requires a name" >&2
+        exit 1
+      fi
+      local name="$1"
+      if ! tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null \
+           || ! tmux list-windows -t "${SERVICE_SESSION}" -F '#{window_name}' 2>/dev/null \
+                | grep -qx "${name}"; then
+        echo "service ${name}: not running"
+        return 0
+      fi
+      tmux kill-window -t "${SERVICE_SESSION}:${name}"
+      echo "service ${name}: stopped"
+      ;;
+    *)
+      echo "error: unknown service subcommand: ${subcmd}" >&2
+      echo "usage: roost service <start|status|stop> [args]" >&2
+      exit 1
+      ;;
+  esac
+}
+
 if [ "$#" -eq 0 ]; then
   usage
   exit 0
@@ -476,6 +568,7 @@ case "${cmd}" in
   tail)     cmd_tail "$@" ;;
   status)   cmd_status "$@" ;;
   send)     cmd_send "$@" ;;
+  service)  cmd_service "$@" ;;
   root)     echo "${ROOST_DIR}" ;;
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
