@@ -489,9 +489,8 @@ cmd_service() {
         echo "error: service start requires a command" >&2
         exit 1
       fi
-      local cmd="$1"
       local name
-      name="$(basename "${cmd}")"
+      name="$(basename "$1")"
       # Idempotency: window exists and process is alive → no-op
       if tmux list-windows -t "${SERVICE_SESSION}" -F '#{window_name}' 2>/dev/null \
            | grep -qx "${name}" && _service_is_alive "${name}"; then
@@ -508,9 +507,9 @@ cmd_service() {
       fi
       # Create session or window depending on what survived the kill above.
       if ! tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null; then
-        tmux new-session -d -s "${SERVICE_SESSION}" -n "${name}" "${cmd}"
+        tmux new-session -d -s "${SERVICE_SESSION}" -n "${name}" "$@"
       else
-        tmux new-window -t "${SERVICE_SESSION}" -n "${name}" "${cmd}"
+        tmux new-window -t "${SERVICE_SESSION}" -n "${name}" "$@"
       fi
       echo "service ${name}: started"
       ;;
