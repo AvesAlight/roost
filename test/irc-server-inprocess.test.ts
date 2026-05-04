@@ -214,6 +214,29 @@ describe.if(isErgoAvailable())('irc-server in-process (InMemoryTransport)', () =
     expect(nDirty.content).toContain('pending message')
   })
 
+  it('send reply includes unread nudge for other channels, omits if none', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread7')
+    const peer = await connectPeer(ergo, 'ip-unread7-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-a' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread7-b' } })
+    await peer.joinChannel('#ip-unread7-a')
+    await peer.joinChannel('#ip-unread7-b')
+
+    // Message arrives in B while agent is "focused" on A
+    peer.say('#ip-unread7-b', 'look at this')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content === 'look at this')
+
+    // Sending to A should report B as unread in the reply
+    const reply = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-a', text: 'hi' } })
+    expect(toolText(reply)).toContain('sent to #ip-unread7-a')
+    expect(toolText(reply)).toContain('#ip-unread7-b')
+    expect(toolText(reply)).toContain('unread')
+
+    // Now send to B — reply should be silent (no other unread)
+    const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })
+    expect(toolText(reply2)).not.toContain('unread')
+  })
+
   it('historical replay does not count as unread', async () => {
     // This tests the join-baseline rule: messages replayed via chathistory on
     // join start at 0, not as unread. In the in-process test we simulate by

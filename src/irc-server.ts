@@ -481,24 +481,30 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(channel, text)
         unread.delete(channel)
+        const unreadSuffix = unread.size > 0
+          ? `\nunread: ${[...unread.entries()].map(([ch, i]) => { const p = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview; return `${ch} (${i.count}, last: ${i.lastSender}: "${p}")` }).join(', ')}`
+          : ''
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
           : ''
         const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}` }] }
+        return { content: [{ type: 'text', text: `sent to ${channel}: ${preview}${note}${unreadSuffix}` }] }
       }
       case 'direct_message': {
         const nick = String(args.nick ?? '')
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(nick, text)
         unread.delete(nick)
+        const unreadSuffix = unread.size > 0
+          ? `\nunread: ${[...unread.entries()].map(([ch, i]) => { const p = i.lastPreview.length > 40 ? i.lastPreview.slice(0, 37) + '...' : i.lastPreview; return `${ch} (${i.count}, last: ${i.lastSender}: "${p}")` }).join(', ')}`
+          : ''
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
           : ''
         const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-        return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}` }] }
+        return { content: [{ type: 'text', text: `DM to ${nick}: ${preview}${note}${unreadSuffix}` }] }
       }
       case 'channel_join': {
         const channel = String(args.channel ?? '').toLowerCase()
