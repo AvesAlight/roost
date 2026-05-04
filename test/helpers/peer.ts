@@ -10,6 +10,18 @@ export interface PeerMessage {
   text: string
 }
 
+// IMPORTANT: waitForMessage / waitForPart register the waiter when called.
+// irc-framework's EventEmitter is synchronous and does NOT replay past events,
+// so an event that fires before the waiter is registered is lost forever.
+// Always start the wait BEFORE the action that triggers the event:
+//
+//   const seen = peer.waitForMessage(...)   // register first
+//   await mcp.callTool(...)                 // then trigger
+//   await seen                              // then await
+//
+// Calling waitFor* AFTER the trigger races: on fast paths (CI, in-process),
+// the event can arrive before the waiter is registered, and the test hangs
+// until timeout.
 export interface PeerContext {
   nick: string
   joinChannel(channel: string): Promise<void>
