@@ -4,20 +4,24 @@ import { afterAll } from 'bun:test'
 import IRC from 'irc-framework'
 import { createMcpServer } from '../../src/irc-server.js'
 import type { ErgoContext } from './ergo.js'
-import { wireMcpClient, pollUntilIrcReady, type McpHandle } from './mcp-core.js'
+import { wireMcpClient, pollUntilIrcReady, type McpHandle, type ChannelNotification } from './mcp-core.js'
 
-export type { ChannelNotification, McpHandle as McpInProcessContext } from './mcp-core.js'
+export type { ChannelNotification }
+
+export interface McpInProcessContext extends McpHandle {
+  emitUnreadSummary: () => void
+}
 
 let instanceCounter = 0
 
 export async function startMcpInProcess(
   ergo: ErgoContext,
   nick?: string,
-): Promise<McpHandle> {
+): Promise<McpInProcessContext> {
   const clientNick = nick ?? `ip-mcp${++instanceCounter}`
 
   const ircClient = new IRC.Client()
-  const { server } = createMcpServer(ircClient, {
+  const { server, emitUnreadSummary } = createMcpServer(ircClient, {
     nick: clientNick,
     autoJoin: [],
     historySize: 50,
@@ -47,5 +51,5 @@ export async function startMcpInProcess(
     await handle.client.close()
   })
 
-  return handle
+  return { ...handle, emitUnreadSummary }
 }

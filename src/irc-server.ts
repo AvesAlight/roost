@@ -59,7 +59,7 @@ export interface McpServerConfig {
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
 // → ircClient.requestCap/connect.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createMcpServer(ircClient: any, config: McpServerConfig): { server: Server; clearDedupeCache: () => void } {
+export function createMcpServer(ircClient: any, config: McpServerConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => void } {
   const { nick: NICK, autoJoin: AUTO_JOIN, historySize: HISTORY_SIZE,
     joinHistoryLines: JOIN_HISTORY_LINES, joinHistoryMinutes: JOIN_HISTORY_MINUTES } = config
 
@@ -89,6 +89,21 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     while (buf.length > HISTORY_SIZE) buf.shift()
     history.set(key, buf)
   }
+
+  // ---- Unread tracking (issue #9) ----------------------------------------
+  //
+  // Tracks unread message counts per channel (or DM peer nick). A channel is
+  // "unread" when messages have arrived since the agent last gave it attention.
+  // The count clears on: outbound send to that channel, channel_history call,
+  // or explicit channel_ack. Historical messages replayed on join do NOT
+  // increment unread — the agent "saw" them as part of joining.
+
+  interface UnreadInfo {
+    count: number
+    lastSender: string
+    lastPreview: string
+  }
+  const unread: Map<string, UnreadInfo> = new Map()
 
   // ---- Replay dedupe (issue #44) -----------------------------------------
 
@@ -261,6 +276,12 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     extras: { buffered?: boolean; chunkCount?: number; historical?: boolean } = {},
   ) => {
     addFingerprint(msg)
+    // Historical replay (join backfill) doesn't count — agent saw those on join.
+    if (!extras.historical) {
+      const prev = unread.get(msg.channel)
+      const preview = msg.text.length > 80 ? msg.text.slice(0, 77) + '...' : msg.text
+      unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: preview })
+    }
     const seq = ++receiveSeq
     const meta: Record<string, string> = {
       sender: msg.sender,
@@ -346,7 +367,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. Inbound: IRC traffic arrives as <channel source="roost-irc"> events with sender, channel, and isDirect attributes. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -439,6 +460,17 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
           required: [],
         },
       },
+      {
+        name: 'channel_ack',
+        description: 'Mark a channel (or DM peer nick) as read, clearing its unread count. Use after reviewing a channel\'s activity to signal you\'ve addressed it.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            channel: { type: 'string', description: 'Channel name (e.g., "#roost") or peer nick for DMs.' },
+          },
+          required: ['channel'],
+        },
+      },
     ],
   }))
 
@@ -457,6 +489,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const channel = String(args.channel ?? '')
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(channel, text)
+        unread.delete(channel)
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
@@ -468,6 +501,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
         const nick = String(args.nick ?? '')
         const text = String(args.text ?? '')
         const { chunks, mode } = sendWithSplit(nick, text)
+        unread.delete(nick)
         const note =
           mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
           : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
@@ -518,6 +552,7 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       case 'channel_history': {
         const key = String(args.channel ?? '')
         const limit = Number(args.limit ?? 20)
+        unread.delete(key)
         const buf = history.get(key) ?? []
         const slice = buf.slice(-limit)
         if (slice.length === 0) {
@@ -535,16 +570,21 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
       }
       case 'channel_list': {
         const channels = [...channelUsers.keys()].sort()
-        return {
-          content: [
-            {
-              type: 'text',
-              text: channels.length
-                ? channels.join(', ')
-                : '(no channels joined)',
-            },
-          ],
+        if (channels.length === 0) {
+          return { content: [{ type: 'text', text: '(no channels joined)' }] }
         }
+        const lines = channels.map(ch => {
+          const info = unread.get(ch)
+          return info && info.count > 0
+            ? `${ch} (${info.count} unread, last: ${info.lastSender}: "${info.lastPreview}")`
+            : ch
+        })
+        return { content: [{ type: 'text', text: lines.join('\n') }] }
+      }
+      case 'channel_ack': {
+        const channel = String(args.channel ?? '')
+        unread.delete(channel)
+        return { content: [{ type: 'text', text: `acked ${channel}` }] }
       }
       default:
         return {
@@ -828,7 +868,29 @@ export function createMcpServer(ircClient: any, config: McpServerConfig): { serv
     process.stderr.write(`roost-irc[${NICK}]: socket error: ${err.message}\n`)
   })
 
-  return { server: mcp, clearDedupeCache: () => seenFingerprints.clear() }
+  const emitUnreadSummary = () => {
+    const entries = [...unread.entries()].filter(([, info]) => info.count > 0)
+    const seq = ++receiveSeq
+    let text: string
+    if (entries.length === 0) {
+      text = '[roost] all caught up — no unread messages'
+    } else {
+      const lines = entries.map(
+        ([ch, info]) => `  ${ch} (${info.count} unread, last: ${info.lastSender}: "${info.lastPreview}")`,
+      )
+      text = `[roost] unread activity:\n${lines.join('\n')}`
+    }
+    mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: text,
+        meta: { source: SOURCE_NAME, event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString(), seq: String(seq) },
+      },
+    }).catch(() => { /* transport closed during teardown */ })
+    process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
+  }
+
+  return { server: mcp, clearDedupeCache: () => seenFingerprints.clear(), emitUnreadSummary }
 }
 
 // ---- Entrypoint (only runs when executed directly) ----------------------
@@ -866,7 +928,7 @@ if (import.meta.main) {
   }
 
   const ircClient = new IRC.Client()
-  const { server: mcp, clearDedupeCache } = createMcpServer(ircClient, {
+  const { server: mcp, clearDedupeCache, emitUnreadSummary } = createMcpServer(ircClient, {
     nick: NICK,
     autoJoin: AUTO_JOIN,
     historySize: numericEnv('ROOST_IRC_HISTORY', 50),
@@ -879,6 +941,13 @@ if (import.meta.main) {
   process.on('SIGUSR1', () => {
     clearDedupeCache()
     process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
+  })
+
+  // SIGUSR2: PostCompact hook fires this to emit an unread-channel summary.
+  // The agent's context just shrank; the summary nudges it back toward any
+  // channel that accumulated messages while it was focused elsewhere.
+  process.on('SIGUSR2', () => {
+    emitUnreadSummary()
   })
 
   await mcp.connect(new StdioServerTransport())

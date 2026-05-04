@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""
+PostCompact hook — signals the roost IRC MCP to emit an unread-channel summary.
+
+Fired by Claude Code after context compaction. Sends SIGUSR2 to the MCP
+process so the agent receives a fresh summary of which channels have pending
+unread messages, nudging it back toward any channel it may have lost track of.
+
+Never exits non-zero so a hook failure doesn't block the session.
+"""
+import os
+import signal
+import sys
+
+data_dir = os.environ.get("ROOST_DATA_DIR", "")
+if not data_dir:
+    sys.stderr.write("roost-post-compact-hook: ROOST_DATA_DIR not set, skipping\n")
+    sys.exit(0)
+
+pid_path = os.path.join(data_dir, "mcp.pid")
+if not os.path.exists(pid_path):
+    sys.stderr.write(f"roost-post-compact-hook: {pid_path} not found, skipping\n")
+    sys.exit(0)
+
+try:
+    pid = int(open(pid_path).read().strip())
+    os.kill(pid, signal.SIGUSR2)
+    sys.stderr.write(f"roost-post-compact-hook: sent SIGUSR2 to MCP pid {pid}\n")
+except Exception as e:
+    sys.stderr.write(f"roost-post-compact-hook: failed: {e}\n")
+    sys.exit(0)
