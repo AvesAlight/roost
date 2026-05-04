@@ -10,8 +10,18 @@ The primary goal of the alpha milestone is to make Roost usable for development 
 
 ## Getting started
 
-- Read docs/ORCHESTRATOR.md
-- Spawn the watcher (it will start the dispatcher on boot): `roost spawn watcher --model haiku --channels '#leads-roost-dev' --prompt '/watcher lead-pm alex' --perm-irc --perm-target lead-pm`
+Spawn the watcher: `roost spawn watcher --model haiku --channels '#leads-roost-dev' --prompt '/watcher lead-pm alex' --perm-irc --perm-target lead-pm`
+
+The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
+
+- `watch <N>` — add N to `watched_issues` (idempotent)
+- `unwatch <N>` — remove N from `watched_issues`
+- `watch pr <N>` — add N to `watched_prs` (idempotent)
+- `unwatch pr <N>` — remove N from `watched_prs`
+- `watch list` — reply with current contents of both lists
+- `help` — short usage reminder
+
+Each watched item routes to `#issue-{number}` automatically. The project channel is a fallback for errors and project-level events. For PRs the issue is determined by the PR's linked_issues.
 
 ## Working In Roost
 
