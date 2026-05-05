@@ -30,7 +30,8 @@ a tool surface.
 
 ```bash
 roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
-                   [--cwd PATH] [-p PROMPT_FILE] [--permission-mode MODE] \
+                   [--cwd PATH] [--prompt PROMPT] \
+                   [--permission-mode MODE] \
                    [--perm-irc --perm-target NICK]
 roost shutdown <nick>
 roost list
