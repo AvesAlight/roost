@@ -78,7 +78,7 @@ instances:
 | C1 | `socket close` leaves resolvers on 5s timer | correctness | +2 | medium |
 | L2 | Three near-parallel emit functions | clarify | −5 | low |
 | L3 | `setTimeout(...).unref?.()` repeated 3x | clarify | −6 | low |
-| D2-D5 | `roost-permbot` dead state (`fileno`, `registered`, dlog gate) | delete | −6 | low |
+| D2-D4 | `roost-permbot` dead state (`fileno`, `registered`, dlog gate) | delete | −6 | low |
 
 The remaining 10 are individually small (most −2 to −5 LOC) but consistent.
 
