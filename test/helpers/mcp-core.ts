@@ -29,7 +29,6 @@ export interface McpHandle {
 export async function wireMcpClient(
   transport: Transport,
   nick: string,
-  clientName = 'roost-test',
 ): Promise<McpHandle & { waiterCount: () => number }> {
   const notifications: ChannelNotification[] = []
   const waiters: Array<{
@@ -37,7 +36,7 @@ export async function wireMcpClient(
     resolve: (n: ChannelNotification) => void
   }> = []
 
-  const client = new Client({ name: clientName, version: '0.0.1' })
+  const client = new Client({ name: 'roost-test', version: '0.0.1' })
 
   client.fallbackNotificationHandler = async (notification) => {
     if (notification.method !== 'notifications/claude/channel') return
