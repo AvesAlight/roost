@@ -43,6 +43,13 @@ import socket
 import sys
 import time
 from collections import deque
+from typing import NamedTuple
+
+
+class InFlight(NamedTuple):
+    client_sock: socket.socket
+    req: dict
+    deadline: float
 
 NICK = os.environ.get("ROOST_PERM_NICK") or sys.exit("ROOST_PERM_NICK required")
 SOCK_PATH = os.environ.get("ROOST_PERM_SOCK") or sys.exit("ROOST_PERM_SOCK required")
@@ -131,8 +138,8 @@ def main() -> None:
 
     # Queue of pending requests (client_sock, request_dict, queued_at)
     queue: "deque[tuple[socket.socket, dict, float]]" = deque()
-    # Currently in flight: (client_sock, request_dict, deadline) or None
-    in_flight = None
+    # Currently in flight: InFlight or None
+    in_flight: "InFlight | None" = None
     # Map client fd -> partial recv buffer
     client_bufs: "dict[int, bytes]" = {}
 
@@ -177,14 +184,14 @@ def main() -> None:
         wire_lines.append("reply y/n")
         for line in wire_lines:
             irc.send_line(f"PRIVMSG {TARGET} :{line}")
-        in_flight = (client_sock, req, time.time() + timeout)
+        in_flight = InFlight(client_sock, req, time.time() + timeout)
         dlog(f"in-flight to {TARGET} ({len(wire_lines)} lines, timeout {timeout}s)")
 
     while running:
         # Compute select timeout: short enough to enforce in-flight deadlines.
         timeout = 1.0
         if in_flight is not None:
-            remaining = in_flight[2] - time.time()
+            remaining = in_flight.deadline - time.time()
             timeout = max(0.05, min(timeout, remaining))
 
         events = sel.select(timeout=timeout)
@@ -261,8 +268,7 @@ def main() -> None:
                         body = body.strip()
                         dlog(f"reply from {sender}: {body!r}")
                         if in_flight is not None:
-                            client_sock, _req, _deadline = in_flight
-                            respond(client_sock, {"reply": body})
+                            respond(in_flight.client_sock, {"reply": body})
                             in_flight = None
                             maybe_dispatch_next()
                         else:
@@ -275,17 +281,16 @@ def main() -> None:
                     break
 
         # Enforce in-flight timeout.
-        if in_flight is not None and time.time() >= in_flight[2]:
-            client_sock, _req, _deadline = in_flight
+        if in_flight is not None and time.time() >= in_flight.deadline:
             dlog("in-flight timed out")
-            respond(client_sock, {"timeout": True})
+            respond(in_flight.client_sock, {"timeout": True})
             in_flight = None
             maybe_dispatch_next()
 
     # Shutdown.
     dlog("shutdown: closing sockets")
     if in_flight is not None:
-        respond(in_flight[0], {"error": "daemon shutting down"})
+        respond(in_flight.client_sock, {"error": "daemon shutting down"})
     for client_sock, _req, _t in queue:
         respond(client_sock, {"error": "daemon shutting down"})
     try:
