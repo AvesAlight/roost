@@ -511,7 +511,11 @@ cmd_service() {
       else
         tmux new-window -t "${SERVICE_SESSION}" -n "${name}" "$@"
       fi
-      echo "service ${name}: started"
+      # Capture the pane to a log file so abnormal exits (signals from kernel,
+      # crashes that bypass app-level stderr handlers) leave a forensic trail.
+      local pane_log="/tmp/roost-service-${name}.log"
+      tmux pipe-pane -t "${SERVICE_SESSION}:${name}" -o "cat >> ${pane_log}"
+      echo "service ${name}: started (pane log: ${pane_log})"
       ;;
     status)
       if ! tmux has-session -t "${SERVICE_SESSION}" 2>/dev/null; then
