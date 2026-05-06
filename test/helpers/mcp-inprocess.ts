@@ -40,7 +40,7 @@ export async function startMcpInProcess(
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await server.connect(serverTransport)
 
-  const handle = await wireMcpClient(clientTransport, clientNick, 'roost-test-ip')
+  const handle = await wireMcpClient(clientTransport, clientNick)
 
   ircClient.requestCap(['draft/multiline', 'labeled-response', 'chathistory'])
   ircClient.connect({
