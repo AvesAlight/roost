@@ -51,8 +51,7 @@ export interface RoostIrcClient {
   // events after join() resolves.
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
-  // R2 increments on every non-historical inbound message; MCP reads this to build
-  // the unread suffix on tool responses.
+  // incremented on each inbound non-historical message; reset by ackUnread.
   getUnread(): ReadonlyMap<string, UnreadInfo>
   ackUnread(key: string): void
 
