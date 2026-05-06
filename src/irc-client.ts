@@ -1,0 +1,62 @@
+// Pure types — typed seam between the IRC client layer and the MCP layer.
+
+import type { IrcMessage } from './irc-lib.js'
+export type { IrcMessage }
+
+export interface UnreadInfo {
+  count: number
+  lastSender: string
+  lastPreview: string
+}
+
+// Extras attached to inbound message events (buffered = reassembled multiline batch).
+export interface MessageMeta {
+  buffered?: boolean
+  chunkCount?: number
+  historical?: boolean
+}
+
+// Extras on membership events from join/part/kick/quit/nick.
+export interface MembershipExtras {
+  reason?: string
+  newNick?: string
+}
+
+export interface ConnectOpts {
+  host: string
+  port: number
+  nick: string
+  username?: string
+  gecos?: string
+  autoReconnect?: boolean
+  autoReconnectMaxRetries?: number
+}
+
+export interface RoostIrcClient {
+  // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
+  // Use isReady() + on('system') to track connection state.
+  connect(opts: ConnectOpts): void
+  isReady(): boolean
+
+  // force bypasses the already-joined cache; use to recover wedged state without restarting.
+  join(channel: string, force?: boolean): Promise<boolean>
+  leave(channel: string): Promise<boolean>
+  // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
+  say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
+  whoisChannels(): Promise<string[] | false>
+
+  // Served from local cache — no network round-trip. Note: on a freshly-joined channel
+  // these lag the join ack; NAMES (getUsers) and chathistory (getHistory) arrive via
+  // events after join() resolves.
+  getHistory(key: string, limit?: number): IrcMessage[]
+  getUsers(channel: string): string[]
+  // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.
+  getUnread(): ReadonlyMap<string, UnreadInfo>
+  ackUnread(key: string): void
+
+  clearDedupeCache(): void
+
+  on(event: 'message',    handler: (msg: IrcMessage, meta: MessageMeta) => void): void
+  on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
+  on(event: 'system',     handler: (kind: 'disconnected' | 'reconnected', content: string) => void): void
+}
