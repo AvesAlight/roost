@@ -54,8 +54,6 @@ DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG") or os.path.join(os.path.dirna
 
 
 def dlog(msg: str) -> None:
-    if not DEBUG_LOG:
-        return
     try:
         with open(DEBUG_LOG, "a") as f:
             f.write(f"[{time.strftime('%H:%M:%S')} {NICK}] {msg}\n")
@@ -70,10 +68,6 @@ class IRC:
         self.sock = socket.create_connection((HOST, PORT), timeout=5)
         self.sock.setblocking(False)
         self.recv_buf = b""
-        self.registered = False
-
-    def fileno(self) -> int:
-        return self.sock.fileno()
 
     def send_line(self, line: str) -> None:
         dlog(f"-> {line}")
@@ -252,7 +246,6 @@ def main() -> None:
                             continue
                         parts = line.split(" ", 3)
                         if len(parts) >= 2 and parts[1] == "001":
-                            irc.registered = True
                             dlog("registered with IRC")
                             continue
                         if len(parts) >= 2 and parts[1] in ("432", "433", "436"):
