@@ -305,7 +305,7 @@ cmd_spawn() {
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}")
-  [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}")
+  [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_TARGET=${perm_target}" -e "ROOST_PERM_HOST=127.0.0.1" -e "ROOST_PERM_PORT=${IRC_PORT}")
 
   # Build the inner zsh command. Bash expands its own ${vars} here, then
   # we append the prompt placeholder as a single-quoted literal so $(...)

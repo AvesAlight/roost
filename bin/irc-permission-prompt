@@ -29,6 +29,9 @@ import time
 
 WORKER = os.environ.get("ROOST_IRC_NICK", "unknown")
 SOCK_PATH = os.environ.get("ROOST_PERM_SOCK", "")
+PERM_TARGET = os.environ.get("ROOST_PERM_TARGET", "")
+PERM_HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
+PERM_PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
 SOCKET_SAFETY_TIMEOUT = 570  # just under Claude Code's 600s hook default
 
 PASSTHROUGH_PREFIXES = ("mcp__roost-irc__", "mcp__plugin_roost_roost-irc__")
@@ -176,6 +179,56 @@ def extract_intent(transcript_path: str) -> str:
     return fallback_thinking
 
 
+def send_fallback_dm(summary: str, reason: str) -> None:
+    """DM ROOST_PERM_TARGET so the operator knows the worker is blocked on a terminal prompt."""
+    if not PERM_TARGET:
+        return
+    nick = f"pnotify-{WORKER}"
+    s = None
+    try:
+        s = socket.create_connection((PERM_HOST, PERM_PORT), timeout=10)
+        s.settimeout(10)
+        s.sendall(f"NICK {nick}\r\nUSER {nick} 0 * :perm-notify\r\n".encode())
+        buf = b""
+        deadline = time.time() + 10
+        registered = False
+        while not registered and time.time() < deadline:
+            try:
+                chunk = s.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            while b"\r\n" in buf:
+                ln, buf = buf.split(b"\r\n", 1)
+                text = ln.decode("utf-8", errors="replace")
+                if text.startswith("PING "):
+                    s.sendall(("PONG " + text[5:] + "\r\n").encode())
+                parts = text.split(" ", 3)
+                if len(parts) >= 2 and parts[1] == "001":
+                    registered = True
+                elif len(parts) >= 2 and parts[1] in ("432", "433", "436"):
+                    break  # nick collision/invalid — skip DM, don't spin to deadline
+        if registered:
+            def dm(msg: str) -> None:
+                s.sendall(f"PRIVMSG {PERM_TARGET} :{msg}\r\n".encode())  # type: ignore[union-attr]
+            dm(f"[{WORKER}] terminal fallback: {reason}")
+            for ln in summary.split("\n"):
+                if ln.strip():
+                    dm(f"  {ln.rstrip()}")
+            dm("(worker blocked on terminal — no one watching)")
+        s.sendall(b"QUIT :done\r\n")
+    except OSError as e:
+        sys.stderr.write(f"perm-hook: fallback DM failed: {e}\n")
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
 def ask_daemon(summary: str):
     """Round-trip a request through the permbot socket. Return reply str or None."""
     if not SOCK_PATH or not os.path.exists(SOCK_PATH):
@@ -246,6 +299,7 @@ def main() -> None:
     summary = "\n".join(summary_lines)
     reply = ask_daemon(summary)
     if reply is None:
+        send_fallback_dm(summary, "permbot unavailable / timed out")
         emit("ask", "permbot unavailable / timed out; falling back to terminal")
 
     parts = reply.strip().split(maxsplit=1) if reply.strip() else []
@@ -255,6 +309,7 @@ def main() -> None:
         emit("allow", msg)
     if norm in ("n", "no", "deny", "block"):
         emit("deny", msg)
+    send_fallback_dm(summary, f"unrecognized reply {reply!r}")
     emit("ask", f"unrecognized reply {reply!r}; falling back to terminal")
 
 
