@@ -109,6 +109,7 @@ describe('socket close pre-empts pending join/part resolvers', () => {
 
 describe('whoisChannels', () => {
   it('returns null on timeout (whois callback never fires)', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new RoostIrcClientImpl({ ...config, whoisTimeoutMs: 10 }) as any
     client.irc.whois = () => {}
     const result = await client.whoisChannels()
@@ -116,6 +117,7 @@ describe('whoisChannels', () => {
   })
 
   it('returns sorted channel list on success', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new RoostIrcClientImpl(config) as any
     client.irc.whois = (_nick: string, cb: (e: { channels?: string }) => void) => {
       cb({ channels: '#zebra #alpha #mid' })
@@ -125,6 +127,7 @@ describe('whoisChannels', () => {
   })
 
   it('returns [] when WHOIS has no channel field', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new RoostIrcClientImpl(config) as any
     client.irc.whois = (_nick: string, cb: (e: { channels?: string }) => void) => {
       cb({})
