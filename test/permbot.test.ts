@@ -17,7 +17,7 @@ function makeMockClient() {
   const client: RoostIrcClient = {
     connect: () => {},
     isReady: () => true,
-    join: async () => true,
+    join: async () => ({ ok: true, members: [] }),
     leave: async () => true,
     say: (target, text) => { said.push({ target, text }); return { chunks: 1, mode: 'single' } },
     quit: () => { quitted = true },

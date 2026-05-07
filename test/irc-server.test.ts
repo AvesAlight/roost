@@ -40,14 +40,38 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(result)).toContain('no users tracked')
   })
 
-  it('channel_join resolves; channel_who includes own nick', async () => {
+  it('channel_join resolves with members; channel_who includes own nick', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-join1')
     const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-join1' } })
     expect(join.isError).toBeFalsy()
-    expect(toolText(join)).toBe('joined #ip-join1')
+    const text = toolText(join)
+    expect(text).toContain('joined #ip-join1')
+    expect(text).toContain('members')
+    expect(text).toContain('ip-join1')
 
     const who = await mcp.client.callTool({ name: 'channel_who', arguments: { channel: '#ip-join1' } })
     expect(toolText(who)).toContain('ip-join1')
+  })
+
+  it('channel_join with peer in channel returns both nicks in members', async () => {
+    const peer = await connectPeer(ergo, 'ip-join2-peer')
+    await peer.joinChannel('#ip-join2')
+    const mcp = await startMcpInProcess(ergo, 'ip-join2')
+    const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-join2' } })
+    expect(join.isError).toBeFalsy()
+    const text = toolText(join)
+    expect(text).toContain('ip-join2')
+    expect(text).toContain('ip-join2-peer')
+    expect(text).toMatch(/members \(2\)/)
+  })
+
+  it('channel_join solo returns just own nick in members', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-join3')
+    const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-join3' } })
+    expect(join.isError).toBeFalsy()
+    const text = toolText(join)
+    expect(text).toContain('members (1)')
+    expect(text).toContain('ip-join3')
   })
 
   it('channel_join duplicate returns immediately', async () => {
@@ -498,7 +522,7 @@ function makeStubClient(): RoostIrcClient {
   return {
     connect: () => {},
     isReady: () => false,
-    join: async () => false,
+    join: async () => ({ ok: false, members: [] }),
     leave: async () => false,
     say: () => ({ chunks: 0, mode: 'single' as const }),
     quit: () => {},

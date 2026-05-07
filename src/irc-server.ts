@@ -70,7 +70,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'channel_join',
-    description: 'Join a channel. Returns when the JOIN is acknowledged. Recent channel history (up to ROOST_IRC_JOIN_HISTORY_LINES messages within ROOST_IRC_JOIN_HISTORY_MINUTES minutes) is then pushed as historical notifications.',
+    description: 'Join a channel. Returns when the JOIN is acknowledged and NAMES are received, including the current member list. Recent channel history (up to ROOST_IRC_JOIN_HISTORY_LINES messages within ROOST_IRC_JOIN_HISTORY_MINUTES minutes) is then pushed as historical notifications.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -284,8 +284,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       }
       case 'channel_join': {
         const ch = (args.channel as string).toLowerCase()
-        const ok = await client.join(ch)
-        return { content: [{ type: 'text', text: ok ? `joined ${ch}` : `join ${ch} timed out` }], isError: !ok }
+        const { ok, members } = await client.join(ch)
+        if (!ok) return { content: [{ type: 'text', text: `join ${ch} timed out` }], isError: true }
+        const membersLine = `\nmembers (${members.length}): ${members.join(', ')}`
+        return { content: [{ type: 'text', text: `joined ${ch}${membersLine}` }] }
       }
       case 'channel_leave': {
         const ch = (args.channel as string).toLowerCase()

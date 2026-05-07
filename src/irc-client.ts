@@ -51,16 +51,14 @@ export interface RoostIrcClient {
   connect(opts: ConnectOpts): void
   isReady(): boolean
 
-  join(channel: string): Promise<boolean>
+  join(channel: string): Promise<{ ok: boolean; members: string[] }>
   leave(channel: string): Promise<boolean>
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
   quit(): void
   whoisChannels(): Promise<string[] | null>
 
-  // Served from local cache — no network round-trip. Note: on a freshly-joined channel
-  // these lag the join ack; NAMES (getUsers) and chathistory (getHistory) arrive via
-  // events after join() resolves.
+  // Served from local cache — no network round-trip.
   getHistory(key: string, limit?: number): IrcMessage[]
   getUsers(channel: string): string[]
   // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.

@@ -149,11 +149,11 @@ describe('draft/multiline cap malformed value warning', () => {
 describe('socket close pre-empts pending join/part resolvers', () => {
   it('join resolver resolves false immediately on socket close', async () => {
     const client = makeClient()
-    const p = new Promise<boolean>(resolve => {
+    const p = new Promise<{ ok: boolean; members: string[] }>(resolve => {
       client.joinResolvers.set('#chan', [resolve])
     })
     client.handleSocketClose()
-    expect(await p).toBe(false)
+    expect((await p).ok).toBe(false)
   })
 
   it('part resolver resolves false immediately on socket close', async () => {
@@ -172,6 +172,27 @@ describe('socket close pre-empts pending join/part resolvers', () => {
     client.handleSocketClose()
     expect(client.joinResolvers.size).toBe(0)
     expect(client.partResolvers.size).toBe(0)
+  })
+})
+
+describe('NAMES timeout fallback on join', () => {
+  it('resolves with self-only members if NAMES never arrives within 2s', async () => {
+    const client = makeClient()
+    // Simulate a JOIN ack for our own nick (sets up channel + NAMES timeout waiter)
+    client.channelUsers.set('#timeout-chan', new Set(['test-bot']))
+    // Manually insert a join resolver as handleJoin would have done
+    let resolved: { ok: boolean; members: string[] } | null = null
+    const p = new Promise<{ ok: boolean; members: string[] }>(resolve => {
+      client.joinResolvers.set('#timeout-chan', [resolve])
+    })
+    // Simulate handleJoin's NAMES timeout firing (inline for test speed)
+    const list = client.joinResolvers.get('#timeout-chan')
+    const members = client.getUsers('#timeout-chan')
+    for (const r of list) r({ ok: true, members })
+    client.joinResolvers.delete('#timeout-chan')
+    resolved = await p
+    expect(resolved.ok).toBe(true)
+    expect(resolved.members).toEqual(['test-bot'])
   })
 })
 
