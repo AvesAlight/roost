@@ -1,4 +1,3 @@
-// @ts-expect-error — irc-framework lacks first-class type defs
 import IRC from 'irc-framework'
 import { afterAll } from 'bun:test'
 import type { ErgoContext } from './ergo.js'

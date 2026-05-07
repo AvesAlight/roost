@@ -1,5 +1,5 @@
-// @ts-expect-error — irc-framework lacks first-class type defs
 import IRC from 'irc-framework'
+import type { IrcFrameworkClient } from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
   splitLineForMultiline,
@@ -55,8 +55,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly autoJoin: string[]
   private readonly whoisTimeoutMs: number
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- irc-framework ships no types; see #156
-  private readonly irc: any
+  private readonly irc: IrcFrameworkClient
 
   private ircReady = false
   private hasRegistered = false
