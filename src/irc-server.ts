@@ -13,7 +13,7 @@
  * each get their own MCP subprocess and therefore their own nick.
  *
  * Configuration (env vars):
- *   ROOST_IRC_SERVER     IRC server (default: 127.0.0.1)
+ *   ROOST_IRC_SERVER     IRC server (default: 127.0.0.1; set by bin/roost)
  *   ROOST_IRC_PORT       IRC port   (default: 6667)
  *   ROOST_IRC_NICK       Nick       (REQUIRED, no default)
  *   ROOST_IRC_REALNAME   Realname   (default: same as nick)
