@@ -18,6 +18,33 @@ import type {
 
 const CAP_CHATHISTORY = 'chathistory'
 
+// ---- IRC event shapes ------------------------------------------------------
+
+interface JoinEvent { nick: string; channel: string }
+interface UserlistEvent { channel: string; users: Array<{ nick: string }> }
+interface PartEvent { nick: string; channel: string; message?: string }
+interface KickEvent { nick?: string; kicked: string; channel: string; message?: string }
+interface QuitEvent { nick: string; message?: string }
+interface NickEvent { nick: string; new_nick: string }
+interface MessageEvent {
+  nick: string
+  target: string
+  message: string
+  type: string
+  batch?: { id: string; type: string; params: string[] }
+  tags?: Record<string, string>
+}
+interface BatchCommand {
+  command: string
+  params: string[]
+  nick: string
+  tags: Record<string, unknown>
+  getServerTime?: () => number | undefined
+}
+interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[] }
+
+// ---- Implementation --------------------------------------------------------
+
 export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly nick: string
   private readonly historySize: number
@@ -107,9 +134,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     }
 
     if (wireLines.length > this.multilineMaxLines) {
-      process.stderr.write(
-        `roost-irc[${this.nick}]: multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${this.multilineMaxLines}; sending anyway\n`,
-      )
+      this.log(`multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${this.multilineMaxLines}; sending anyway`)
     }
 
     this.irc.raw('BATCH', `+${id}`, 'draft/multiline', target)
@@ -118,9 +143,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.irc.connection.write(`@${tagStr} PRIVMSG ${target} :${body}`)
     }
     this.irc.raw('BATCH', `-${id}`)
-    process.stderr.write(
-      `roost-irc[${this.nick}]: multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)\n`,
-    )
+    this.log(`multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)`)
     return { chunks: wireLines.length, mode: 'multiline' }
   }
 
@@ -165,7 +188,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     else if (event === 'system') this.systemHandlers.push(handler)
   }
 
-  // ---- Private helpers ---------------------------------------------------
+  // ---- Logging -----------------------------------------------------------
+
+  private log(msg: string): void {
+    process.stderr.write(`roost-irc[${this.nick}]: ${msg}\n`)
+  }
+
+  // ---- State helpers -----------------------------------------------------
 
   private pushHistory(key: string, msg: IrcMessage): void {
     const buf = this.history.get(key) ?? []
@@ -203,6 +232,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return set
   }
 
+  // Record a message in history and dedupe set; increment unread unless historical.
+  private recordMessage(msg: IrcMessage, historical = false): void {
+    this.pushHistory(msg.channel, msg)
+    this.addFingerprint(msg)
+    if (!historical) {
+      const prev = this.unread.get(msg.channel)
+      this.unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
+    }
+  }
+
+  // ---- Typed event emitters ----------------------------------------------
+
   private emitMessage(msg: IrcMessage, meta: MessageMeta): void {
     for (const h of this.messageHandlers) h(msg, meta)
   }
@@ -215,256 +256,230 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     for (const h of this.systemHandlers) h(kind, content)
   }
 
-  // ---- IRC event handlers ------------------------------------------------
+  // ---- IRC event handler registration ------------------------------------
 
   private registerHandlers(): void {
-    this.irc.on('registered', () => {
-      this.irc_ready = true
-      process.stderr.write(`roost-irc[${this.nick}]: registered with the IRC server\n`)
-      const enabled = this.irc.network?.cap?.enabled ?? []
-      const available: Map<string, string> = this.irc.network?.cap?.available ?? new Map()
-      if (enabled.includes('draft/multiline')) {
-        const val = available.get('draft/multiline') || ''
-        for (const kv of val.split(',')) {
-          const [k, v] = kv.split('=')
-          const n = Number(v)
-          if (!Number.isFinite(n) || n <= 0) continue
-          if (k === 'max-lines') this.multilineMaxLines = n
-        }
-        process.stderr.write(
-          `roost-irc[${this.nick}]: draft/multiline enabled (max-lines=${this.multilineMaxLines})\n`,
-        )
-      } else {
-        process.stderr.write(
-          `roost-irc[${this.nick}]: draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}) — exiting, server must support draft/multiline\n`,
-        )
-        process.exit(1)
-      }
-      process.stderr.write(
-        enabled.includes(CAP_CHATHISTORY)
-          ? `roost-irc[${this.nick}]: chathistory cap active — will replay up to ${this.joinHistoryLines} msgs / ${this.joinHistoryMinutes}min on join\n`
-          : `roost-irc[${this.nick}]: chathistory cap NOT active — no history replay on join\n`,
-      )
+    this.irc.on('registered', () => this.handleRegistered())
+    this.irc.on('join', (e: JoinEvent) => this.handleJoin(e))
+    this.irc.on('userlist', (e: UserlistEvent) => this.handleUserlist(e))
+    this.irc.on('part', (e: PartEvent) => this.handlePart(e))
+    this.irc.on('kick', (e: KickEvent) => this.handleKick(e))
+    this.irc.on('quit', (e: QuitEvent) => this.handleQuit(e))
+    this.irc.on('nick', (e: NickEvent) => this.handleNick(e))
+    this.irc.on('message', (e: MessageEvent) => this.handleMessage(e))
+    this.irc.on('batch end draft/multiline', (e: BatchEndEvent) => this.handleMultilineBatch(e))
+    this.irc.on('batch end chathistory', (e: BatchEndEvent) => this.handleChathistoryBatch(e))
+    this.irc.on('socket close', () => this.handleSocketClose())
+    this.irc.on('socket error', (err: Error) => this.handleSocketError(err))
+  }
 
-      if (this.hasRegistered) {
-        const snapshot = [...this.channelUsers.keys()].sort()
-        this.channelUsers.clear()
-        const content = snapshot.length > 0
-          ? `[roost] reconnected to IRC — rejoining: ${snapshot.join(', ')}`
-          : '[roost] reconnected to IRC'
-        this.emitSystem('reconnected', content)
-        for (const ch of snapshot) {
-          this.irc.join(ch)
-          process.stderr.write(`roost-irc[${this.nick}]: reconnect-rejoining ${ch}\n`)
-        }
-        return
-      }
+  // ---- IRC event handlers ------------------------------------------------
 
-      this.hasRegistered = true
-      for (const ch of this.autoJoin) {
-        this.irc.join(ch)
-        process.stderr.write(`roost-irc[${this.nick}]: auto-joining ${ch}\n`)
-      }
-    })
+  private handleRegistered(): void {
+    this.irc_ready = true
+    this.log('registered with the IRC server')
+    this.parseMultilineCap()
+    this.logChathistoryCap()
+    if (this.hasRegistered) {
+      this.handleReconnect()
+      return
+    }
+    this.hasRegistered = true
+    for (const ch of this.autoJoin) {
+      this.irc.join(ch)
+      this.log(`auto-joining ${ch}`)
+    }
+  }
 
-    this.irc.on('join', (event: { nick: string; channel: string }) => {
-      if (event.nick === this.nick) {
-        process.stderr.write(`roost-irc[${this.nick}]: joined ${event.channel}\n`)
-        this.channelUsers.set(event.channel, new Set([this.nick]))
-        const list = this.joinResolvers.get(event.channel)
-        if (list?.length) {
-          for (const r of list) r(true)
-          this.joinResolvers.delete(event.channel)
-        }
-        return
+  private parseMultilineCap(): void {
+    const enabled: string[] = this.irc.network?.cap?.enabled ?? []
+    const available: Map<string, string> = this.irc.network?.cap?.available ?? new Map()
+    if (enabled.includes('draft/multiline')) {
+      const val = available.get('draft/multiline') || ''
+      for (const kv of val.split(',')) {
+        const [k, v] = kv.split('=')
+        const n = Number(v)
+        if (!Number.isFinite(n) || n <= 0) continue
+        if (k === 'max-lines') this.multilineMaxLines = n
       }
-      this.ensureChannelSet(event.channel).add(event.nick)
-      this.emitMembership('join', event.nick, event.channel)
-    })
+      this.log(`draft/multiline enabled (max-lines=${this.multilineMaxLines})`)
+    } else {
+      this.log(`draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'}) — exiting, server must support draft/multiline`)
+      process.exit(1)
+    }
+  }
 
-    this.irc.on(
-      'userlist',
-      (event: { channel: string; users: Array<{ nick: string }> }) => {
-        const set = new Set<string>()
-        for (const u of event.users ?? []) {
-          if (u?.nick) set.add(u.nick)
-        }
-        set.add(this.nick)
-        this.channelUsers.set(event.channel, set)
-        process.stderr.write(
-          `roost-irc[${this.nick}]: userlist for ${event.channel}: ${set.size} nicks (${[...set].sort().join(', ')})\n`,
-        )
-      },
+  private logChathistoryCap(): void {
+    const enabled: string[] = this.irc.network?.cap?.enabled ?? []
+    this.log(
+      enabled.includes(CAP_CHATHISTORY)
+        ? `chathistory cap active — will replay up to ${this.joinHistoryLines} msgs / ${this.joinHistoryMinutes}min on join`
+        : `chathistory cap NOT active — no history replay on join`,
     )
+  }
 
-    this.irc.on(
-      'part',
-      (event: { nick: string; channel: string; message?: string }) => {
-        if (event.nick === this.nick) {
-          const list = this.partResolvers.get(event.channel)
-          if (list?.length) {
-            for (const r of list) r(true)
-            this.partResolvers.delete(event.channel)
-          }
-          this.channelUsers.delete(event.channel)
-          return
-        }
-        this.channelUsers.get(event.channel)?.delete(event.nick)
-        this.emitMembership('leave', event.nick, event.channel, {
-          reason: event.message ? `parted: ${event.message}` : 'parted',
+  private handleReconnect(): void {
+    const snapshot = [...this.channelUsers.keys()].sort()
+    this.channelUsers.clear()
+    const content = snapshot.length > 0
+      ? `[roost] reconnected to IRC — rejoining: ${snapshot.join(', ')}`
+      : '[roost] reconnected to IRC'
+    this.emitSystem('reconnected', content)
+    for (const ch of snapshot) {
+      this.irc.join(ch)
+      this.log(`reconnect-rejoining ${ch}`)
+    }
+  }
+
+  private handleJoin(event: JoinEvent): void {
+    if (event.nick === this.nick) {
+      this.log(`joined ${event.channel}`)
+      this.channelUsers.set(event.channel, new Set([this.nick]))
+      const list = this.joinResolvers.get(event.channel)
+      if (list?.length) {
+        for (const r of list) r(true)
+        this.joinResolvers.delete(event.channel)
+      }
+      return
+    }
+    this.ensureChannelSet(event.channel).add(event.nick)
+    this.emitMembership('join', event.nick, event.channel)
+  }
+
+  private handleUserlist(event: UserlistEvent): void {
+    const set = new Set<string>()
+    for (const u of event.users ?? []) {
+      if (u?.nick) set.add(u.nick)
+    }
+    set.add(this.nick)
+    this.channelUsers.set(event.channel, set)
+    this.log(`userlist for ${event.channel}: ${set.size} nicks (${[...set].sort().join(', ')})`)
+  }
+
+  private handlePart(event: PartEvent): void {
+    if (event.nick === this.nick) {
+      const list = this.partResolvers.get(event.channel)
+      if (list?.length) {
+        for (const r of list) r(true)
+        this.partResolvers.delete(event.channel)
+      }
+      this.channelUsers.delete(event.channel)
+      return
+    }
+    this.channelUsers.get(event.channel)?.delete(event.nick)
+    this.emitMembership('leave', event.nick, event.channel, {
+      reason: event.message ? `parted: ${event.message}` : 'parted',
+    })
+  }
+
+  private handleKick(event: KickEvent): void {
+    const victim = event.kicked
+    if (victim === this.nick) {
+      this.channelUsers.delete(event.channel)
+      return
+    }
+    this.channelUsers.get(event.channel)?.delete(victim)
+    this.emitMembership('leave', victim, event.channel, {
+      reason: `kicked${event.message ? ': ' + event.message : ''}`,
+    })
+  }
+
+  private handleQuit(event: QuitEvent): void {
+    if (event.nick === this.nick) {
+      this.channelUsers.clear()
+      return
+    }
+    for (const [chan, set] of this.channelUsers) {
+      if (set.delete(event.nick)) {
+        this.emitMembership('leave', event.nick, chan, {
+          reason: event.message ? `quit: ${event.message}` : 'quit',
         })
-      },
-    )
-
-    this.irc.on(
-      'kick',
-      (event: { nick?: string; kicked: string; channel: string; message?: string }) => {
-        const victim = event.kicked
-        if (victim === this.nick) {
-          this.channelUsers.delete(event.channel)
-          return
-        }
-        this.channelUsers.get(event.channel)?.delete(victim)
-        this.emitMembership('leave', victim, event.channel, {
-          reason: `kicked${event.message ? ': ' + event.message : ''}`,
-        })
-      },
-    )
-
-    this.irc.on('quit', (event: { nick: string; message?: string }) => {
-      if (event.nick === this.nick) {
-        this.channelUsers.clear()
-        return
       }
-      for (const [chan, set] of this.channelUsers) {
-        if (set.delete(event.nick)) {
-          this.emitMembership('leave', event.nick, chan, {
-            reason: event.message ? `quit: ${event.message}` : 'quit',
-          })
-        }
+    }
+  }
+
+  private handleNick(event: NickEvent): void {
+    if (event.nick === this.nick) return
+    let firstChan: string | null = null
+    for (const [chan, set] of this.channelUsers) {
+      if (set.delete(event.nick)) {
+        set.add(event.new_nick)
+        if (!firstChan) firstChan = chan
       }
-    })
+    }
+    if (firstChan) {
+      this.emitMembership('nick', event.nick, firstChan, { newNick: event.new_nick })
+    }
+  }
 
-    this.irc.on('nick', (event: { nick: string; new_nick: string }) => {
-      if (event.nick === this.nick) return
-      let firstChan: string | null = null
-      for (const [chan, set] of this.channelUsers) {
-        if (set.delete(event.nick)) {
-          set.add(event.new_nick)
-          if (!firstChan) firstChan = chan
-        }
+  private handleMessage(event: MessageEvent): void {
+    if (event.nick === this.nick) return
+    if (event.batch?.type === 'draft/multiline') return
+    if (event.batch?.type === CAP_CHATHISTORY) return
+    const isDirect = event.target === this.nick
+    const channel = isDirect ? event.nick : event.target
+    const ts = event.tags?.['time'] ?? new Date().toISOString()
+    const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
+    this.recordMessage(msg)
+    this.emitMessage(msg, {})
+  }
+
+  private handleMultilineBatch(event: BatchEndEvent): void {
+    const target = event.params[0]
+    if (!target) return
+    const cmds = event.commands.filter(c => c.command === 'PRIVMSG')
+    if (cmds.length === 0) return
+    const sender = cmds[0].nick
+    if (sender === this.nick) return
+    const text = reassembleMultilineBatch(cmds)
+    const isDirect = target === this.nick
+    const channel = isDirect ? sender : target
+    const serverTimeMs = cmds[0].getServerTime?.()
+    const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
+    const msg: IrcMessage = { channel, sender, text, ts, isDirect }
+    this.recordMessage(msg)
+    this.emitMessage(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
+  }
+
+  private handleChathistoryBatch(event: BatchEndEvent): void {
+    const target = event.params[0]
+    if (!target) return
+    const msgs = this.parseChathistoryBatch(event.commands, target)
+    for (const msg of msgs) {
+      if (this.hasFingerprint(msg)) {
+        this.log(`chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}`)
+        continue
       }
-      if (firstChan) {
-        this.emitMembership('nick', event.nick, firstChan, { newNick: event.new_nick })
-      }
-    })
+      this.recordMessage(msg, true)
+      this.emitMessage(msg, { historical: true })
+    }
+  }
 
-    this.irc.on('message', (event: {
-      nick: string
-      target: string
-      message: string
-      type: 'privmsg' | 'notice' | 'action' | string
-      batch?: { id: string; type: string; params: string[] }
-      tags?: Record<string, string>
-    }) => {
-      if (event.nick === this.nick) return
-      if (event.batch?.type === 'draft/multiline') return
-      if (event.batch?.type === CAP_CHATHISTORY) return
-      const isDirect = event.target === this.nick
-      const channel = isDirect ? event.nick : event.target
-      const ts = event.tags?.['time'] ?? new Date().toISOString()
-      const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
-      this.pushHistory(channel, msg)
-      this.addFingerprint(msg)
-      const prev = this.unread.get(channel)
-      this.unread.set(channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
-      this.emitMessage(msg, {})
-    })
+  private parseChathistoryBatch(commands: BatchCommand[], target: string): IrcMessage[] {
+    const cutoffMs = this.joinHistoryMinutes > 0 ? Date.now() - this.joinHistoryMinutes * 60_000 : 0
+    const batch: IrcMessage[] = []
+    for (const c of commands) {
+      if (c.command !== 'PRIVMSG') continue
+      const sender = c.nick
+      if (!sender || sender === this.nick) continue
+      const text = c.params[c.params.length - 1] ?? ''
+      const isDirect = target === this.nick
+      const channel = isDirect ? sender : target
+      const serverTimeMs = c.getServerTime?.()
+      if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
+      const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
+      batch.push({ channel, sender, text, ts, isDirect })
+    }
+    return this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
+  }
 
-    this.irc.on(
-      'batch end draft/multiline',
-      (event: {
-        id: string
-        params: string[]
-        commands: Array<{
-          command: string
-          params: string[]
-          nick: string
-          tags: Record<string, unknown>
-          getServerTime?: () => number | undefined
-        }>
-      }) => {
-        const target = event.params[0]
-        if (!target) return
-        const cmds = event.commands.filter(c => c.command === 'PRIVMSG')
-        if (cmds.length === 0) return
-        const sender = cmds[0].nick
-        if (sender === this.nick) return
+  private handleSocketClose(): void {
+    this.log('socket closed')
+    this.irc_ready = false
+    this.emitSystem('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
+  }
 
-        const text = reassembleMultilineBatch(cmds)
-        const isDirect = target === this.nick
-        const channel = isDirect ? sender : target
-        const serverTimeMs = cmds[0].getServerTime?.()
-        const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-        const msg: IrcMessage = { channel, sender, text, ts, isDirect }
-        this.pushHistory(channel, msg)
-        this.addFingerprint(msg)
-        const prev = this.unread.get(channel)
-        this.unread.set(channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
-        this.emitMessage(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
-      },
-    )
-
-    this.irc.on(
-      'batch end chathistory',
-      (event: {
-        id: string
-        params: string[]
-        commands: Array<{
-          command: string
-          params: string[]
-          nick: string
-          tags: Record<string, unknown>
-          getServerTime?: () => number | undefined
-        }>
-      }) => {
-        const target = event.params[0]
-        if (!target) return
-        const cutoffMs = this.joinHistoryMinutes > 0 ? Date.now() - this.joinHistoryMinutes * 60_000 : 0
-        const batch: IrcMessage[] = []
-        for (const c of event.commands) {
-          if (c.command !== 'PRIVMSG') continue
-          const sender = c.nick
-          if (!sender || sender === this.nick) continue
-          const text = c.params[c.params.length - 1] ?? ''
-          const isDirect = target === this.nick
-          const channel = isDirect ? sender : target
-          const serverTimeMs = c.getServerTime?.()
-          if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
-          const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-          batch.push({ channel, sender, text, ts, isDirect })
-        }
-        const limited = this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
-        for (const msg of limited) {
-          if (this.hasFingerprint(msg)) {
-            process.stderr.write(`roost-irc[${this.nick}]: chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}\n`)
-            continue
-          }
-          this.addFingerprint(msg)
-          this.pushHistory(msg.channel, msg)
-          this.emitMessage(msg, { historical: true })
-        }
-      },
-    )
-
-    this.irc.on('socket close', () => {
-      process.stderr.write(`roost-irc[${this.nick}]: socket closed\n`)
-      this.irc_ready = false
-      this.emitSystem('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
-    })
-
-    this.irc.on('socket error', (err: Error) => {
-      process.stderr.write(`roost-irc[${this.nick}]: socket error: ${err.message}\n`)
-    })
+  private handleSocketError(err: Error): void {
+    this.log(`socket error: ${err.message}`)
   }
 }
