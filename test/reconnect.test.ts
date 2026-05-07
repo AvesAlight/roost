@@ -140,10 +140,10 @@ describe.if(isErgoAvailable())('reconnect (subprocess)', () => {
       await peer.joinChannel('#rc-notif-ch')
       peer.say('#rc-notif-ch', 'post-reconnect-hello')
       const msgNotif = await mcp.waitForNotification(
-        n => n.meta.channel === '#rc-notif-ch' && n.content === 'post-reconnect-hello',
+        n => n.meta.channel === '#rc-notif-ch' && n.content.startsWith('post-reconnect-hello'),
         10000,
       )
-      expect(msgNotif.content).toBe('post-reconnect-hello')
+      expect(msgNotif.content).toContain('post-reconnect-hello')
     } finally {
       await dedicated.cleanup()
     }

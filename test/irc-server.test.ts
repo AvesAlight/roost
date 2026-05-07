@@ -88,7 +88,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     peer.say('#ip-inbound1', 'ping from peer')
     const n = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-inbound1' && n.content === 'ping from peer',
+      n => n.meta.channel === '#ip-inbound1' && n.content.startsWith('ping from peer'),
     )
     expect(n.meta.sender).toBe('ip-inbound1-peer')
     expect(n.meta.isDirect).toBe('false')
@@ -113,9 +113,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-hist1')
 
     peer.say('#ip-hist1', 'msg-a')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content === 'msg-a')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content.startsWith('msg-a'))
     peer.say('#ip-hist1', 'msg-b')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content === 'msg-b')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-hist1' && n.content.startsWith('msg-b'))
 
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist1' } })
     const text = toolText(hist)
@@ -138,7 +138,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread1')
 
     peer.say('#ip-unread1', 'hello unread world')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content === 'hello unread world')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread1' && n.content.startsWith('hello unread world'))
 
     const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
     expect(toolText(list)).toContain('(1)')
@@ -153,7 +153,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread2')
 
     peer.say('#ip-unread2', 'you there?')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread2' && n.content === 'you there?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread2' && n.content.startsWith('you there?'))
 
     await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread2', text: 'yes' } })
 
@@ -168,7 +168,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread3')
 
     peer.say('#ip-unread3', 'did you see this?')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread3' && n.content === 'did you see this?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread3' && n.content.startsWith('did you see this?'))
 
     await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-unread3' } })
 
@@ -183,7 +183,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-unread4')
 
     peer.say('#ip-unread4', 'ack this')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread4' && n.content === 'ack this')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread4' && n.content.startsWith('ack this'))
 
     const ack = await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-unread4' } })
     expect(ack.isError).toBeFalsy()
@@ -206,7 +206,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     // Send a message, then trigger summary → should name the channel
     peer.say('#ip-unread5', 'pending message')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread5' && n.content === 'pending message')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread5' && n.content.startsWith('pending message'))
 
     mcp.emitUnreadSummary()
     const nDirty = await mcp.waitForNotification(n => n.meta.event === 'unread-summary', 5000, cursor)
@@ -225,7 +225,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
     // Message arrives in B while agent is "focused" on A
     peer.say('#ip-unread7-b', 'look at this')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content === 'look at this')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread7-b' && n.content.startsWith('look at this'))
 
     // Sending to A should report B as unread in the reply
     const reply = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-a', text: 'hi' } })

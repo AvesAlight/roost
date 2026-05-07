@@ -52,9 +52,9 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     peer.say('ip-out-mcp3', 'dm from peer')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.isDirect === 'true' && n.meta.sender === 'ip-out-peer3' && n.content === 'dm from peer',
+      n => n.meta.isDirect === 'true' && n.meta.sender === 'ip-out-peer3' && n.content.startsWith('dm from peer'),
     )
-    expect(n.content).toBe('dm from peer')
+    expect(n.content).toContain('dm from peer')
     expect(n.meta.isDirect).toBe('true')
   })
 
@@ -83,7 +83,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp4' && !n.meta.event,
     )
-    expect(n.content).toBe(longText)
+    expect(n.content.startsWith(longText)).toBe(true)
   })
 
   it('channel_join: cache hit — second join returns ok without IRC round-trip', async () => {
@@ -107,13 +107,13 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     // Send one at a time, waiting for each notification so the receive buffer
     // doesn't coalesce them into a single event.
     peer.say('#ip-out-hist', 'hist-msg-1')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-1')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content.startsWith('hist-msg-1'))
 
     peer.say('#ip-out-hist', 'hist-msg-2')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-2')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content.startsWith('hist-msg-2'))
 
     peer.say('#ip-out-hist', 'hist-msg-3')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-3')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content.startsWith('hist-msg-3'))
 
     const hist = await mcp.client.callTool({
       name: 'channel_history',

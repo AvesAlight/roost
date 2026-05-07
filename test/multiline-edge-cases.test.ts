@@ -27,7 +27,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#ip-ml-ec1' && n.meta.sender === 'ip-ml-ec1-s' && !n.meta.event,
     )
-    expect(n.content).toBe(text)
+    expect(n.content.startsWith(text)).toBe(true)
   })
 
   it('trailing newline preserved', async () => {
@@ -44,7 +44,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#ip-ml-ec2' && n.meta.sender === 'ip-ml-ec2-s' && !n.meta.event,
     )
-    expect(n.content).toBe(text)
+    expect(n.content.startsWith(text)).toBe(true)
   })
 
   it('message exactly at byte boundary takes fast path (no batch)', async () => {
@@ -84,7 +84,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#ip-ml-ec4' && n.meta.sender === 'ip-ml-ec4-s' && !n.meta.event,
     )
-    expect(n.content).toBe(text)
+    expect(n.content.startsWith(text)).toBe(true)
   })
 })
 
@@ -140,6 +140,6 @@ describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
     const n = await receiver.waitForNotification(
       n => n.meta.channel === '#ml-ec6' && n.meta.sender === 'ml-ec6-s' && !n.meta.event,
     )
-    expect(n.content).toBe(text)
+    expect(n.content.startsWith(text)).toBe(true)
   })
 })

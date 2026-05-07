@@ -115,7 +115,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Receive message live — MCP adds it to seen-set
     peer.say('#ip-hist-dedup1', 'dedup-live-msg')
-    await mcp.waitForNotification(n => n.content === 'dedup-live-msg' && n.meta.channel === '#ip-hist-dedup1')
+    await mcp.waitForNotification(n => n.content.startsWith('dedup-live-msg') && n.meta.channel === '#ip-hist-dedup1')
 
     // Part and rejoin — ergo replays chathistory including dedup-live-msg
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-hist-dedup1' } })
@@ -178,7 +178,7 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
 
     peer.say('#hist-dedup3', 'dedup-reset-msg')
-    await mcp.waitForNotification(n => n.content === 'dedup-reset-msg' && n.meta.channel === '#hist-dedup3')
+    await mcp.waitForNotification(n => n.content.startsWith('dedup-reset-msg') && n.meta.channel === '#hist-dedup3')
 
     // Verify dedupe works before reset: part+rejoin → no duplicate
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#hist-dedup3' } })

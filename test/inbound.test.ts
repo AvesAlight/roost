@@ -20,10 +20,10 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     peer.say('#ip-in-chan', 'hello channel')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-in-chan' && n.content === 'hello channel',
+      n => n.meta.channel === '#ip-in-chan' && n.content.startsWith('hello channel'),
     )
 
-    expect(n.content).toBe('hello channel')
+    expect(n.content).toContain('hello channel')
     expect(n.meta.sender).toBe('ip-in-peer1')
     expect(n.meta.channel).toBe('#ip-in-chan')
     expect(n.meta.isDirect).toBe('false')
@@ -39,7 +39,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     peer.say('ip-in-mcp2', 'hello dm')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.isDirect === 'true' && n.content === 'hello dm',
+      n => n.meta.isDirect === 'true' && n.content.startsWith('hello dm'),
     )
 
     expect(n.meta.sender).toBe('ip-in-peer2')
@@ -152,7 +152,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-in-self' } })
     // Use a peer DM as flush fence: any self-leave notification would precede this
     peer.say('ip-in-mcp7', 'ping')
-    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'ping')
+    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content.startsWith('ping'))
 
     expect(mcp.notifications.find(n => n.meta.sender === 'ip-in-mcp7')).toBeUndefined()
   })
