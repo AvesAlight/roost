@@ -54,6 +54,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly joinHistoryMinutes: number
   private readonly autoJoin: string[]
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- irc-framework ships no types; see #156
   private readonly irc: any
 
   private ircReady = false
@@ -185,6 +186,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   on(event: 'message', handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
   on(event: 'system', handler: (kind: SystemKind, content: SystemContent) => void): void
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- implementation signature required by TS overload pattern
   on(event: string, handler: (...args: any[]) => void): void {
     if (event === 'message') this.messageHandlers.push(handler)
     else if (event === 'membership') this.membershipHandlers.push(handler)
