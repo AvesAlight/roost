@@ -243,11 +243,13 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
     switch (name) {
       case 'channel_message': {
-        const ch = String(args.channel ?? ''), text = String(args.text ?? '')
+        const ch = String(args.channel ?? '')
+        const text = String(args.text ?? '')
         return handleSay(ch, text, `sent to ${ch}`)
       }
       case 'direct_message': {
-        const nick = String(args.nick ?? ''), text = String(args.text ?? '')
+        const nick = String(args.nick ?? '')
+        const text = String(args.text ?? '')
         return handleSay(nick, text, `DM to ${nick}`)
       }
       case 'channel_join': {
@@ -266,7 +268,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
         return { content: [{ type: 'text', text: users.length ? `${ch} (${users.length}): ${users.join(', ')}` : `${ch}: (no users tracked — not joined yet, or NAMES not received)` }] }
       }
       case 'channel_history': {
-        const key = String(args.channel ?? ''), limit = Number(args.limit ?? 20)
+        const key = String(args.channel ?? '')
+        const limit = Number(args.limit ?? 20)
         client.ackUnread(key)
         const slice = client.getHistory(key, limit)
         if (slice.length === 0) return { content: [{ type: 'text', text: `no history for ${key} (since this MCP started)` }] }
