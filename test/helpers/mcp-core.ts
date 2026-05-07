@@ -1,6 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { NOT_READY_SENTINEL } from '../../src/irc-server.js'
 import { sleep, suppressLateRejection } from './tool.js'
+
+let nextWaiterId = 0
 
 export interface ChannelNotification {
   content: string
@@ -32,6 +35,7 @@ export async function wireMcpClient(
 ): Promise<McpHandle & { waiterCount: () => number }> {
   const notifications: ChannelNotification[] = []
   const waiters: Array<{
+    id: number
     pred: (n: ChannelNotification) => boolean
     resolve: (n: ChannelNotification) => void
   }> = []
@@ -67,13 +71,14 @@ export async function wireMcpClient(
         for (let i = fromCursor; i < notifications.length; i++) {
           if (pred(notifications[i])) { resolve(notifications[i]); return }
         }
+        const waiterId = nextWaiterId++
         const wrappedResolve = (n: ChannelNotification) => { clearTimeout(timer); resolve(n) }
         const timer = setTimeout(() => {
-          const idx = waiters.findIndex(w => w.resolve === wrappedResolve)
+          const idx = waiters.findIndex(w => w.id === waiterId)
           if (idx !== -1) waiters.splice(idx, 1)
           reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
         }, timeoutMs)
-        waiters.push({ pred, resolve: wrappedResolve })
+        waiters.push({ id: waiterId, pred, resolve: wrappedResolve })
       }))
     },
   }
@@ -92,7 +97,7 @@ export async function pollUntilIrcReady(handle: McpHandle, deadlineMs = 5000): P
     const r = await handle.client.callTool({ name: 'channel_who', arguments: { channel: '#_ready' } })
     if (!r.isError) return
     const text = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
-    if (!text.includes('not ready')) return
+    if (!text.includes(NOT_READY_SENTINEL)) return
     if (Date.now() > deadline) throw new Error(`IRC not ready within ${deadlineMs / 1000}s (nick=${handle.nick})`)
     await sleep(50)
   }
