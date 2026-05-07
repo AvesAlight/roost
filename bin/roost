@@ -25,7 +25,6 @@ Usage: roost <command> [args]
 
 Commands:
   spawn <nick> [options]   Bring up a Claude session on the roost.
-                           Joins channels, dismisses dev-channels prompt.
   shutdown <nick>          Kill the tmux session for that nick.
   list                     Show all roost-prefixed tmux sessions.
   attach <nick>            tmux attach to that nick's session.
@@ -34,16 +33,27 @@ Commands:
   root                     Print the roost plugin root directory.
   send <nick> <message...> Inject text into a nick's tmux pane.
 
-spawn options:
+Run 'roost <command> --help' for per-command usage.
+EOF
+}
+
+usage_spawn() {
+  cat <<EOF
+Usage: roost spawn <nick> [options]
+
+Bring up a Claude Code session on the roost. Joins the specified channels
+and dismisses the dev-channels prompt automatically. Sessions launch under
+\`zsh -l\` so .zprofile loads — required for RVM, nvm, and similar toolchains.
+
+Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
   -m, --model MODEL          Override --model. Default: opus.
   --perm-irc                 Start a permbot side daemon that surfaces this
                              worker's tool-permission prompts as DMs to
                              --perm-target. Useful for non-Opus models that
-                             can't use auto mode and would otherwise flood the
-                             terminal with prompts. The daemon is spawned as a
-                             child of the MCP server and dies with it.
+                             can't use auto mode. Spawned as a child of the
+                             MCP server and dies with it.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --permission-mode MODE     Override --permission-mode passed to claude.
@@ -57,9 +67,7 @@ spawn options:
   --mcp-config PATH          Explicit mcp-config path. Not needed when the
                              roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
-                             after the session boots. Useful for handoff
-                             prompts or any spawn that needs an initial
-                             prompt without manual attach.
+                             after the session boots.
      --prompt TEXT           Inline prompt string. Mutually exclusive with
                              --prompt-file and --prompt-stdin.
      --prompt-stdin          Read prompt from stdin. Errors if stdin is a
@@ -67,11 +75,6 @@ spawn options:
                              --prompt.
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
-
-Sessions launch under \`zsh -l\` (login shell) so .zprofile loads — required
-for RVM, nvm, and other shell-rc-managed toolchains. Permission mode defaults
-to auto for opus and acceptEdits for all other models; override with
---permission-mode.
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
@@ -85,10 +88,86 @@ Examples:
     --cwd ~/Dev/myproject \\
     --prompt-file /tmp/handoff.md \\
     -- --chrome --system-prompt ' '
+EOF
+}
 
+usage_shutdown() {
+  cat <<EOF
+Usage: roost shutdown <nick>
+
+Kill the tmux session for <nick> and clean up its data directory.
+
+Example:
   roost shutdown worker-1
+EOF
+}
+
+usage_list() {
+  cat <<EOF
+Usage: roost list
+
+Show all roost-prefixed tmux sessions with nick and creation time.
+
+Example:
   roost list
+EOF
+}
+
+usage_attach() {
+  cat <<EOF
+Usage: roost attach <nick>
+
+tmux attach to that nick's session (interactive).
+
+Example:
+  roost attach worker-1
+EOF
+}
+
+usage_tail() {
+  cat <<EOF
+Usage: roost tail <nick> [-n LINES]
+
+Show recent pane output for a session.
+
+Options:
+  -n LINES   Number of lines to show (default: 30).
+
+Example:
   roost tail worker-1 -n 50
+EOF
+}
+
+usage_status() {
+  cat <<EOF
+Usage: roost status
+
+Show ergo ircd state and roost session count.
+
+Example:
+  roost status
+EOF
+}
+
+usage_send() {
+  cat <<EOF
+Usage: roost send <nick> <message...>
+
+Inject text into a nick's tmux pane (simulates keyboard input + Enter).
+
+Example:
+  roost send worker-1 'check the deploy logs'
+EOF
+}
+
+usage_root() {
+  cat <<EOF
+Usage: roost root
+
+Print the roost plugin root directory.
+
+Example:
+  roost root
 EOF
 }
 
@@ -143,7 +222,7 @@ cmd_spawn() {
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
-      -h|--help)        usage; exit 0 ;;
+      -h|--help)        usage_spawn; exit 0 ;;
       --)               shift; extra_args=("$@"); break ;;
       *)
         echo "error: unknown spawn option: $1" >&2
@@ -362,6 +441,7 @@ cmd_tail() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -n) lines="$2"; shift 2 ;;
+      -h|--help) usage_tail; exit 0 ;;
       *) echo "error: unknown tail option: $1" >&2; exit 1 ;;
     esac
   done
@@ -414,7 +494,22 @@ if [ "$#" -eq 0 ]; then
 fi
 cmd="$1"
 shift
-case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+case "${1:-}" in
+  -h|--help)
+    case "${cmd}" in
+      spawn)    usage_spawn ;;
+      shutdown) usage_shutdown ;;
+      list)     usage_list ;;
+      attach)   usage_attach ;;
+      tail)     usage_tail ;;
+      status)   usage_status ;;
+      send)     usage_send ;;
+      root)     usage_root ;;
+      *)        usage ;;
+    esac
+    exit 0
+    ;;
+esac
 case "${cmd}" in
   spawn)    cmd_spawn "$@" ;;
   shutdown) cmd_shutdown "$@" ;;
