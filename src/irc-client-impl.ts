@@ -52,10 +52,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly joinHistoryMinutes: number
   private readonly autoJoin: string[]
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly irc: any
 
-  private irc_ready = false
+  private ircReady = false
   private hasRegistered = false
   private readonly joinResolvers = new Map<string, Array<(ok: boolean) => void>>()
   private readonly partResolvers = new Map<string, Array<(ok: boolean) => void>>()
@@ -94,7 +93,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     })
   }
 
-  isReady(): boolean { return this.irc_ready }
+  isReady(): boolean { return this.ircReady }
   isJoined(channel: string): boolean { return this.channelUsers.has(channel) }
 
   async join(channel: string): Promise<boolean> {
@@ -181,7 +180,6 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   on(event: 'message', handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
   on(event: 'system', handler: (kind: 'disconnected' | 'reconnected', content: string) => void): void
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(event: string, handler: (...args: any[]) => void): void {
     if (event === 'message') this.messageHandlers.push(handler)
     else if (event === 'membership') this.membershipHandlers.push(handler)
@@ -276,7 +274,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // ---- IRC event handlers ------------------------------------------------
 
   private handleRegistered(): void {
-    this.irc_ready = true
+    this.ircReady = true
     this.log('registered with the IRC server')
     this.parseMultilineCap()
     this.logChathistoryCap()
@@ -475,7 +473,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private handleSocketClose(): void {
     this.log('socket closed')
-    this.irc_ready = false
+    this.ircReady = false
     this.emitSystem('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
   }
 
