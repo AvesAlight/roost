@@ -7,7 +7,7 @@ import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText } from './helpers/tool.js'
+import { toolText, sleep } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   let ergo: ErgoContext
@@ -237,6 +237,50 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     // Now send to B — reply should be silent (no other unread)
     const reply2 = await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-unread7-b', text: 'got it' } })
     expect(toolText(reply2)).not.toContain('unread:')
+  })
+
+  // ---- Reply reminder (issue #136) ---------------------------------------
+
+  it('first inbound channel message carries the reply reminder', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem1')
+    const peer = await connectPeer(ergo, 'ip-rem1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem1' } })
+    await peer.joinChannel('#ip-rem1')
+
+    peer.say('#ip-rem1', 'first message')
+    const n = await mcp.waitForNotification(
+      n => n.meta.channel === '#ip-rem1' && n.content.startsWith('first message'),
+    )
+    expect(n.content).toContain('Substantive replies should be posted to IRC.')
+    expect(n.meta.reminder).toBe('true')
+  })
+
+  it('first inbound DM carries the reply reminder', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-rem2')
+    const peer = await connectPeer(ergo, 'ip-rem2-peer')
+
+    peer.say('ip-rem2', 'dm hello')
+    const n = await mcp.waitForNotification(
+      n => n.meta.isDirect === 'true' && n.content.startsWith('dm hello'),
+    )
+    expect(n.content).toContain('Substantive replies should be posted to IRC.')
+    expect(n.meta.reminder).toBe('true')
+  })
+
+  it('historical replay messages do not carry the reply reminder', async () => {
+    const peer = await connectPeer(ergo, 'ip-rem3-peer')
+    const mcp = await startMcpInProcess(ergo, 'ip-rem3')
+
+    await peer.joinChannel('#ip-rem3-backfill')
+    peer.say('#ip-rem3-backfill', 'historical-1')
+    await sleep(200)
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem3-backfill' } })
+    const n = await mcp.waitForNotification(
+      n => n.meta.historical === 'true' && n.content === 'historical-1',
+    )
+    expect(n.content).not.toContain('Substantive replies should be posted to IRC.')
+    expect(n.meta.reminder).toBeUndefined()
   })
 
   it('historical replay does not count as unread', async () => {

@@ -136,6 +136,13 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
   // millisecond timestamp (the original bug behind reassembly).
   let receiveSeq = 0
 
+  // Inbound chat message counter — the first arriving message always carries
+  // the IRC-reply reminder; subsequent messages carry it with probability
+  // REMINDER_PROBABILITY. Historical replay does not count.
+  let inboundMessageCount = 0
+  const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
+  const REMINDER_PROBABILITY = 1 / 7
+
   // ---- MCP server --------------------------------------------------------
 
   const mcp = new Server(
@@ -184,7 +191,17 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
     if (meta.historical) metaRecord.historical = 'true'
-    pushNotification(msg.text, metaRecord)
+
+    let content = msg.text
+    if (!meta.historical) {
+      inboundMessageCount++
+      if (inboundMessageCount === 1 || Math.random() < REMINDER_PROBABILITY) {
+        content = `${msg.text}\n\n${REPLY_REMINDER}`
+        metaRecord.reminder = 'true'
+      }
+    }
+
+    pushNotification(content, metaRecord)
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
