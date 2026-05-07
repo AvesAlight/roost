@@ -285,16 +285,16 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // ---- IRC event handlers ------------------------------------------------
 
   private handleRegistered(): void {
-    this.ircReady = true
     this.log('registered with the IRC server')
     if (!this.parseMultilineCap()) return
+    this.ircReady = true
     this.logChathistoryCap()
     if (this.hasRegistered) {
       this.handleReconnect()
       return
     }
     this.hasRegistered = true
-    this.emitSystem('registered', { code: 1, nick: this.nick })
+    this.emitSystem('registered', { nick: this.nick })
     for (const ch of this.autoJoin) {
       this.irc.join(ch)
       this.log(`auto-joining ${ch}`)

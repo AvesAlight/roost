@@ -41,8 +41,8 @@ export interface ConnectOpts {
 }
 
 export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
-// string for disconnected/reconnected/cap-missing; structured for registered/registration-failed
-export type SystemContent = string | { code: number; nick?: string }
+// string for disconnected/reconnected/cap-missing; { nick } for registered; { code } for registration-failed
+export type SystemContent = string | { code?: number; nick?: string }
 
 export interface RoostIrcClient {
   // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
