@@ -359,21 +359,16 @@ if (import.meta.main) {
   let permbotProc: import('bun').Subprocess | null = null
   if (PERM_SOCK && PERM_TARGET) {
     const permbotPath = new URL('./permbot.ts', import.meta.url).pathname
-    const permbotEnv: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      ROOST_PERM_NICK: `permbot-${NICK}`,
-      ROOST_PERM_SOCK: PERM_SOCK,
-      ROOST_PERM_TARGET: PERM_TARGET,
-      ROOST_PERM_WORKER: NICK,
-    }
-    if (!permbotEnv['ROOST_PERM_DEBUG_LOG'] && DATA_DIR) {
-      permbotEnv['ROOST_PERM_DEBUG_LOG'] = `${DATA_DIR}/permbot.log`
-    }
+    // ROOST_PERM_SOCK / ROOST_PERM_TARGET are already in process.env (set by
+    // bin/roost via tmux -e). ROOST_PERM_WORKER and ROOST_PERM_DEBUG_LOG
+    // default sensibly inside permbot.ts (worker = nick minus 'permbot-',
+    // log = dirname(sock)/permbot.log). Only ROOST_PERM_NICK needs explicit
+    // setting — the prefix convention lives in one place: here.
     // stdout=ignore: MCP owns parent stdout for JSON-RPC protocol; permbot
     // writes there would corrupt it. stderr=inherit lets permbot logs surface
     // alongside MCP logs in the tmux pane.
     permbotProc = Bun.spawn([process.execPath, permbotPath], {
-      env: permbotEnv,
+      env: { ...process.env, ROOST_PERM_NICK: `permbot-${NICK}` } as Record<string, string>,
       stdin: 'ignore',
       stdout: 'ignore',
       stderr: 'inherit',
