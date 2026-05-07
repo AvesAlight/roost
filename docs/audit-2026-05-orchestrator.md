@@ -116,7 +116,7 @@ except Exception as e:
 The daemon reloads config every tick. If `load_config()` throws — bad JSON,
 missing file, schema mismatch — the exception is logged to stderr and the
 daemon proceeds with the previous tick's `config` variable. Under
-`tmux`/`roost service`, that stderr goes to a window nobody reads. A
+`tmux`, that stderr goes to a window nobody reads. A
 malformed edit lands silently: dispatcher keeps emitting against the stale
 watch list, heartbeat still ticks, IRC stays connected.
 

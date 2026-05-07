@@ -29,7 +29,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** run `roost service start bin/orchestrator_poll --daemon` to ensure the dispatcher daemon is up.
+- **On boot, first action:** run `nohup bin/orchestrator_poll &` to ensure the dispatcher daemon is up.
 - Read the config file before each mutation (don't cache).
 - Pretty-print JSON on write (2-space indent, trailing newline).
 - If you don't recognize a command, ignore it silently.
