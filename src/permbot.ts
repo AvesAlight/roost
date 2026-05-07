@@ -61,7 +61,7 @@ export function startPermbot(
     const entry = queue.shift()!
     const lines = [
       `[${worker}] permission requested:`,
-      ...entry.summary.split('\n').map(l => l.trim()).filter(Boolean),
+      ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
       'reply y/n',
     ]
     for (const line of lines) client.say(target, line)
