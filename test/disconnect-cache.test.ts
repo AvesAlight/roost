@@ -17,7 +17,6 @@ function makeClient() {
 describe('channelUsers cache cleared on disconnect', () => {
   it('isJoined returns false immediately after socket close', () => {
     const client = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.channelUsers.set('#test', new Set(['test-bot', 'peer']))
 
     expect(client.isJoined('#test')).toBe(true)
@@ -29,9 +28,7 @@ describe('channelUsers cache cleared on disconnect', () => {
 
   it('pendingRejoinChannels captures the channel set for rejoin', () => {
     const client = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.channelUsers.set('#alpha', new Set(['test-bot']))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.channelUsers.set('#beta', new Set(['test-bot']))
 
     client.handleSocketClose()
@@ -41,7 +38,6 @@ describe('channelUsers cache cleared on disconnect', () => {
 
   it('second socket close (failed reconnect) does not wipe pending list', () => {
     const client = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.channelUsers.set('#keep', new Set(['test-bot']))
 
     client.handleSocketClose()
@@ -54,13 +50,10 @@ describe('channelUsers cache cleared on disconnect', () => {
 
   it('handleReconnect consumes pendingRejoinChannels and clears it', () => {
     const client = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.channelUsers.set('#ch', new Set(['test-bot']))
     client.handleSocketClose()
 
     // Simulate reconnect (normally called from handleRegistered on second connect)
-    // We need hasRegistered=true so handleRegistered routes to handleReconnect
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.hasRegistered = true
     client.handleReconnect()
 
