@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
+import type { JoinResult } from '../src/irc-client.js'
 
 const config = {
   nick: 'test-bot',
@@ -149,7 +150,7 @@ describe('draft/multiline cap malformed value warning', () => {
 describe('socket close pre-empts pending join/part resolvers', () => {
   it('join resolver resolves false immediately on socket close', async () => {
     const client = makeClient()
-    const p = new Promise<import('../src/irc-client.js').JoinResult>(resolve => {
+    const p = new Promise<JoinResult>(resolve => {
       client.joinResolvers.set('#chan', [resolve])
     })
     client.handleSocketClose()
@@ -181,7 +182,7 @@ describe('NAMES timeout fallback on join', () => {
     // Simulate a JOIN ack for our own nick (sets up channel + NAMES timeout waiter)
     client.channelUsers.set('#timeout-chan', new Set(['test-bot']))
     // Manually insert a join resolver as handleJoin would have done
-    const p = new Promise<import('../src/irc-client.js').JoinResult>(resolve => {
+    const p = new Promise<JoinResult>(resolve => {
       client.joinResolvers.set('#timeout-chan', [resolve])
     })
     // Simulate handleJoin's NAMES timeout firing (inline for test speed)
