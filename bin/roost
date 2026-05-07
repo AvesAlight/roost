@@ -127,7 +127,7 @@ start_permbot() {
     local stale
     stale="$(cat "${well_known_pid}" 2>/dev/null || true)"
     if [ -n "${stale}" ] && kill -0 "${stale}" 2>/dev/null; then
-      if ps -o args= -p "${stale}" 2>/dev/null | grep -q "roost-permbot"; then
+      if ps -o args= -p "${stale}" 2>/dev/null | grep -qE "(roost-permbot|src/permbot\.ts)"; then
         kill "${stale}" 2>/dev/null || true
         local _j
         for _j in 1 2 3 4; do
