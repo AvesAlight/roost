@@ -429,15 +429,33 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private handleNick(event: NickEvent): void {
     if (event.nick === this.nick) return
-    let firstChan: string | null = null
-    for (const [chan, set] of this.channelUsers) {
+    const oldKey = event.nick.toLowerCase()
+    const newKey = event.new_nick.toLowerCase()
+    let hadState = false
+
+    for (const [, set] of this.channelUsers) {
       if (set.delete(event.nick)) {
         set.add(event.new_nick)
-        if (!firstChan) firstChan = chan
+        hadState = true
       }
     }
-    if (firstChan) {
-      this.emitMembership('nick', event.nick, firstChan, { newNick: event.new_nick })
+
+    const hist = this.history.get(oldKey)
+    if (hist !== undefined) {
+      this.history.delete(oldKey)
+      this.history.set(newKey, hist)
+      hadState = true
+    }
+
+    const ur = this.unread.get(oldKey)
+    if (ur !== undefined) {
+      this.unread.delete(oldKey)
+      this.unread.set(newKey, ur)
+      hadState = true
+    }
+
+    if (hadState) {
+      this.emitMembership('nick', event.nick, '', { newNick: event.new_nick })
     }
   }
 
