@@ -9,7 +9,7 @@ export type { ChannelNotification }
 
 export interface McpInProcessContext extends McpHandle {
   waiterCount: () => number
-  emitUnreadSummary: () => void
+  emitUnreadSummary: () => Promise<void>
 }
 
 export interface StartMcpInProcessOptions {

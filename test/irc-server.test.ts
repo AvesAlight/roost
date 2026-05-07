@@ -3,11 +3,14 @@
  * so the server runs in the test process and appears in the coverage report.
  */
 import { describe, it, expect, beforeAll, spyOn } from 'bun:test'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
+import { createMcpServer } from '../src/irc-server.js'
+import type { RoostIrcClient, ClientConfig } from '../src/irc-client.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   let ergo: ErgoContext
@@ -463,5 +466,67 @@ describe.if(isErgoAvailable())('irc-server MCP tools (subprocess)', () => {
     expect(toolText(result)).toBe('parted #leave-test')
 
     await partSeen
+  })
+})
+
+// Minimal stub — createMcpServer only needs on() at setup and getUnread() for emitUnreadSummary.
+function makeStubClient(): RoostIrcClient {
+  return {
+    connect: () => {},
+    isReady: () => false,
+    join: async () => false,
+    leave: async () => false,
+    say: () => ({ chunks: 0, mode: 'single' as const }),
+    quit: () => {},
+    whoisChannels: async () => null,
+    getHistory: () => [],
+    getUsers: () => [],
+    getUnread: () => new Map(),
+    ackUnread: () => {},
+    clearDedupeCache: () => {},
+    isJoined: () => false,
+    // Cast required: overloaded on() signature doesn't unify with a single no-op arrow.
+    on: (() => {}) as unknown as RoostIrcClient['on'],
+  }
+}
+
+const stubConfig: ClientConfig = {
+  nick: 'test-nick',
+  autoJoin: [],
+  historySize: 10,
+  joinHistoryLines: 5,
+  joinHistoryMinutes: 5,
+}
+
+describe('pushNotification error handling', () => {
+  it('silently suppresses Not connected (transport teardown)', async () => {
+    const { emitUnreadSummary } = createMcpServer(makeStubClient(), stubConfig)
+
+    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation((() => true) as typeof process.stderr.write)
+    try {
+      await emitUnreadSummary()
+      const errorCalls = stderrSpy.mock.calls.filter(([s]) => typeof s === 'string' && s.includes('pushNotification error'))
+      expect(errorCalls).toHaveLength(0)
+    } finally {
+      stderrSpy.mockRestore()
+    }
+  })
+
+  it('logs unexpected errors to stderr', async () => {
+    const { server, emitUnreadSummary } = createMcpServer(makeStubClient(), stubConfig)
+    const [, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+
+    const notifSpy = spyOn(server, 'notification').mockRejectedValue(new Error('kaboom unexpected'))
+    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation((() => true) as typeof process.stderr.write)
+    try {
+      await emitUnreadSummary()
+      const errorCalls = stderrSpy.mock.calls.filter(([s]) => typeof s === 'string' && s.includes('kaboom unexpected'))
+      expect(errorCalls).toHaveLength(1)
+    } finally {
+      notifSpy.mockRestore()
+      stderrSpy.mockRestore()
+      await server.close()
+    }
   })
 })

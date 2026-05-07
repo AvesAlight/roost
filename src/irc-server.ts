@@ -135,7 +135,7 @@ const TOOL_SCHEMAS = [
 // any transport or start the IRC connection — the caller does both after
 // createMcpServer returns. Call order: createMcpServer → server.connect(transport)
 // → ircClient.connect.
-export function createMcpServer(client: RoostIrcClient, config: ClientConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => void } {
+export function createMcpServer(client: RoostIrcClient, config: ClientConfig): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => Promise<void> } {
   const { nick: NICK, autoJoin: AUTO_JOIN } = config
 
   // Per-MCP monotonic receive counter — gives downstream consumers a
@@ -160,12 +160,16 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
     },
   )
 
-  const pushNotification = (content: string, meta: Record<string, string>) => {
+  const pushNotification = (content: string, meta: Record<string, string>): Promise<void> => {
     const seq = ++receiveSeq
-    mcp.notification({
+    return mcp.notification({
       method: 'notifications/claude/channel',
       params: { content, meta: { ...meta, source: SOURCE_NAME, seq: String(seq) } },
-    }).catch(() => { /* transport closed during teardown */ })
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/not connected/i.test(msg)) return
+      process.stderr.write(`roost-irc[${NICK}]: pushNotification error: ${msg}\n`)
+    })
   }
 
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
@@ -323,7 +327,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
     }
   })
 
-  const emitUnreadSummary = () => {
+  const emitUnreadSummary = (): Promise<void> => {
     const entries = [...client.getUnread().entries()]
     let text: string
     if (entries.length === 0) {
@@ -332,8 +336,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       const lines = entries.map(([ch, info]) => `  ${formatUnreadLine(ch, info)}`)
       text = `[roost] unread activity:\n${lines.join('\n')}`
     }
-    pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString() })
     process.stderr.write(`roost-irc[${NICK}]: unread summary emitted (${entries.length} channels with unread)\n`)
+    return pushNotification(text, { event: 'unread-summary', channel: '', sender: '', isDirect: 'false', ts: new Date().toISOString() })
   }
 
   return { server: mcp, clearDedupeCache: () => client.clearDedupeCache(), emitUnreadSummary }
