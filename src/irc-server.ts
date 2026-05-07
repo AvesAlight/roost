@@ -163,7 +163,11 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
     mcp.notification({
       method: 'notifications/claude/channel',
       params: { content, meta: { ...meta, source: SOURCE_NAME, seq: String(seq) } },
-    }).catch(() => { /* transport closed during teardown */ })
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/not connected/i.test(msg)) return
+      process.stderr.write(`roost-irc[${NICK}]: pushNotification error: ${msg}\n`)
+    })
   }
 
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
