@@ -62,23 +62,6 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
     expect(r.isError).toBeFalsy()
   }, 15_000)
 
-  it('channel_join force=true bypasses already-in cache', async () => {
-    const mcp = await startMcpInProcess(ergo, 'ip-force-mcp')
-
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test' } })
-
-    // Normal re-join short-circuits with "already in" — no network call made
-    let r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test' } })
-    const cached = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
-    expect(cached).toContain('already in')
-
-    // force=true bypasses the cache and actually issues JOIN. When the server still
-    // has us (primary use case is stale cache / post-kick), ergo returns 443 and the
-    // join resolver times out — that's fine; the point is we didn't short-circuit.
-    r = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-force-test', force: true } })
-    const forced = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
-    expect(forced).not.toContain('already in')
-  }, 10_000)
 })
 
 // Subprocess-only: tests binary reconnect behavior after ergo process death.

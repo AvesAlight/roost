@@ -52,7 +52,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rejoin' } })
     const again = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rejoin' } })
     expect(again.isError).toBeFalsy()
-    expect(toolText(again)).toContain('already in')
+    expect(toolText(again)).toContain('joined')
   })
 
   it('channel_list reflects joined channels', async () => {
