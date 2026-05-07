@@ -203,7 +203,7 @@ export async function sendFallbackDm(summary: string, reason: string): Promise<v
         for (const ln of summary.split('\n')) {
           if (ln.trim()) client.say(PERM_TARGET, `  ${ln.trimEnd()}`)
         }
-        client.say(PERM_TARGET, '(worker blocked on terminal — no one watching)')
+        client.say(PERM_TARGET, `(worker blocked on terminal — use \`roost tail ${WORKER}\` to see context, \`roost send ${WORKER} y\` to unblock)`)
         // quit() flushes buffered writes before the connection drops;
         // wait for 'disconnected' so PRIVMSGs are actually delivered.
         client.quit()

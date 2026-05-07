@@ -14,6 +14,7 @@ export interface PermbotConfig {
   worker: string
   debugLog: string
   parentPid: number | null
+  nudgeAfterMs?: number  // default: 5 minutes; exposed for testing
 }
 
 interface QueueEntry {
@@ -25,6 +26,7 @@ interface QueueEntry {
 interface InFlight {
   socket: net.Socket
   timer: ReturnType<typeof setTimeout>
+  nudgeTimer: ReturnType<typeof setTimeout>
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -44,6 +46,7 @@ export function startPermbot(
   client: RoostIrcClient,
 ): { stop: () => void; ready: Promise<void> } {
   const { nick, sockPath, target, worker, debugLog } = config
+  const nudgeAfterMs = config.nudgeAfterMs ?? 5 * 60 * 1000
   const log = (msg: string) => dlog(debugLog, nick, msg)
 
   const queue: QueueEntry[] = []
@@ -64,16 +67,31 @@ export function startPermbot(
       ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
       'reply y/n',
     ]
-    for (const line of lines) client.say(target, line)
+    client.say(target, lines.join('\n'))
     log(`in-flight to ${target} (${lines.length} lines, timeout ${entry.timeout}s)`)
+
     const timer = setTimeout(() => {
       log('in-flight timed out')
       inFlight = null
       respond(entry.socket, { timeout: true })
+      // drain queue: next request can now be dispatched
       maybeDispatch()
     }, entry.timeout * 1000)
     timer.unref?.()
-    inFlight = { socket: entry.socket, timer }
+
+    const nudgeTimer = setTimeout(() => {
+      if (inFlight === null) return  // already resolved before nudge fired
+      log('nudge: 5min elapsed without reply')
+      const nudgeLines = [
+        `[${worker}] permission prompt still pending (5min elapsed):`,
+        ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
+        `reply y/n — or: \`roost tail ${worker}\` to see context, \`roost send ${worker} y\` to unblock`,
+      ]
+      client.say(target, nudgeLines.join('\n'))
+    }, nudgeAfterMs)
+    nudgeTimer.unref?.()
+
+    inFlight = { socket: entry.socket, timer, nudgeTimer }
   }
 
   function stop(): void {
@@ -82,6 +100,7 @@ export function startPermbot(
     log('shutdown: closing sockets')
     if (inFlight !== null) {
       clearTimeout(inFlight.timer)
+      clearTimeout(inFlight.nudgeTimer)
       respond(inFlight.socket, { error: 'daemon shutting down' })
       inFlight = null
     }
@@ -110,6 +129,7 @@ export function startPermbot(
       try {
         req = JSON.parse(line) as { summary?: unknown; timeout?: unknown }
       } catch (e) {
+        log(`bad request json: ${e}`)
         respond(socket, { error: `bad request json: ${e}` })
         return
       }
@@ -138,6 +158,7 @@ export function startPermbot(
     log(`reply from ${msg.sender}: ${JSON.stringify(body)}`)
     if (inFlight !== null) {
       clearTimeout(inFlight.timer)
+      clearTimeout(inFlight.nudgeTimer)
       const s = inFlight.socket
       inFlight = null
       respond(s, { reply: body })

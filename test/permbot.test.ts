@@ -112,8 +112,8 @@ describe('permbot queue dispatch', () => {
     const respPromise = socketRoundtrip(sockPath, { summary: 'Read /foo', timeout: 5 })
     // give the socket handler a tick to enqueue and dispatch
     await new Promise(r => setTimeout(r, 20))
-    expect(said.some(m => m.text.includes('Read /foo'))).toBe(true)
-    expect(said.some(m => m.text === 'reply y/n')).toBe(true)
+    expect(said.length).toBeGreaterThan(0)
+    expect(said.some(m => m.text.includes('Read /foo') && m.text.includes('reply y/n'))).toBe(true)
 
     replyDm('operator', 'y')
     const resp = await respPromise
@@ -163,6 +163,47 @@ describe('permbot queue dispatch', () => {
 
     replyDm('operator', 'n')
     expect(await resp2).toEqual({ reply: 'n' })
+  })
+
+  it('sends nudge DM after nudgeAfterMs with no reply', async () => {
+    const sockPath = tmpSock()
+    const { client, said } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null, nudgeAfterMs: 50 },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    socketRoundtrip(sockPath, { summary: 'Read /secret', timeout: 5 }).catch(() => {})
+    await new Promise(r => setTimeout(r, 20))
+    expect(said.some(m => m.text.includes('Read /secret'))).toBe(true)
+    // nudge not yet fired
+    expect(said.some(m => m.text.includes('still pending'))).toBe(false)
+
+    await new Promise(r => setTimeout(r, 80))
+    expect(said.some(m => m.text.includes('still pending'))).toBe(true)
+    expect(said.some(m => m.text.includes('roost tail'))).toBe(true)
+  })
+
+  it('nudge does not fire after reply already received', async () => {
+    const sockPath = tmpSock()
+    const { client, said, replyDm } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null, nudgeAfterMs: 80 },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Bash ls', timeout: 5 })
+    await new Promise(r => setTimeout(r, 20))
+    replyDm('operator', 'y')
+    await respPromise
+
+    // wait past nudge window
+    await new Promise(r => setTimeout(r, 120))
+    expect(said.some(m => m.text.includes('still pending'))).toBe(false)
   })
 
   it('drains queue with error on shutdown', async () => {
