@@ -20,6 +20,8 @@ export interface StartMcpInProcessOptions {
 
 let instanceCounter = 0
 
+// In-process variant: holds an explicit RoostIrcClientImpl; teardown calls quit() then
+// closes the transport. Contrast with startMcp which relies on the process boundary.
 export async function startMcpInProcess(
   ergo: ErgoContext,
   nick?: string,

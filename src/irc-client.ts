@@ -40,6 +40,10 @@ export interface ConnectOpts {
   autoReconnectMaxRetries?: number
 }
 
+export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
+// string for disconnected/reconnected/cap-missing; structured for registered/registration-failed
+export type SystemContent = string | { code: number; nick?: string }
+
 export interface RoostIrcClient {
   // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
   // Use isReady() + on('system') to track connection state.
@@ -50,6 +54,7 @@ export interface RoostIrcClient {
   leave(channel: string): Promise<boolean>
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
+  quit(): void
   whoisChannels(): Promise<string[] | false>
 
   // Served from local cache — no network round-trip. Note: on a freshly-joined channel
@@ -68,5 +73,5 @@ export interface RoostIrcClient {
 
   on(event: 'message',    handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
-  on(event: 'system',     handler: (kind: 'disconnected' | 'reconnected', content: string) => void): void
+  on(event: 'system',     handler: (kind: SystemKind, content: SystemContent) => void): void
 }

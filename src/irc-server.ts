@@ -211,8 +211,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
   client.on('system', (kind, content) => {
     const ts = new Date().toISOString()
-    pushNotification(content, { event: kind, channel: '', sender: '', isDirect: 'false', ts })
-    process.stderr.write(`roost-irc[${NICK}]: [${kind}] ${content}\n`)
+    const text = typeof content === 'string' ? content : JSON.stringify(content)
+    pushNotification(text, { event: kind, channel: '', sender: '', isDirect: 'false', ts })
+    process.stderr.write(`roost-irc[${NICK}]: [${kind}] ${text}\n`)
   })
 
   // ---- Tool definitions --------------------------------------------------
