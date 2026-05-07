@@ -279,7 +279,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
       }
       case 'channel_list': {
         const channels = await client.whoisChannels()
-        if (channels === false) return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
+        if (channels === null) return { content: [{ type: 'text', text: 'whois timed out' }], isError: true }
         if (channels.length === 0) return { content: [{ type: 'text', text: '(no channels joined)' }] }
         const unread = client.getUnread()
         const lines = channels.map(ch => { const info = unread.get(ch); return info ? formatUnreadLine(ch, info, 80) : ch })

@@ -53,6 +53,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly joinHistoryLines: number
   private readonly joinHistoryMinutes: number
   private readonly autoJoin: string[]
+  private readonly whoisTimeoutMs: number
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- irc-framework ships no types; see #156
   private readonly irc: any
@@ -78,6 +79,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.joinHistoryLines = config.joinHistoryLines
     this.joinHistoryMinutes = config.joinHistoryMinutes
     this.autoJoin = config.autoJoin
+    this.whoisTimeoutMs = config.whoisTimeoutMs ?? 5000
     this.irc = new IRC.Client()
     this.registerHandlers()
   }
@@ -153,8 +155,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return { chunks: wireLines.length, mode: 'multiline' }
   }
 
-  async whoisChannels(): Promise<string[] | false> {
-    return new Promise<string[] | false>((resolve) => {
+  async whoisChannels(): Promise<string[] | null> {
+    return new Promise<string[] | null>((resolve) => {
       this.irc.whois(this.nick, (event: { channels?: string }) => {
         if (!event.channels) { resolve([]); return }
         const list = event.channels
@@ -164,7 +166,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
           .sort()
         resolve(list)
       })
-      setTimeout(() => resolve(false), 5000).unref?.()
+      setTimeout(() => resolve(null), this.whoisTimeoutMs).unref?.()
     })
   }
 

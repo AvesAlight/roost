@@ -112,7 +112,7 @@ async function runDaemon(stateDir: string): Promise<void> {
     joinHistoryMinutes: 0,
   })
 
-  await connectAndWait(client, { host: server, port, nick, autoReconnect: true }, initialChannels)
+  await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, initialChannels)
   log('orchestrator[daemon]: connected\n')
 
   let stop = false
@@ -143,12 +143,16 @@ async function runDaemon(stateDir: string): Promise<void> {
     }
 
     const desired = new Set(initialIrcChannels(config, projectChannel, await loadState(stateDir)))
-    const currentlyJoined = (await client.whoisChannels()) ?? []
-    for (const ch of currentlyJoined) {
-      if (!desired.has(ch)) await client.leave(ch)
-    }
-    for (const ch of desired) {
-      if (!client.isJoined(ch)) await client.join(ch)
+    try {
+      const currentlyJoined = (await client.whoisChannels()) ?? []
+      for (const ch of currentlyJoined) {
+        if (!desired.has(ch)) await client.leave(ch)
+      }
+      for (const ch of desired) {
+        if (!client.isJoined(ch)) await client.join(ch)
+      }
+    } catch (e) {
+      log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
     }
 
     let events: OrchestratorEvent[] = []

@@ -15,6 +15,7 @@ export interface ClientConfig {
   historySize: number
   joinHistoryLines: number
   joinHistoryMinutes: number
+  whoisTimeoutMs?: number
 }
 
 // Extras attached to inbound message events (buffered = reassembled multiline batch).
@@ -55,7 +56,7 @@ export interface RoostIrcClient {
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }
   quit(): void
-  whoisChannels(): Promise<string[] | false>
+  whoisChannels(): Promise<string[] | null>
 
   // Served from local cache — no network round-trip. Note: on a freshly-joined channel
   // these lag the join ack; NAMES (getUsers) and chathistory (getHistory) arrive via
