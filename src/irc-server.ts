@@ -243,33 +243,33 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
     switch (name) {
       case 'channel_message': {
-        const ch = String(args.channel ?? '')
-        const text = String(args.text ?? '')
+        const ch = args.channel as string
+        const text = args.text as string
         return handleSay(ch, text, `sent to ${ch}`)
       }
       case 'direct_message': {
-        const nick = String(args.nick ?? '')
-        const text = String(args.text ?? '')
+        const nick = args.nick as string
+        const text = args.text as string
         return handleSay(nick, text, `DM to ${nick}`)
       }
       case 'channel_join': {
-        const ch = String(args.channel ?? '').toLowerCase()
+        const ch = (args.channel as string).toLowerCase()
         const ok = await client.join(ch)
         return { content: [{ type: 'text', text: ok ? `joined ${ch}` : `join ${ch} timed out` }], isError: !ok }
       }
       case 'channel_leave': {
-        const ch = String(args.channel ?? '').toLowerCase()
+        const ch = (args.channel as string).toLowerCase()
         const ok = await client.leave(ch)
         return { content: [{ type: 'text', text: ok ? `parted ${ch}` : `part ${ch} timed out` }], isError: !ok }
       }
       case 'channel_who': {
-        const ch = String(args.channel ?? '')
+        const ch = args.channel as string
         const users = client.getUsers(ch)
         return { content: [{ type: 'text', text: users.length ? `${ch} (${users.length}): ${users.join(', ')}` : `${ch}: (no users tracked — not joined yet, or NAMES not received)` }] }
       }
       case 'channel_history': {
-        const key = String(args.channel ?? '')
-        const limit = Number(args.limit ?? 20)
+        const key = args.channel as string
+        const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const slice = client.getHistory(key, limit)
         if (slice.length === 0) return { content: [{ type: 'text', text: `no history for ${key} (since this MCP started)` }] }
@@ -285,7 +285,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }
       case 'channel_ack': {
-        const ch = String(args.channel ?? '')
+        const ch = args.channel as string
         client.ackUnread(ch)
         return { content: [{ type: 'text', text: `acked ${ch}` }] }
       }
