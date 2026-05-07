@@ -29,7 +29,7 @@ export function stripInternals(snap: PrSnapInternal | IssueSnapInternal): PrSnap
   for (const [k, v] of Object.entries(snap)) {
     if (!k.startsWith('_')) out[k] = v
   }
-  return out as PrSnap | IssueSnap
+  return out as unknown as PrSnap | IssueSnap
 }
 
 function sortedIds<T extends { id?: number }>(items: T[]): number[] {
