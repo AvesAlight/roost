@@ -20,6 +20,9 @@ import type {
 
 const CAP_CHATHISTORY = 'chathistory'
 
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const mentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
+
 // ---- IRC event shapes ------------------------------------------------------
 
 interface JoinEvent { nick: string; channel: string }
@@ -245,7 +248,15 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.addFingerprint(msg)
     if (!historical) {
       const prev = this.unread.get(msg.channel)
-      this.unread.set(msg.channel, { count: (prev?.count ?? 0) + 1, lastSender: msg.sender, lastPreview: msg.text })
+      const isMention = mentionRegex(this.nick).test(msg.text)
+      this.unread.set(msg.channel, {
+        count: (prev?.count ?? 0) + 1,
+        lastSender: msg.sender,
+        lastPreview: msg.text,
+        mentionCount: (prev?.mentionCount ?? 0) + (isMention ? 1 : 0),
+        lastMentionSender: isMention ? msg.sender : (prev?.lastMentionSender ?? ''),
+        lastMentionPreview: isMention ? msg.text : (prev?.lastMentionPreview ?? ''),
+      })
     }
   }
 

@@ -7,6 +7,9 @@ export interface UnreadInfo {
   count: number
   lastSender: string
   lastPreview: string
+  mentionCount: number
+  lastMentionSender: string
+  lastMentionPreview: string
 }
 
 export interface ClientConfig {

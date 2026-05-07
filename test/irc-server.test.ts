@@ -266,6 +266,86 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(reply2)).not.toContain('unread:')
   })
 
+  // ---- Mention tracking (issue #137) ------------------------------------
+
+  it('mention formats as "(N mention, M total)" with mention preview', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-ment1')
+    const peer = await connectPeer(ergo, 'ip-ment1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-ment1' } })
+    await peer.joinChannel('#ip-ment1')
+
+    peer.say('#ip-ment1', 'ip-ment1: are you there?')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment1' && n.content === 'ip-ment1: are you there?')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).toContain('1 mention, 1 total')
+    expect(toolText(list)).toContain('ip-ment1: are you there?')
+  })
+
+  it('non-mention messages keep "(M)" format', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-ment2')
+    const peer = await connectPeer(ergo, 'ip-ment2-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-ment2' } })
+    await peer.joinChannel('#ip-ment2')
+
+    peer.say('#ip-ment2', 'just chatting')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment2' && n.content === 'just chatting')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).toContain('(1)')
+    expect(toolText(list)).not.toContain('mention')
+  })
+
+  it('mention preview persists when non-mention messages arrive after', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-ment3')
+    const peer = await connectPeer(ergo, 'ip-ment3-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-ment3' } })
+    await peer.joinChannel('#ip-ment3')
+
+    peer.say('#ip-ment3', '@ip-ment3 hey')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment3' && n.content === '@ip-ment3 hey')
+    peer.say('#ip-ment3', 'side comment')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment3' && n.content === 'side comment')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).toContain('1 mention, 2 total')
+    expect(toolText(list)).toContain('@ip-ment3 hey')
+  })
+
+  it('word-boundary match: nick embedded in longer word does not count as mention', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-ment4')
+    const peer = await connectPeer(ergo, 'ip-ment4-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-ment4' } })
+    await peer.joinChannel('#ip-ment4')
+
+    // "ip-ment4x" has "ip-ment4" as a prefix with an alphanumeric suffix — no word boundary after "4"
+    peer.say('#ip-ment4', 'ip-ment4x is not our nick')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment4' && n.content === 'ip-ment4x is not our nick')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list)).not.toContain('mention')
+  })
+
+  it('channel_ack clears mention count', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-ment5')
+    const peer = await connectPeer(ergo, 'ip-ment5-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-ment5' } })
+    await peer.joinChannel('#ip-ment5')
+
+    peer.say('#ip-ment5', 'ip-ment5: ping')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-ment5' && n.content === 'ip-ment5: ping')
+
+    // Verify mention is tracked
+    const list1 = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list1)).toContain('1 mention')
+
+    // Ack clears it — channel_list should no longer show any unread for this channel
+    await mcp.client.callTool({ name: 'channel_ack', arguments: { channel: '#ip-ment5' } })
+    const list2 = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(list2)).not.toContain('mention')
+    expect(toolText(list2)).not.toContain('ip-ment5: ping')
+  })
+
   // ---- Reply reminder (issue #136) ---------------------------------------
 
   it('first inbound channel message triggers a reminder followup notification', async () => {
