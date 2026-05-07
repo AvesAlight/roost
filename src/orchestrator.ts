@@ -112,6 +112,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const log = (msg: string) => {
     process.stderr.write(msg)
     logWriter.write(msg)
+    logWriter.flush()
   }
 
   let config = await loadConfig(stateDir)
@@ -139,8 +140,21 @@ async function runDaemon(stateDir: string): Promise<void> {
   log('orchestrator[daemon]: connected\n')
 
   let stop = false
-  process.on('SIGTERM', () => { log('orchestrator[daemon]: SIGTERM, shutting down\n'); stop = true })
-  process.on('SIGINT', () => { log('orchestrator[daemon]: SIGINT, shutting down\n'); stop = true })
+  const stopController = new AbortController()
+  const handleStop = (sig: string) => {
+    log(`orchestrator[daemon]: ${sig}, shutting down\n`)
+    stop = true
+    stopController.abort()
+  }
+  process.on('SIGTERM', () => handleStop('SIGTERM'))
+  process.on('SIGINT', () => handleStop('SIGINT'))
+
+  // Sleep that wakes immediately on SIGTERM/SIGINT instead of waiting out the full interval.
+  const sleepInterruptible = (ms: number) =>
+    new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, ms)
+      stopController.signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+    })
 
   const tickOpts = { seed: false, dryRun: false }
 
@@ -153,8 +167,7 @@ async function runDaemon(stateDir: string): Promise<void> {
     }
 
     const desired = new Set(initialIrcChannels(config, projectChannel, await loadState(stateDir)))
-    const joined = client.whoisChannels()
-    const currentlyJoined = (await joined) || []
+    const currentlyJoined = (await client.whoisChannels()) ?? []
     for (const ch of currentlyJoined) {
       if (!desired.has(ch)) await client.leave(ch)
     }
@@ -183,7 +196,7 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: tick clean, 0 events in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
     }
 
-    await new Promise<void>(resolve => setTimeout(resolve, interval))
+    await sleepInterruptible(interval)
   }
 
   client.quit()

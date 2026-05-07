@@ -42,6 +42,9 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
+// Note: say() is a synchronous socket write with no delivery ack. A mid-tick
+// disconnect will drop in-flight events silently; autoReconnect handles the
+// connection but the current tick's events are lost (same risk as Python).
 export async function dispatchEventsIrc(
   events: OrchestratorEvent[],
   client: RoostIrcClient,
