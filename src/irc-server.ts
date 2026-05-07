@@ -33,6 +33,8 @@ import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
 
 const SOURCE_NAME = 'roost-irc'
 
+export const NOT_READY_SENTINEL = 'IRC client not ready (still connecting).'
+
 const REPLY_REMINDER = 'Substantive replies should be posted to IRC.'
 // 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
 // pattern-match-and-ignore failure mode of a fixed cadence.
@@ -260,7 +262,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig): {
 
     if (!client.isReady()) {
       return {
-        content: [{ type: 'text', text: 'IRC client not ready (still connecting).' }],
+        content: [{ type: 'text', text: NOT_READY_SENTINEL }],
         isError: true,
       }
     }
