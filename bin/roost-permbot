@@ -58,6 +58,8 @@ HOST = os.environ.get("ROOST_PERM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ROOST_PERM_PORT", "6667"))
 WORKER = os.environ.get("ROOST_PERM_WORKER") or NICK.removeprefix("permbot-")
 DEBUG_LOG = os.environ.get("ROOST_PERM_DEBUG_LOG") or os.path.join(os.path.dirname(SOCK_PATH), "permbot.log")
+_ppid_str = os.environ.get("ROOST_PERM_PARENT_PID", "")
+PARENT_PID: "int | None" = int(_ppid_str) if _ppid_str.isdigit() else None
 
 
 def dlog(msg: str) -> None:
@@ -194,6 +196,16 @@ def main() -> None:
             timeout = max(0.05, min(timeout, remaining))
 
         events = sel.select(timeout=timeout)
+
+        if PARENT_PID and running:
+            try:
+                os.kill(PARENT_PID, 0)
+            except ProcessLookupError:
+                dlog(f"parent {PARENT_PID} gone, shutting down")
+                running = False
+            except PermissionError:
+                pass  # process exists, we just can't signal it
+
         for key, _mask in events:
             kind, _ = key.data
 

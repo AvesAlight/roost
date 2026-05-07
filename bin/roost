@@ -118,7 +118,29 @@ start_permbot() {
   local nick="$1"
   local target="$2"
   local data_dir="$3"
+  local parent_pid="${4:-}"
   perm_paths "${data_dir}"
+
+  # Reap any stale permbot from a prior unclean exit before registering the same nick.
+  local well_known_pid="/tmp/roost-permbot-${nick}.pid"
+  if [ -f "${well_known_pid}" ]; then
+    local stale
+    stale="$(cat "${well_known_pid}" 2>/dev/null || true)"
+    if [ -n "${stale}" ] && kill -0 "${stale}" 2>/dev/null; then
+      if ps -o args= -p "${stale}" 2>/dev/null | grep -q "roost-permbot"; then
+        kill "${stale}" 2>/dev/null || true
+        local _j
+        for _j in 1 2 3 4; do
+          kill -0 "${stale}" 2>/dev/null || break
+          sleep 0.25
+        done
+        if kill -0 "${stale}" 2>/dev/null; then kill -9 "${stale}" 2>/dev/null || true; fi
+        echo "  reaped stale permbot (pid ${stale})"
+      fi
+    fi
+    rm -f "${well_known_pid}"
+  fi
+
   if [ -f "${PERM_PID}" ] && kill -0 "$(cat "${PERM_PID}" 2>/dev/null)" 2>/dev/null; then
     echo "  permbot already running (pid $(cat "${PERM_PID}")) — reusing"
     return 0
@@ -130,10 +152,13 @@ start_permbot() {
   ROOST_PERM_TARGET="${target}" \
   ROOST_PERM_WORKER="${nick}" \
   ROOST_PERM_DEBUG_LOG="${PERM_LOG}" \
+  ROOST_PERM_PARENT_PID="${parent_pid}" \
     nohup "${ROOST_DIR}/bin/roost-permbot" >>"${PERM_LOG}" 2>&1 </dev/null &
-  echo $! > "${PERM_PID}"
+  local new_pid=$!
+  echo "${new_pid}" > "${PERM_PID}"
+  echo "${new_pid}" > "${well_known_pid}"
   disown 2>/dev/null || true
-  echo "  permbot started (nick=permbot-${nick}, target=${target}, sock=${PERM_SOCK}, pid=$(cat "${PERM_PID}"))"
+  echo "  permbot started (nick=permbot-${nick}, target=${target}, sock=${PERM_SOCK}, pid=${new_pid})"
   # Wait up to 5s for the socket to appear; that's our handshake.
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -146,6 +171,7 @@ start_permbot() {
 
 stop_permbot() {
   local data_dir="${1:-}"
+  local nick="${2:-}"
   if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
     return 0
   fi
@@ -166,6 +192,7 @@ stop_permbot() {
       echo "  killed permbot (pid ${pid})"
     fi
   fi
+  [ -n "${nick}" ] && rm -f "/tmp/roost-permbot-${nick}.pid"
   rm -rf "${data_dir}"
 }
 
@@ -275,7 +302,7 @@ cmd_spawn() {
   fi
   # On any failure before the tmux session is created, clean up the data dir
   # (and any permbot that was started) so we don't leak orphans.
-  trap 'stop_permbot "${ROOST_DATA_DIR}"' EXIT
+  trap 'stop_permbot "${ROOST_DATA_DIR}" "${nick}"' EXIT
 
   require_ircd
 
@@ -292,7 +319,7 @@ cmd_spawn() {
   local perm_sock=""
   local perm_hook_json=""
   if [ "${perm_irc}" -eq 1 ]; then
-    start_permbot "${nick}" "${perm_target}" "${ROOST_DATA_DIR}" || true
+    perm_paths "${ROOST_DATA_DIR}"
     perm_sock="${PERM_SOCK}"
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
@@ -338,6 +365,12 @@ cmd_spawn() {
   # discoverable via: tmux show-environment -t roost-<nick> ROOST_DATA_DIR
   trap - EXIT
 
+  if [ "${perm_irc}" -eq 1 ]; then
+    local pane_pid
+    pane_pid="$(tmux list-panes -t "${session_name}" -F '#{pane_pid}' 2>/dev/null | head -1)"
+    start_permbot "${nick}" "${perm_target}" "${ROOST_DATA_DIR}" "${pane_pid}" || true
+  fi
+
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
   local dismissed=0
@@ -376,7 +409,7 @@ cmd_shutdown() {
   data_dir="$(tmux show-environment -t "${session_name}" ROOST_DATA_DIR 2>/dev/null | sed 's/^ROOST_DATA_DIR=//')"
   tmux kill-session -t "${session_name}"
   echo "killed ${session_name}"
-  stop_permbot "${data_dir}"
+  stop_permbot "${data_dir}" "${nick}"
 }
 
 cmd_list() {
