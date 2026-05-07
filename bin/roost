@@ -39,12 +39,12 @@ spawn options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
   -m, --model MODEL          Override --model. Default: opus.
-  --perm-irc                 Start a permbot side daemon (bin/roost-permbot)
-                             that surfaces this worker's tool-permission
-                             prompts as DMs to --perm-target. Useful for
-                             non-Opus models that can't use auto mode and
-                             would otherwise flood the terminal with
-                             prompts. Daemon is killed by 'roost shutdown'.
+  --perm-irc                 Start a permbot side daemon that surfaces this
+                             worker's tool-permission prompts as DMs to
+                             --perm-target. Useful for non-Opus models that
+                             can't use auto mode and would otherwise flood the
+                             terminal with prompts. The daemon is spawned as a
+                             child of the MCP server and dies with it.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --permission-mode MODE     Override --permission-mode passed to claude.
@@ -102,99 +102,12 @@ require_ircd() {
   fi
 }
 
-# Side-daemon (permbot) lifecycle. All per-session files live under a
-# mktemp-generated directory created at spawn time (ROOST_DATA_DIR).
-# The dir is stored in the tmux session env so shutdown can find it:
+# All per-session files live under a mktemp-generated directory created at
+# spawn time (ROOST_DATA_DIR). The dir is stored in the tmux session env so
+# shutdown can find it:
 #   tmux show-environment -t roost-<nick> ROOST_DATA_DIR
-# Future per-session files belong in that dir; no additional convention needed.
-perm_paths() {
-  local data_dir="$1"
-  PERM_SOCK="${data_dir}/permbot.sock"
-  PERM_PID="${data_dir}/permbot.pid"
-  PERM_LOG="${data_dir}/permbot.log"
-}
-
-start_permbot() {
-  local nick="$1"
-  local target="$2"
-  local data_dir="$3"
-  local parent_pid="${4:-}"
-  perm_paths "${data_dir}"
-
-  # Reap any stale permbot from a prior unclean exit before registering the same nick.
-  local well_known_pid="/tmp/roost-permbot-${nick}.pid"
-  if [ -f "${well_known_pid}" ]; then
-    local stale
-    stale="$(cat "${well_known_pid}" 2>/dev/null || true)"
-    if [ -n "${stale}" ] && kill -0 "${stale}" 2>/dev/null; then
-      if ps -o args= -p "${stale}" 2>/dev/null | grep -qE "(roost-permbot|src/permbot\.ts)"; then
-        kill "${stale}" 2>/dev/null || true
-        local _j
-        for _j in 1 2 3 4; do
-          kill -0 "${stale}" 2>/dev/null || break
-          sleep 0.25
-        done
-        if kill -0 "${stale}" 2>/dev/null; then kill -9 "${stale}" 2>/dev/null || true; fi
-        echo "  reaped stale permbot (pid ${stale})"
-      fi
-    fi
-    rm -f "${well_known_pid}"
-  fi
-
-  if [ -f "${PERM_PID}" ] && kill -0 "$(cat "${PERM_PID}" 2>/dev/null)" 2>/dev/null; then
-    echo "  permbot already running (pid $(cat "${PERM_PID}")) — reusing"
-    return 0
-  fi
-  # PERM_LOG appears in both env assignment and redirect; shellcheck thinks they're the same pipeline file, but they're not
-  # shellcheck disable=SC2094
-  ROOST_PERM_NICK="permbot-${nick}" \
-  ROOST_PERM_SOCK="${PERM_SOCK}" \
-  ROOST_PERM_TARGET="${target}" \
-  ROOST_PERM_WORKER="${nick}" \
-  ROOST_PERM_DEBUG_LOG="${PERM_LOG}" \
-  ROOST_PERM_PARENT_PID="${parent_pid}" \
-    nohup "${ROOST_DIR}/bin/roost-permbot" >>"${PERM_LOG}" 2>&1 </dev/null &
-  local new_pid=$!
-  echo "${new_pid}" > "${PERM_PID}"
-  echo "${new_pid}" > "${well_known_pid}"
-  disown 2>/dev/null || true
-  echo "  permbot started (nick=permbot-${nick}, target=${target}, sock=${PERM_SOCK}, pid=${new_pid})"
-  # Wait up to 5s for the socket to appear; that's our handshake.
-  local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    [ -S "${PERM_SOCK}" ] && return 0
-    sleep 0.5
-  done
-  echo "  warning: permbot socket did not appear within 5s; check ${PERM_LOG}" >&2
-  return 1
-}
-
-stop_permbot() {
-  local data_dir="${1:-}"
-  local nick="${2:-}"
-  if [ -z "${data_dir}" ] || [ ! -d "${data_dir}" ]; then
-    return 0
-  fi
-  perm_paths "${data_dir}"
-  if [ -f "${PERM_PID}" ]; then
-    local pid
-    pid="$(cat "${PERM_PID}" 2>/dev/null || true)"
-    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-      kill "${pid}" 2>/dev/null || true
-      # Daemon should respond to SIGTERM and clean up the socket; give it
-      # a moment, then SIGKILL if still alive.
-      local i
-      for i in 1 2 3 4; do
-        kill -0 "${pid}" 2>/dev/null || break
-        sleep 0.25
-      done
-      if kill -0 "${pid}" 2>/dev/null; then kill -9 "${pid}" 2>/dev/null; fi
-      echo "  killed permbot (pid ${pid})"
-    fi
-  fi
-  [ -n "${nick}" ] && rm -f "/tmp/roost-permbot-${nick}.pid"
-  rm -rf "${data_dir}"
-}
+# Permbot (when --perm-irc is on) is spawned as a child of the MCP server in
+# src/irc-server.ts and dies with it — no lifecycle management here.
 
 cmd_spawn() {
   local nick=""
@@ -295,14 +208,12 @@ cmd_spawn() {
   local ROOST_DATA_DIR
   ROOST_DATA_DIR="$(mktemp -d "/tmp/roost-${nick}.XXXXXXXX")"
   chmod 700 "${ROOST_DATA_DIR}"
-  perm_paths "${ROOST_DATA_DIR}"
   if [ -n "${prompt_text}" ]; then
     prompt_file="${ROOST_DATA_DIR}/prompt.txt"
     printf '%s' "${prompt_text}" > "${prompt_file}"
   fi
-  # On any failure before the tmux session is created, clean up the data dir
-  # (and any permbot that was started) so we don't leak orphans.
-  trap 'stop_permbot "${ROOST_DATA_DIR}" "${nick}"' EXIT
+  # On any failure before the tmux session is created, clean up the data dir.
+  trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
 
   require_ircd
 
@@ -319,8 +230,7 @@ cmd_spawn() {
   local perm_sock=""
   local perm_hook_json=""
   if [ "${perm_irc}" -eq 1 ]; then
-    perm_paths "${ROOST_DATA_DIR}"
-    perm_sock="${PERM_SOCK}"
+    perm_sock="${ROOST_DATA_DIR}/permbot.sock"
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
@@ -362,14 +272,10 @@ cmd_spawn() {
 
   # Session created successfully; clear the failure-cleanup trap.
   # ROOST_DATA_DIR is already in the tmux session env via -e at new-session,
-  # discoverable via: tmux show-environment -t roost-<nick> ROOST_DATA_DIR
+  # discoverable via: tmux show-environment -t roost-<nick> ROOST_DATA_DIR.
+  # Permbot (when enabled) is spawned by the MCP server inside the tmux pane;
+  # we don't manage its lifecycle from here.
   trap - EXIT
-
-  if [ "${perm_irc}" -eq 1 ]; then
-    local pane_pid
-    pane_pid="$(tmux list-panes -t "${session_name}" -F '#{pane_pid}' 2>/dev/null | head -1)"
-    start_permbot "${nick}" "${perm_target}" "${ROOST_DATA_DIR}" "${pane_pid}" || true
-  fi
 
   # Dismiss the dev-channels confirmation prompt. Default is option 1
   # (accept), so a single Enter is enough.
@@ -409,7 +315,11 @@ cmd_shutdown() {
   data_dir="$(tmux show-environment -t "${session_name}" ROOST_DATA_DIR 2>/dev/null | sed 's/^ROOST_DATA_DIR=//')"
   tmux kill-session -t "${session_name}"
   echo "killed ${session_name}"
-  stop_permbot "${data_dir}" "${nick}"
+  # MCP exits with the tmux pane → permbot reparents → permbot exits via
+  # its own ppid watcher. We just clean up the per-session data dir.
+  if [ -n "${data_dir}" ] && [ -d "${data_dir}" ]; then
+    rm -rf "${data_dir}"
+  fi
 }
 
 cmd_list() {

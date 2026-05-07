@@ -103,7 +103,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -124,7 +124,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -138,7 +138,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -169,7 +169,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null, nudgeAfterMs: 50 },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 50 },
       client,
     )
     stops.push(stop)
@@ -190,7 +190,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null, nudgeAfterMs: 80 },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 80 },
       client,
     )
     stops.push(stop)
@@ -210,7 +210,7 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', parentPid: null },
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
