@@ -83,3 +83,7 @@ Run as many workers as you can.
 Post a message in #leads-roost-dev with your starting strategy. Wait until the human pressure tests and approves your plan before beginning the first wave. Once you being you may proceed autonomously and spawn new workers as needed.
 
 Post in #leads-roost-dev each time you start work on a new issue.
+
+## Things that come up in the work
+
+You may be asked to "self compact". That means using `roost send` to send your own `/compact` prompt with instructions about what to focus on retaining through compaction. At a minimum, you must include a directive to read `start.md` and to post in `#leads-roost-dev` on start.
