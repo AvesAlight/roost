@@ -45,13 +45,18 @@ export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'regis
 // string for disconnected/reconnected/cap-missing; { nick } for registered; { code } for registration-failed
 export type SystemContent = string | { code?: number; nick?: string }
 
+export interface JoinResult {
+  ok: boolean
+  members: string[]
+}
+
 export interface RoostIrcClient {
   // Fire-and-forget: MCP starts serving before IRC connects (returns isError until isReady()).
   // Use isReady() + on('system') to track connection state.
   connect(opts: ConnectOpts): void
   isReady(): boolean
 
-  join(channel: string): Promise<{ ok: boolean; members: string[] }>
+  join(channel: string): Promise<JoinResult>
   leave(channel: string): Promise<boolean>
   // Synchronous socket write — no protocol-level delivery ack for PRIVMSG.
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' }

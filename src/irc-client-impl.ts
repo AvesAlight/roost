@@ -16,6 +16,7 @@ import type {
   UnreadInfo,
   SystemKind,
   SystemContent,
+  JoinResult,
 } from './irc-client.js'
 
 const CAP_CHATHISTORY = 'chathistory'
@@ -59,7 +60,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private ircReady = false
   private hasRegistered = false
-  private readonly joinResolvers = new Map<string, Array<(result: { ok: boolean; members: string[] }) => void>>()
+  private readonly joinResolvers = new Map<string, Array<(result: JoinResult) => void>>()
+  private readonly namesTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly partResolvers = new Map<string, Array<(ok: boolean) => void>>()
   private multilineMaxLines = 100
   private readonly history = new Map<string, IrcMessage[]>()
@@ -101,10 +103,10 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   isReady(): boolean { return this.ircReady }
   isJoined(channel: string): boolean { return this.channelUsers.has(channel.toLowerCase()) }
 
-  async join(channel: string): Promise<{ ok: boolean; members: string[] }> {
+  async join(channel: string): Promise<JoinResult> {
     channel = channel.toLowerCase()
     if (this.channelUsers.has(channel)) return { ok: true, members: this.getUsers(channel) }
-    return new Promise<{ ok: boolean; members: string[] }>((resolve) => {
+    return new Promise<JoinResult>((resolve) => {
       const list = this.joinResolvers.get(channel) ?? []
       list.push(resolve)
       this.joinResolvers.set(channel, list)
@@ -365,7 +367,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       // Defer resolution until handleUserlist fires with the complete NAMES list.
       // Guard with a 2s timeout in case the server never sends NAMES.
       if (this.joinResolvers.has(channel)) {
-        setTimeout(() => {
+        const timer = setTimeout(() => {
+          this.namesTimers.delete(channel)
           const list = this.joinResolvers.get(channel)
           if (list?.length) {
             this.log(`NAMES timeout for ${channel} — resolving with self only`)
@@ -373,7 +376,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
             for (const r of list) r({ ok: true, members })
             this.joinResolvers.delete(channel)
           }
-        }, 2000).unref?.()
+        }, 2000)
+        timer.unref?.()
+        this.namesTimers.set(channel, timer)
       }
       return
     }
@@ -388,10 +393,15 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       if (u?.nick) set.add(u.nick)
     }
     this.channelUsers.set(channel, set)
-    this.log(`userlist for ${channel}: ${set.size} nicks (${[...set].sort().join(', ')})`)
+    const members = this.getUsers(channel)
+    this.log(`userlist for ${channel}: ${members.length} nicks (${members.join(', ')})`)
+    const timer = this.namesTimers.get(channel)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.namesTimers.delete(channel)
+    }
     const list = this.joinResolvers.get(channel)
     if (list?.length) {
-      const members = [...set].sort()
       for (const r of list) r({ ok: true, members })
       this.joinResolvers.delete(channel)
     }

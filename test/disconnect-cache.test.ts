@@ -149,7 +149,7 @@ describe('draft/multiline cap malformed value warning', () => {
 describe('socket close pre-empts pending join/part resolvers', () => {
   it('join resolver resolves false immediately on socket close', async () => {
     const client = makeClient()
-    const p = new Promise<{ ok: boolean; members: string[] }>(resolve => {
+    const p = new Promise<import('../src/irc-client.js').JoinResult>(resolve => {
       client.joinResolvers.set('#chan', [resolve])
     })
     client.handleSocketClose()
@@ -181,8 +181,7 @@ describe('NAMES timeout fallback on join', () => {
     // Simulate a JOIN ack for our own nick (sets up channel + NAMES timeout waiter)
     client.channelUsers.set('#timeout-chan', new Set(['test-bot']))
     // Manually insert a join resolver as handleJoin would have done
-    let resolved: { ok: boolean; members: string[] } | null = null
-    const p = new Promise<{ ok: boolean; members: string[] }>(resolve => {
+    const p = new Promise<import('../src/irc-client.js').JoinResult>(resolve => {
       client.joinResolvers.set('#timeout-chan', [resolve])
     })
     // Simulate handleJoin's NAMES timeout firing (inline for test speed)
@@ -190,7 +189,7 @@ describe('NAMES timeout fallback on join', () => {
     const members = client.getUsers('#timeout-chan')
     for (const r of list) r({ ok: true, members })
     client.joinResolvers.delete('#timeout-chan')
-    resolved = await p
+    const resolved = await p
     expect(resolved.ok).toBe(true)
     expect(resolved.members).toEqual(['test-bot'])
   })
