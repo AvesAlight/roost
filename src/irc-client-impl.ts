@@ -65,6 +65,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly unread = new Map<string, UnreadInfo>()
   private readonly seenFingerprints = new Map<string, Set<string>>()
   private readonly channelUsers = new Map<string, Set<string>>()
+  private pendingRejoinChannels: string[] = []
 
   private readonly messageHandlers: Array<(msg: IrcMessage, meta: MessageMeta) => void> = []
   private readonly membershipHandlers: Array<(kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void> = []
@@ -331,8 +332,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   }
 
   private handleReconnect(): void {
-    const snapshot = [...this.channelUsers.keys()].sort()
-    this.channelUsers.clear()
+    const snapshot = this.pendingRejoinChannels
+    this.pendingRejoinChannels = []
     const content = snapshot.length > 0
       ? `[roost] reconnected to IRC — rejoining: ${snapshot.join(', ')}`
       : '[roost] reconnected to IRC'
@@ -490,8 +491,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private handleSocketClose(): void {
     this.log('socket closed')
+    if (this.channelUsers.size > 0) {
+      this.pendingRejoinChannels = [...this.channelUsers.keys()].sort()
+      this.channelUsers.clear()
+    }
     this.ircReady = false
-    this.emitSystem('disconnected', '[roost] disconnected from IRC — channel state may be stale until reconnect')
+    this.emitSystem('disconnected', '[roost] disconnected from IRC')
   }
 
   private handleSocketError(err: Error): void {
