@@ -318,9 +318,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (enabled.includes('draft/multiline')) {
       const val = available.get('draft/multiline') || ''
       for (const kv of val.split(',')) {
+        if (!kv) continue
         const [k, v] = kv.split('=')
         const n = Number(v)
-        if (!Number.isFinite(n) || n <= 0) continue
+        if (!Number.isFinite(n) || n <= 0) {
+          process.stderr.write(`[roost] draft/multiline cap: ignoring malformed value ${k}=${v}\n`)
+          continue
+        }
         if (k === 'max-lines') this.multilineMaxLines = n
       }
       this.log(`draft/multiline enabled (max-lines=${this.multilineMaxLines})`)

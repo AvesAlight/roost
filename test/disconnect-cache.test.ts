@@ -78,6 +78,74 @@ describe('cap-missing system event on registration', () => {
   })
 })
 
+describe('draft/multiline cap malformed value warning', () => {
+  it('writes a stderr warning for non-numeric max-lines', () => {
+    const client = makeClient()
+    client.irc.network = {
+      cap: {
+        enabled: ['draft/multiline', 'server-time'],
+        available: new Map([['draft/multiline', 'max-lines=abc']]),
+      },
+    }
+
+    const stderrLines: string[] = []
+    const orig = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s: string) => { stderrLines.push(s); return true }
+    try {
+      client.handleRegistered()
+    } finally {
+      process.stderr.write = orig
+    }
+
+    expect(stderrLines.some(l => l.includes('max-lines') && l.includes('abc'))).toBe(true)
+    expect(client.multilineMaxLines).toBe(100) // placeholder unchanged
+  })
+
+  it('writes a stderr warning for non-positive max-lines', () => {
+    const client = makeClient()
+    client.irc.network = {
+      cap: {
+        enabled: ['draft/multiline', 'server-time'],
+        available: new Map([['draft/multiline', 'max-lines=-5']]),
+      },
+    }
+
+    const stderrLines: string[] = []
+    const orig = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s: string) => { stderrLines.push(s); return true }
+    try {
+      client.handleRegistered()
+    } finally {
+      process.stderr.write = orig
+    }
+
+    expect(stderrLines.some(l => l.includes('max-lines') && l.includes('-5'))).toBe(true)
+    expect(client.multilineMaxLines).toBe(100)
+  })
+
+  it('does not warn for a well-formed max-lines value', () => {
+    const client = makeClient()
+    client.irc.network = {
+      cap: {
+        enabled: ['draft/multiline', 'server-time'],
+        available: new Map([['draft/multiline', 'max-lines=200']]),
+      },
+    }
+
+    const stderrLines: string[] = []
+    const orig = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (s: string) => { stderrLines.push(s); return true }
+    try {
+      client.handleRegistered()
+    } finally {
+      process.stderr.write = orig
+    }
+
+    expect(stderrLines.some(l => l.includes('malformed'))).toBe(false)
+    expect(client.multilineMaxLines).toBe(200)
+  })
+})
+
 describe('socket close pre-empts pending join/part resolvers', () => {
   it('join resolver resolves false immediately on socket close', async () => {
     const client = makeClient()
