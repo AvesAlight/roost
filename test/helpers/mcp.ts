@@ -10,6 +10,9 @@ const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
 let instanceCounter = 0
 
+// Subprocess variant: IRC lifecycle is managed by the spawned process; teardown is
+// transport close (stdin EOF → SIGTERM). Contrast with startMcpInProcess which holds
+// an explicit RoostIrcClientImpl and calls quit() before closing the transport.
 export async function startMcp(ergo: ErgoContext, nick?: string, extraEnv?: Record<string, string>): Promise<McpHandle> {
   const clientNick = nick ?? `mcp${++instanceCounter}`
 
