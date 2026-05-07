@@ -43,7 +43,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
   const client = new IRC.Client()
 
-  await new Promise<void>((resolve, reject) => {
+  await suppressLateRejection(new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`peer ${peerNick} connect timed out`)), 5000)
     client.on('registered', () => { clearTimeout(timeout); resolve() })
     client.on('close', () => reject(new Error('peer connection closed during connect')))
@@ -54,7 +54,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
       auto_reconnect: false,
       enable_echomessage: true,
     })
-  })
+  }))
 
   const messageWaiters: Array<{
     channel: string

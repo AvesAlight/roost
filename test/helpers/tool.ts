@@ -13,6 +13,9 @@ export const sleep = (ms: number): Promise<void> => new Promise(res => setTimeou
 // rejection "handled" without affecting an active `await` — that consumer
 // still receives the error.
 export function suppressLateRejection<T>(p: Promise<T>): Promise<T> {
-  p.catch(() => { /* swallow only if no awaiter is left */ })
+  // Attach a no-op handler so the rejection is never reported as unhandled.
+  // This handler always fires on rejection — it's a no-op when an awaiter
+  // already propagated the error, and the safety net when none exists.
+  p.catch(() => {})
   return p
 }
