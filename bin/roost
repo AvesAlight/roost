@@ -44,6 +44,7 @@ Usage: roost spawn <nick> [options]
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
 \`zsh -l\` so .zprofile loads — required for RVM, nvm, and similar toolchains.
+Permission mode defaults to auto for opus and acceptEdits for all other models.
 
 Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -67,7 +68,9 @@ Options:
   --mcp-config PATH          Explicit mcp-config path. Not needed when the
                              roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
-                             after the session boots.
+                             after the session boots. Useful for handoff
+                             prompts or any spawn that needs an initial
+                             prompt without manual attach.
      --prompt TEXT           Inline prompt string. Mutually exclusive with
                              --prompt-file and --prompt-stdin.
      --prompt-stdin          Read prompt from stdin. Errors if stdin is a
@@ -222,7 +225,7 @@ cmd_spawn() {
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
-      -h|--help)        usage_spawn; exit 0 ;;
+
       --)               shift; extra_args=("$@"); break ;;
       *)
         echo "error: unknown spawn option: $1" >&2
@@ -441,7 +444,7 @@ cmd_tail() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -n) lines="$2"; shift 2 ;;
-      -h|--help) usage_tail; exit 0 ;;
+
       *) echo "error: unknown tail option: $1" >&2; exit 1 ;;
     esac
   done
