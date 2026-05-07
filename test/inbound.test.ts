@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { connectPeer } from './helpers/peer.js'
+import { toolText } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('inbound notifications', () => {
   let ergo: ErgoContext
@@ -132,6 +133,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.event).toBe('nick')
     expect(n.meta.sender).toBe('ip-in-peer6')
     expect(n.meta.newNick).toBe('ip-in-peer6b')
+    expect(n.meta.channel).toBe('')
     expect(n.meta.isDirect).toBe('false')
     expect(n.meta.source).toBe('roost-irc')
   })
@@ -155,5 +157,49 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'ping')
 
     expect(mcp.notifications.find(n => n.meta.sender === 'ip-in-mcp7')).toBeUndefined()
+  })
+
+  it('peer NICK: history key renamed — channel_history newNick returns pre-rename DMs', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-mcp8')
+    const peer = await connectPeer(ergo, 'ip-in-peer8')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick-hist' } })
+    await peer.joinChannel('#ip-in-nick-hist')
+    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer8')
+
+    peer.say('ip-in-mcp8', 'dm before rename')
+    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'dm before rename')
+
+    await peer.changeNick('ip-in-peer8b')
+    await mcp.waitForNotification(n => n.meta.event === 'nick' && n.meta.sender === 'ip-in-peer8')
+
+    const histNew = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: 'ip-in-peer8b' } })
+    const histOld = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: 'ip-in-peer8' } })
+
+    expect(toolText(histNew)).toContain('dm before rename')
+    expect(toolText(histOld)).toContain('no history for ip-in-peer8')
+  })
+
+  it('peer NICK: unread key renamed — emitUnreadSummary shows newNick', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-mcp9')
+    const peer = await connectPeer(ergo, 'ip-in-peer9')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick-unread' } })
+    await peer.joinChannel('#ip-in-nick-unread')
+    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer9')
+
+    peer.say('ip-in-mcp9', 'dm for unread test')
+    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'dm for unread test')
+
+    await peer.changeNick('ip-in-peer9b')
+    await mcp.waitForNotification(n => n.meta.event === 'nick' && n.meta.sender === 'ip-in-peer9')
+
+    const cursor = mcp.notifications.length
+    const summaryP = mcp.waitForNotification(n => n.meta.event === 'unread-summary', 5000, cursor)
+    await mcp.emitUnreadSummary()
+    const summary = await summaryP
+
+    expect(summary.content).toContain('ip-in-peer9b (1)')
+    expect(summary.content).not.toContain('ip-in-peer9 (')
   })
 })
