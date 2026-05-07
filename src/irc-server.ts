@@ -350,6 +350,41 @@ if (import.meta.main) {
     }
   }
 
+  // Spawn permbot as our child when the side-daemon is requested. Permbot's
+  // lifecycle then rides this MCP's lifecycle: when claude exits, we exit
+  // (stdio EOF), permbot detects ppid change and exits. No external pidfiles,
+  // no stale-reap on next spawn.
+  const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
+  const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
+  let permbotProc: import('bun').Subprocess | null = null
+  if (PERM_SOCK && PERM_TARGET) {
+    const permbotPath = new URL('./permbot.ts', import.meta.url).pathname
+    // ROOST_PERM_SOCK / ROOST_PERM_TARGET are already in process.env (set by
+    // bin/roost via tmux -e). ROOST_PERM_WORKER and ROOST_PERM_DEBUG_LOG
+    // default sensibly inside permbot.ts (worker = nick minus 'permbot-',
+    // log = dirname(sock)/permbot.log). Only ROOST_PERM_NICK needs explicit
+    // setting — the prefix convention lives in one place: here.
+    // stdout=ignore: MCP owns parent stdout for JSON-RPC protocol; permbot
+    // writes there would corrupt it. stderr=inherit lets permbot logs surface
+    // alongside MCP logs in the tmux pane.
+    permbotProc = Bun.spawn([process.execPath, permbotPath], {
+      env: { ...process.env, ROOST_PERM_NICK: `permbot-${NICK}` } as Record<string, string>,
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'inherit',
+    })
+    process.stderr.write(`roost-irc[${NICK}]: spawned permbot child (pid ${permbotProc.pid})\n`)
+  }
+
+  const killPermbot = () => {
+    if (permbotProc && permbotProc.exitCode === null) {
+      try { permbotProc.kill('SIGTERM') } catch { /* ignore */ }
+    }
+  }
+  process.on('exit', killPermbot)
+  process.on('SIGINT', () => { killPermbot(); process.exit(130) })
+  process.on('SIGTERM', () => { killPermbot(); process.exit(143) })
+
   const clientConfig: ClientConfig = {
     nick: NICK,
     autoJoin: AUTO_JOIN,

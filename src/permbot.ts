@@ -13,7 +13,6 @@ export interface PermbotConfig {
   target: string
   worker: string
   debugLog: string
-  parentPid: number | null
   nudgeAfterMs?: number  // default: 5 minutes; exposed for testing
 }
 
@@ -183,22 +182,19 @@ export function startPermbot(
     }
   })
 
-  // ---- Parent-PID polling --------------------------------------------------
+  // ---- Parent reparent watcher ---------------------------------------------
+  // Capture initial ppid (the spawning process — typically the MCP server).
+  // When it dies, kernel reparents us to init/launchd → ppid changes → exit.
+  // Bounds orphan window to one poll interval; no env-var config needed.
 
-  if (config.parentPid !== null) {
-    const ppid = config.parentPid
-    ppidTimer = setInterval(() => {
-      try {
-        process.kill(ppid, 0)
-      } catch (e: unknown) {
-        if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
-          log(`parent ${ppid} gone, shutting down`)
-          stop()
-        }
-      }
-    }, 1000)
-    ppidTimer.unref?.()
-  }
+  const initialPpid = process.ppid
+  ppidTimer = setInterval(() => {
+    if (process.ppid !== initialPpid) {
+      log(`parent reparented (${initialPpid} → ${process.ppid}), shutting down`)
+      stop()
+    }
+  }, 1000)
+  ppidTimer.unref?.()
 
   return { stop, ready }
 }
@@ -220,8 +216,6 @@ if (import.meta.main) {
   const PORT     = Number(env('ROOST_PERM_PORT', '6667'))
   const WORKER   = env('ROOST_PERM_WORKER') ?? NICK.replace(/^permbot-/, '')
   const LOG      = env('ROOST_PERM_DEBUG_LOG') ?? path.join(path.dirname(SOCK), 'permbot.log')
-  const _ppid    = env('ROOST_PERM_PARENT_PID', '')
-  const PPID     = _ppid && /^\d+$/.test(_ppid) ? Number(_ppid) : null
 
   const { RoostIrcClientImpl } = await import('./irc-client-impl.js')
   const client = new RoostIrcClientImpl({
@@ -234,7 +228,7 @@ if (import.meta.main) {
 
   const config: PermbotConfig = {
     nick: NICK, sockPath: SOCK, target: TARGET,
-    worker: WORKER, debugLog: LOG, parentPid: PPID,
+    worker: WORKER, debugLog: LOG,
   }
 
   const { stop } = startPermbot(config, client)
