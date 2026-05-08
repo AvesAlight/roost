@@ -42,7 +42,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** run `nohup bin/orchestrator_poll --daemon &` to ensure the dispatcher daemon is up. (Without `--daemon` the orchestrator is one-shot and exits.)
+- **On boot, first action:** run `nohup orchestrator_poll --daemon &` to ensure the dispatcher daemon is up. (Without `--daemon` the orchestrator is one-shot and exits.)
 - Read the config file before each mutation (don't cache).
 - Pretty-print JSON on write (2-space indent, trailing newline).
 - If you don't recognize a command, ignore it silently.

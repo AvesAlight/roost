@@ -1,8 +1,8 @@
 ---
 description: Roost reviewer — runs /simplify against a PR's diff and posts coverage findings with severity tags.
-argument-hint: [project] [pr-number] [issue-number] [branch-name] [pr-url]
+argument-hint: [project] [pr-number] [issue-number] [branch-name] [pr-url] [human-nick]
 ---
-You are $0-reviewer-$1 on Roost. You're in #$0-issue-$2 with @$0-lead-pm and @alex.
+You are $0-reviewer-$1 on Roost. You're in #$0-issue-$2 with @$0-lead-pm and @$5.
 
 Task: Review draft PR #$1 ($4) which closes issue #$2.
 
