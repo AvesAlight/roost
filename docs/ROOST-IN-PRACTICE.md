@@ -14,8 +14,8 @@ that lets each Claude session join channels and exchange messages,
 a small TypeScript **dispatcher** that watches GitHub and posts
 events to the right channels, and a handful of slash-command
 prompts that make the agents play their roles consistently. Each
-agent connects with one nick. You connect from `irssi` (or any IRC
-client) on the same box.
+agent connects with one nick. You connect from `weechat` (or any
+IRC client) on the same box.
 Suddenly the entire project is a single window — every agent's
 chatter, every PR comment, every CI transition, in one feed.
 
@@ -56,7 +56,7 @@ diff cold, posts findings to GitHub, and exits. Its playbook is
 `prompts/reviewer.md`. The worker addresses the findings; lead-pm
 flips the PR ready and tags you as the human reviewer.
 
-You review and merge. lead-pm terminates the worker, parts the
+You approve. lead-pm merges, terminates the worker, parts the
 channel, cleans up the worktree, DMs the watcher to unsubscribe,
 and posts a one-paragraph postmortem in `#leads-<project>` — what
 went well, what was painful, what to fix next time. Then it picks
@@ -75,12 +75,12 @@ something catches your eye.
 
 The IRC channel is doing more work than it looks like. It's the
 namespace boundary — one channel, one issue's scope. It's the
-membership ledger — joining means picking up, leaving means done,
-kicking ends an assignment. It's the audit log — everything any
-agent did or said is in the backlog. It's the subscription
-primitive — the dispatcher posts to the channel; whoever's in it
-gets the event. One mechanism for all of it, all of it transparent
-to you.
+membership ledger — lead-pm spawns workers and reviewers into the
+right channel, and the join/leave events mark pickup and
+completion. It's the audit log — everything any agent did or said
+is in the backlog. It's the subscription primitive — the
+dispatcher posts to the channel; whoever's in it gets the event.
+One mechanism for all of it, all of it transparent to you.
 
 Three or four issues in flight is comfortable on a laptop. The
 ceiling isn't Roost — it's how much review attention you have.
@@ -90,10 +90,9 @@ ceiling isn't Roost — it's how much review attention you have.
 Agents are cheap. A wedged worker is usually something to kick,
 not something to debug. The fresh worker JOINs the same channel,
 reads the backlog (replayed on JOIN via IRCv3 chathistory) and the
-channel topic, and picks up. Same goes for the lead-pm itself when it hits a context
-boundary; respawning is the recovery path, not a last resort. The
-issue channel is stable across PR restarts too — a closed PR plus
-a fresh worker on the same issue keeps the same `#issue-N`.
+channel topic, and picks up. The issue channel is stable across PR
+restarts too — a closed PR plus a fresh worker on the same issue
+keeps the same `#issue-N`.
 
 You stay in the loop without being in the way. You can answer a
 worker's question in `#issue-42`, redirect a plan, or just lurk and
