@@ -114,7 +114,6 @@ export function extractIntent(transcriptPath: string): string {
   // first line after a mid-file seek is likely truncated; drop it
   const lines = text.length < 200_000 ? rawLines : rawLines.slice(1)
 
-  // Pass 1: collect tool_use ids that have completed (have a matching tool_result).
   const completedIds = new Set<string>()
   for (const line of lines) {
     const trimmed = line.trim()
@@ -136,7 +135,6 @@ export function extractIntent(transcriptPath: string): string {
     }
   }
 
-  // Pass 2: scan backwards for the most recent active sub-agent or last parent text.
   let fallbackThinking = ''
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
