@@ -46,4 +46,21 @@ describe('roost spawn --prompt-template', () => {
     expect(r.exitCode).toBe(1)
     expect(r.stderr).toContain('mutually exclusive')
   })
+
+  it('substitutes placeholders and prints with --dry-run', async () => {
+    const r = await spawnRoost([
+      'spawn', 'test-x',
+      '--prompt-template', 'worker',
+      '--prompt-arg', 'ISSUE=42',
+      '--prompt-arg', 'REPO=AlexSc/roost',
+      '--prompt-arg', 'BRANCH=feat/42-thing',
+      '--dry-run',
+    ])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain('worker-42')
+    expect(r.stdout).toContain('AlexSc/roost#42')
+    expect(r.stdout).toContain('feat/42-thing')
+    expect(r.stdout).toContain('[worker-42]')
+    expect(r.stdout).not.toContain('${')
+  })
 })

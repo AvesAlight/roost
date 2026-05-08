@@ -84,6 +84,9 @@ Options:
                              --prompt-stdin.
      --prompt-arg KEY=VALUE  Substitution pair for --prompt-template.
                              Repeatable. Replaces \${KEY} in the template.
+     --dry-run               Print the resolved prompt text and exit without
+                             spawning a session. Useful for verifying template
+                             output.
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
 
@@ -216,6 +219,7 @@ cmd_spawn() {
   local prompt_stdin=0
   local prompt_template=""
   local prompt_args=()
+  local dry_run=0
   local cwd="${PWD}"
   local perm_irc=0
   local perm_target=""
@@ -240,6 +244,7 @@ cmd_spawn() {
       --prompt-stdin)   prompt_stdin=1; shift ;;
       --prompt-template) prompt_template="$2"; shift 2 ;;
       --prompt-arg)     prompt_args+=("$2"); shift 2 ;;
+      --dry-run)        dry_run=1; shift ;;
       --cwd)            cwd="$2"; shift 2 ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
@@ -270,22 +275,19 @@ cmd_spawn() {
   fi
   if [ -n "${prompt_template}" ]; then
     local tpl_path="${ROOST_DIR}/prompts/${prompt_template}.md"
-    if [ ! -f "${tpl_path}" ]; then
+    if ! prompt_text="$(cat "${tpl_path}" 2>/dev/null)"; then
       echo "error: prompt template not found: ${tpl_path}" >&2
       exit 1
     fi
-    prompt_text="$(cat "${tpl_path}")"
-    if [ "${#prompt_args[@]}" -gt 0 ]; then
-      for arg in "${prompt_args[@]}"; do
-        if [[ "${arg}" != *=* ]]; then
-          echo "error: --prompt-arg expects KEY=VALUE, got: ${arg}" >&2
-          exit 1
-        fi
-        local key="${arg%%=*}"
-        local val="${arg#*=}"
-        prompt_text="${prompt_text//\$\{${key}\}/${val}}"
-      done
-    fi
+    for arg in "${prompt_args[@]}"; do
+      if [[ "${arg}" != *=* ]]; then
+        echo "error: --prompt-arg expects KEY=VALUE, got: ${arg}" >&2
+        exit 1
+      fi
+      local key="${arg%%=*}"
+      local val="${arg#*=}"
+      prompt_text="${prompt_text//\$\{${key}\}/${val}}"
+    done
     local missing
     missing="$(printf '%s' "${prompt_text}" | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' | sort -u | tr '\n' ' ')"
     if [ -n "${missing}" ]; then
@@ -307,6 +309,18 @@ cmd_spawn() {
   if [ -n "${prompt_file}" ] && [ ! -f "${prompt_file}" ]; then
     echo "error: --prompt-file ${prompt_file} not found" >&2
     exit 1
+  fi
+  if [ "${dry_run}" -eq 1 ]; then
+    local content="${prompt_text}"
+    if [ -z "${content}" ] && [ -n "${prompt_file}" ]; then
+      content="$(cat "${prompt_file}")"
+    fi
+    if [ -z "${content}" ]; then
+      echo "error: --dry-run requires --prompt, --prompt-template, --prompt-file, or --prompt-stdin" >&2
+      exit 1
+    fi
+    printf '%s\n' "${content}"
+    exit 0
   fi
   if [ ! -d "${cwd}" ]; then
     echo "error: --cwd ${cwd} is not a directory" >&2
