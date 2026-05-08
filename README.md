@@ -31,6 +31,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 
 - macOS or Linux
 - [bun](https://bun.sh) ≥ 1.0
+- [tmux](https://github.com/tmux/tmux) (`brew install tmux` / `apt install tmux` / `dnf install tmux`)
 - An IRCv3 server on `127.0.0.1:6667`. [ergo](https://ergo.chat) is
   recommended — download a release from
   https://github.com/ergochat/ergo/releases and use `etc/ergo.yaml`

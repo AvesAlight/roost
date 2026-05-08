@@ -175,6 +175,14 @@ Example:
 EOF
 }
 
+require_tmux() {
+  if ! command -v tmux &>/dev/null; then
+    echo "error: tmux is required but not found on PATH." >&2
+    echo "  install tmux: brew install tmux  /  apt install tmux  /  dnf install tmux  /  pacman -S tmux" >&2
+    exit 2
+  fi
+}
+
 require_ircd() {
   if ! (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "error: no IRC daemon listening on ${IRC_HOST}:${IRC_PORT}" >&2
@@ -297,6 +305,7 @@ cmd_spawn() {
   # On any failure before the tmux session is created, clean up the data dir.
   trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
 
+  require_tmux
   require_ircd
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
@@ -388,6 +397,7 @@ cmd_shutdown() {
     echo "error: shutdown requires a nick" >&2
     exit 1
   fi
+  require_tmux
   local nick="$1"
   local session_name="${SESSION_PREFIX}${nick}"
   if ! tmux has-session -t "${session_name}" 2>/dev/null; then
@@ -406,6 +416,7 @@ cmd_shutdown() {
 }
 
 cmd_list() {
+  require_tmux
   local sessions
   sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
   if [ -z "${sessions}" ]; then
@@ -430,6 +441,7 @@ cmd_attach() {
     echo "error: attach requires a nick" >&2
     exit 1
   fi
+  require_tmux
   local nick="$1"
   local session_name="${SESSION_PREFIX}${nick}"
   exec tmux attach -t "${session_name}"
@@ -440,6 +452,7 @@ cmd_tail() {
     echo "error: tail requires a nick" >&2
     exit 1
   fi
+  require_tmux
   local nick="$1"
   shift
   local lines=30
@@ -459,6 +472,7 @@ cmd_tail() {
 }
 
 cmd_status() {
+  require_tmux
   if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "ircd: up on ${IRC_HOST}:${IRC_PORT}"
   else
@@ -478,6 +492,7 @@ cmd_send() {
     echo "usage: roost send <nick> <message...>" >&2
     exit 1
   fi
+  require_tmux
   local nick="$1"
   shift
   local message="$*"
