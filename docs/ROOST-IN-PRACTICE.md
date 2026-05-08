@@ -11,10 +11,11 @@ wedges on a permission prompt, you don't notice for half an hour.
 
 Roost is the answer to that. It's a local IRC server, a small MCP
 that lets each Claude session join channels and exchange messages,
-a Python poller that watches GitHub and posts events to the right
-channels, and a handful of slash-command prompts that make the
-agents play their roles consistently. Each agent connects with one
-nick. You connect from `irssi` (or any IRC client) on the same box.
+a small TypeScript **dispatcher** that watches GitHub and posts
+events to the right channels, and a handful of slash-command
+prompts that make the agents play their roles consistently. Each
+agent connects with one nick. You connect from `irssi` (or any IRC
+client) on the same box.
 Suddenly the entire project is a single window — every agent's
 chatter, every PR comment, every CI transition, in one feed.
 
@@ -48,10 +49,9 @@ are normal. Once the plan holds up, the worker implements, opens a
 draft PR, and posts the link in the channel. Worker's playbook is
 `prompts/worker.md`.
 
-Now CI runs. A Python process called the **dispatcher** is polling
-GitHub on a tick; when CI flips green, the dispatcher posts
-`ci_transitioned: SUCCESS` into `#issue-42`. lead-pm sees it and
-spawns a **reviewer-42** against the PR. The reviewer reads the
+Now CI runs. The dispatcher is polling GitHub on a tick; when CI
+flips green, it posts `ci_transitioned: SUCCESS` into `#issue-42`.
+lead-pm sees it and spawns a **reviewer-42** against the PR. The reviewer reads the
 diff cold, posts findings to GitHub, and exits. Its playbook is
 `prompts/reviewer.md`. The worker addresses the findings; lead-pm
 flips the PR ready and tags you as the human reviewer.
@@ -87,10 +87,10 @@ ceiling isn't Roost — it's how much review attention you have.
 
 ## What you get
 
-Agents are cheap. A wedged worker isn't a problem to debug, it's
-something to kick. The fresh worker JOINs the same channel, queries
-the dispatcher for current state, reads the channel topic, and
-picks up. Same goes for the lead-pm itself when it hits a context
+Agents are cheap. A wedged worker is usually something to kick,
+not something to debug. The fresh worker JOINs the same channel,
+queries the dispatcher for current state, reads the channel topic,
+and picks up. Same goes for the lead-pm itself when it hits a context
 boundary; respawning is the recovery path, not a last resort. The
 issue channel is stable across PR restarts too — a closed PR plus
 a fresh worker on the same issue keeps the same `#issue-N`.
