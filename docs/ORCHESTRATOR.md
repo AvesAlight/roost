@@ -8,8 +8,8 @@ The dispatcher is a plain IRC client. It connects to the same ergo server, posts
 to the target channels, and disconnects. There is no special link to the roost-irc MCP — agents
 receive dispatcher messages exactly like any other channel message.
 
-This ships as an example. Repurpose it as-is for your own repo (point it at a
-different `repo` and channel set), or fork it and add plugins for whatever
+This ships as an example. Run it from a Roost clone (or fork) and point the
+config at your own repo / channel set, or fork and add plugins for whatever
 upstream you actually care about — the dispatcher is plugin-agnostic
 (see "Extending" below).
 
