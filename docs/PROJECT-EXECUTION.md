@@ -4,8 +4,9 @@ How to drive a planned milestone through Roost, with multiple workers
 in flight at once. Roost-on-Roost is the canonical example: this is
 how the team actually runs the project, dogfooding the substrate.
 
-This doc is a walkthrough — it points at canonical sources rather
-than restating them. Read alongside:
+This doc uses **lead-pm** for the project-driving agent;
+`ARCHITECTURE.md` calls the same role per-project PO / productops.
+Read alongside:
 
 - `README.md` — install, ergo, the `roost` CLI surface.
 - `ARCHITECTURE.md` — channel topology, identities, lifecycle.
@@ -18,22 +19,21 @@ A milestone in GitHub with issues filed against it. Use GitHub's
 blocking / blocked-by relationships — the lead-pm reads them to build
 its DAG.
 
-Roost installed and ergo running (`README.md` → "Setup"). One terminal
-attached as a human via `irssi` is recommended; you'll want to watch.
+Roost installed and ergo running (`README.md` → "Setup").
 
 ## Bring-up
 
-Three processes, in order.
-
-**1. Dispatcher.** Edit `.orchestrator/config.json` for your repo and
-project channel (shape in `docs/ORCHESTRATOR.md`). Then:
+**1. Configure the dispatcher.** Edit `.orchestrator/config.json` for
+your repo and project channel (shape in `docs/ORCHESTRATOR.md`).
+Optionally seed initial state so a fresh run doesn't replay history:
 
 ```bash
-bin/orchestrator_poll --seed       # one-time, no events emitted
-bin/orchestrator_poll --daemon     # leave running
+bin/orchestrator_poll --seed     # one-shot, no events emitted
 ```
 
-**2. lead-pm.** This is the agent that drives the milestone:
+Don't start the daemon yourself — the watcher boots it on spawn.
+
+**2. Spawn lead-pm.** This is the agent that drives the milestone:
 
 ```bash
 roost spawn lead-pm \
@@ -41,19 +41,17 @@ roost spawn lead-pm \
   --prompt '/lead-pm <milestone>'
 ```
 
-It will spawn its own watcher on boot (see `prompts/lead-pm.md`).
+It spawns its own watcher (see `prompts/lead-pm.md`), and the watcher's
+first action is `nohup bin/orchestrator_poll --daemon &`. lead-pm then
+posts a starting strategy in `#leads-<project>` and waits for you to
+approve the wave before spawning workers.
 
-**3. Optional human observer.** `irssi -c 127.0.0.1 -n alex`, then
-`/join #leads-<project>`. You don't have to be Claude to participate.
-
-That's the whole bring-up. lead-pm posts a starting strategy in
-`#leads-<project>` and waits for you to approve the wave before
-spawning workers.
+**3. Observe (optional).** `irssi -c 127.0.0.1 -n alex`, then
+`/join #leads-<project>`.
 
 ## The per-issue loop
 
-Driven by lead-pm against `prompts/lead-pm.md`, step-by-step. The
-short version:
+Driven by lead-pm against `prompts/lead-pm.md`, step-by-step:
 
 1. lead-pm picks an issue, joins `#issue-N`, dm's the watcher to
    subscribe, runs `script/worktree feat/N-...` for an isolated tree.
@@ -92,8 +90,9 @@ more is fine if the issues are small and the reviewers are fast.
 - `irssi` — same channel feed the agents see, in real time.
 
 Per-MCP logs live at
-`~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-roost-irc/`
-when you need to dig into the IRC layer.
+`~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-roost-irc/`,
+where `<project>` is the session's cwd with slashes replaced by
+dashes (e.g. `-Users-alex-Dev-GoCarrot-roost`).
 
 ## Gotchas
 
