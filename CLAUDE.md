@@ -6,10 +6,16 @@ Delivers
 - A CLI for spawning new Claude code instances (see `bin/roost`)
 - An MCP server to let Claude work with IRC and receive IRC messages (see `src/irc-server.ts`)
 - A hook to proxy permissions requests over IRC (see `bin/irc-permission-prompt`; the permbot routing daemon runs in-process inside `src/irc-server.ts`)
+- An orchestrator/dispatcher module for managing project workflows (see `src/orchestrator/`)
 
-Intended to ride ergo for IRCv3 (multiline and chathistory) support.
+Rides ergo for IRCv3 (multiline, chathistory, message-tags). Uses Github issues and PRs for workflow.
 
-Uses Github issues and PRs for workflow and project management.
+## Code quality
+
+```
+bun run lint      # eslint src/ test/
+bun run typecheck # tsc --noEmit
+```
 
 ## Running tests
 
