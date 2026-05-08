@@ -1,0 +1,1 @@
+../../prompts/worker.md
