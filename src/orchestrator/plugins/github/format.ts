@@ -115,21 +115,6 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-// Auto-detected channels for a PR event (the PR's linked-issue channels, or
-// its own #issue-N if it has no linked issues). Plugin uses this when tagging.
-export function prEventChannels(event: OrchestratorEvent): string[] {
-  const ev = event as { pr?: number; linked_issues?: number[] }
-  if (ev.pr == null) return []
-  const linked = ev.linked_issues ?? []
-  return linked.length ? linked.map(n => `#issue-${n}`) : [`#issue-${ev.pr}`]
-}
-
-// Auto-detected channels for an issue event — the issue's own channel.
-export function issueEventChannels(event: OrchestratorEvent): string[] {
-  const ev = event as { issue?: number }
-  return ev.issue != null ? [`#issue-${ev.issue}`] : []
-}
-
 // Convert an event into a renderable payload. Comment-style kinds use the
 // multiline form (header + body + url); everything else is a oneline.
 export function formatPayload(event: OrchestratorEvent): TaggedEventPayload {

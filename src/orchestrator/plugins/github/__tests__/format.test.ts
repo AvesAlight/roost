@@ -1,34 +1,6 @@
 import { describe, it, expect } from 'bun:test'
-import { formatEvent, formatCommentHeader, prEventChannels, issueEventChannels, formatPayload } from '../format.js'
+import { formatEvent, formatCommentHeader, formatPayload } from '../format.js'
 import type { OrchestratorEvent } from '../diff.js'
-
-describe('prEventChannels', () => {
-  it('routes PR with no linked issues to its own channel', () => {
-    expect(prEventChannels({ kind: 'pr_merged', pr: 25 })).toEqual(['#issue-25'])
-  })
-
-  it('routes PR with linked issues to linked channels', () => {
-    expect(prEventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] })).toEqual(['#issue-14', '#issue-7'])
-  })
-
-  it('routes PR with single linked issue to that issue channel', () => {
-    expect(prEventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] })).toEqual(['#issue-3'])
-  })
-
-  it('returns empty for events with no pr field', () => {
-    expect(prEventChannels({ kind: 'issue_comment', issue: 14 })).toEqual([])
-  })
-})
-
-describe('issueEventChannels', () => {
-  it('routes issue events to the issue channel', () => {
-    expect(issueEventChannels({ kind: 'issue_comment', issue: 14 })).toEqual(['#issue-14'])
-  })
-
-  it('returns empty for events with no issue field', () => {
-    expect(issueEventChannels({ kind: 'pr_merged', pr: 25 })).toEqual([])
-  })
-})
 
 describe('formatPayload', () => {
   it('returns oneline for non-comment kinds', () => {
