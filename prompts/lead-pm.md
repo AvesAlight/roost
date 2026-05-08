@@ -69,7 +69,7 @@ To work on an issue:
   - Unwatch the issue and the PR by dm'ing watcher
 10. Post a postmortem in '#leads-roost-dev' about how the issue went. Come with suggestions about how to make the next issue easier.
 
-Run as many workers as you can.
+Before merging a PR or removing a worktree, confirm: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
 ## Ready?
 

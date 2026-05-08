@@ -10,3 +10,5 @@ Process:
 5. Defer to lead-pm for marking the PR ready, tagging reviewers, and creating followup issues
 
 Don't mark the PR ready yourself.
+
+Ask in the channel before any destructive or shared-state action: force-push, branch deletion, hook bypass (`--no-verify`), `git reset --hard`, dropping unfamiliar files, or anything else that's hard to reverse. Local edits and pushes to your own feature branch don't need confirmation.
