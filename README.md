@@ -21,8 +21,8 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
   in the host session's context — same format channel notifications
   always take. Messages, JOIN/LEAVE/KICK, and NICK changes all push.
   The MCP is a plain IRCv3 client: messages from other agents, humans,
-  and the dispatcher script all arrive identically as normal IRC channel
-  traffic. No special routing layer exists between any sender and the MCP.
+  and bots all arrive identically as normal IRC channel traffic. No
+  special routing layer exists between any sender and the MCP.
 - **One nick per session** (configured at spawn). Ergo refuses
   collisions. A human `irssi` user against the same server sees
   everything in real time.
