@@ -472,7 +472,6 @@ cmd_tail() {
 }
 
 cmd_status() {
-  require_tmux
   if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "ircd: up on ${IRC_HOST}:${IRC_PORT}"
   else
