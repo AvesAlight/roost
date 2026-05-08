@@ -472,8 +472,6 @@ if (import.meta.main) {
       nick: permbotNick,
       username: permbotNick,
       gecos: 'roost-permbot',
-      autoReconnect: true,
-      autoReconnectMaxRetries: 10,
     })
     process.stderr.write(`roost-irc[${NICK}]: started in-process permbot (nick ${permbotNick}, sock ${PERM_SOCK})\n`)
   }

@@ -175,11 +175,13 @@ export function startPermbot(
       log('FATAL nick registration failure, shutting down')
       stop()
     } else if (kind === 'disconnected') {
-      // The IRC client auto-reconnects; lifecycle is the MCP process. Log
-      // and let the next 'reconnected' system event resume the y/n flow.
-      log('IRC connection lost (transient — auto-reconnect in progress)')
-    } else if (kind === 'reconnected') {
-      log('IRC reconnected')
+      // Tear down on disconnect. The hook's askDaemon detects the missing
+      // socket and falls back to a transient-DM + emit('ask'), so the
+      // worker degrades cleanly. Owner-gate eliminates the collision-driven
+      // disconnect that motivated #188; if a real network drop becomes a
+      // recurring failure mode, add auto-reconnect as a followup.
+      log('IRC connection lost, shutting down')
+      stop()
     } else if (kind === 'cap-missing') {
       log('cap-missing (ignored)')
     }
