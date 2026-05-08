@@ -35,6 +35,7 @@ export interface PeerContext {
     timeoutMs?: number,
   ): Promise<PeerMessage>
   waitForPart(channel: string, nick: string, timeoutMs?: number): Promise<void>
+  pendingWaiterCount: number
 }
 
 export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<PeerContext> {
@@ -149,8 +150,9 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
     waitForMessage(channel, pred, timeoutMs = 5000) {
       return suppressLateRejection(new Promise<PeerMessage>((resolve, reject) => {
+        const wrappedResolve = (msg: PeerMessage) => { clearTimeout(timer); resolve(msg) }
         const timer = setTimeout(() => {
-          const idx = messageWaiters.findIndex(w => w.resolve === resolve)
+          const idx = messageWaiters.findIndex(w => w.resolve === wrappedResolve)
           if (idx !== -1) messageWaiters.splice(idx, 1)
           reject(new Error(`waitForMessage on ${channel} timed out after ${timeoutMs}ms`))
         }, timeoutMs)
@@ -158,10 +160,12 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
         messageWaiters.push({
           channel,
           pred,
-          resolve: (msg) => { clearTimeout(timer); resolve(msg) },
+          resolve: wrappedResolve,
           reject,
         })
       }))
     },
+
+    get pendingWaiterCount() { return messageWaiters.length },
   }
 }

@@ -41,6 +41,24 @@ describe.if(isErgoAvailable())('test helpers', () => {
     expect(mcp.waiterCount()).toBe(0)
   })
 
+  it('waitForMessage removes waiter on timeout — issue #172 regression', async () => {
+    const peer = await connectPeer(ergo, 'wfm-timeout-peer')
+    await peer.joinChannel('#wfm-timeout')
+    await expect(peer.waitForMessage('#wfm-timeout', () => false, 50)).rejects.toThrow('timed out')
+    expect(peer.pendingWaiterCount).toBe(0)
+  })
+
+  it('waitForMessage removes waiter on success', async () => {
+    const sender = await connectPeer(ergo, 'wfm-success-sender')
+    const receiver = await connectPeer(ergo, 'wfm-success-receiver')
+    await sender.joinChannel('#wfm-success')
+    await receiver.joinChannel('#wfm-success')
+    const msgP = receiver.waitForMessage('#wfm-success', m => m.text === 'wfm-probe')
+    sender.say('#wfm-success', 'wfm-probe')
+    await msgP
+    expect(receiver.pendingWaiterCount).toBe(0)
+  })
+
   it('waitForNotification removes waiter on success', async () => {
     const mcp = await startMcpInProcess(ergo, 'waiter-success-mcp')
     const peer = await connectPeer(ergo, 'waiter-success-peer')
