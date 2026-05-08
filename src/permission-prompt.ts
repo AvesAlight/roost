@@ -2,6 +2,7 @@
 
 import * as fs from 'node:fs'
 import * as net from 'node:net'
+import * as path from 'node:path'
 
 const WORKER      = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
@@ -113,28 +114,6 @@ export function extractIntent(transcriptPath: string): string {
   const rawLines = text.split('\n')
   // first line after a mid-file seek is likely truncated; drop it
   const lines = text.length < 200_000 ? rawLines : rawLines.slice(1)
-
-  const completedIds = new Set<string>()
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    let turn: unknown
-    try { turn = JSON.parse(trimmed) } catch { continue }
-    if (typeof turn !== 'object' || turn === null) continue
-    const t = turn as Record<string, unknown>
-    if (t['type'] !== 'user') continue
-    const content = (t['message'] as Record<string, unknown> | undefined)?.['content']
-    if (!Array.isArray(content)) continue
-    for (const block of content) {
-      if (typeof block !== 'object' || block === null) continue
-      const b = block as Record<string, unknown>
-      if (b['type'] === 'tool_result') {
-        const id = String(b['tool_use_id'] ?? '')
-        if (id) completedIds.add(id)
-      }
-    }
-  }
-
   let fallbackThinking = ''
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
@@ -146,38 +125,27 @@ export function extractIntent(transcriptPath: string): string {
     if (t['type'] !== 'assistant') continue
     const content = (t['message'] as Record<string, unknown> | undefined)?.['content']
     if (!Array.isArray(content)) continue
-
-    let foundText = ''
-    let activeAgent: { prompt: string; desc: string } | null = null
     for (const block of content) {
       if (typeof block !== 'object' || block === null) continue
       const b = block as Record<string, unknown>
-      if (b['type'] === 'tool_use' && b['name'] === 'Agent') {
-        const id = String(b['id'] ?? '')
-        if (!completedIds.has(id)) {
-          const input = b['input'] as Record<string, unknown> | undefined
-          activeAgent = {
-            prompt: String(input?.['prompt'] ?? '').trim(),
-            desc: String(input?.['description'] ?? '').trim(),
-          }
-        }
-      } else if (b['type'] === 'text') {
+      if (b['type'] === 'text') {
         const txt = String(b['text'] ?? '').trim()
-        if (txt && !foundText) foundText = txt
+        if (txt) return clip(txt, 400)
       } else if (b['type'] === 'thinking' && !fallbackThinking) {
         const think = String(b['thinking'] ?? '').trim()
         if (think) fallbackThinking = clip(think, 400)
       }
     }
-
-    if (activeAgent !== null) {
-      const label = activeAgent.desc ? `[sub-agent: ${activeAgent.desc}]` : '[sub-agent]'
-      if (activeAgent.prompt) return `${label} ${clip(activeAgent.prompt, 400 - label.length - 1)}`
-      return label
-    }
-    if (foundText) return clip(foundText, 400)
   }
   return fallbackThinking
+}
+
+export function resolveTranscriptPath(transcriptPath: string, agentId: string): string {
+  if (!agentId) return transcriptPath
+  if (transcriptPath.includes('/subagents/')) return transcriptPath
+  const sessionDir = transcriptPath.replace(/\.jsonl$/, '')
+  const subPath = path.join(sessionDir, 'subagents', `agent-${agentId}.jsonl`)
+  return fs.existsSync(subPath) ? subPath : transcriptPath
 }
 
 // ---- Socket round-trip to permbot daemon ------------------------------------
@@ -271,12 +239,16 @@ if (import.meta.main) {
   const toolName      = String(payload!['tool_name'] ?? '')
   const toolInput     = (payload!['tool_input'] as Record<string, unknown> | null) ?? {}
   const transcriptPath = String(payload!['transcript_path'] ?? '')
+  const agentId        = String(payload!['agent_id'] ?? '')
 
   if (PASSTHROUGH_PREFIXES.some(p => toolName.startsWith(p))) emit('allow', 'roost-irc passthrough')
 
-  const intent = extractIntent(transcriptPath)
+  const intent = extractIntent(resolveTranscriptPath(transcriptPath, agentId))
   const summaryLines = summarize(toolName, toolInput)
-  if (intent) summaryLines.push(`intent: ${intent}`)
+  if (intent) {
+    summaryLines.push(`last narration: ${intent}`)
+    summaryLines.push(`(also check the agent's recent IRC messages)`)
+  }
   const summary = summaryLines.join('\n')
 
   const reply = await askDaemon(summary)
