@@ -127,6 +127,80 @@ describe('extractIntent', () => {
       fs.unlinkSync(tmp)
     }
   })
+
+  it('returns Agent prompt prefixed with label when sub-agent is active (same turn as text)', () => {
+    const tmp = path.join(os.tmpdir(), `transcript-${process.pid}-sa1.jsonl`)
+    const turn = {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: 'Now spawning the Haiku agent.' },
+          { type: 'tool_use', id: 'tu_001', name: 'Agent', input: { prompt: 'Run the test suite and report failures.', description: 'run tests' } },
+        ],
+      },
+    }
+    fs.writeFileSync(tmp, JSON.stringify(turn) + '\n')
+    try {
+      const result = extractIntent(tmp)
+      expect(result).toContain('[sub-agent: run tests]')
+      expect(result).toContain('Run the test suite')
+      expect(result).not.toContain('Now spawning')
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+  })
+
+  it('returns Agent prompt when active Agent is in a more recent turn than last text', () => {
+    const tmp = path.join(os.tmpdir(), `transcript-${process.pid}-sa2.jsonl`)
+    const lines = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Doing analysis.' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_002', name: 'Agent', input: { prompt: 'Investigate the crash logs.', description: 'crash investigation' } }] } }),
+    ]
+    fs.writeFileSync(tmp, lines.join('\n') + '\n')
+    try {
+      const result = extractIntent(tmp)
+      expect(result).toContain('[sub-agent: crash investigation]')
+      expect(result).toContain('Investigate the crash logs')
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+  })
+
+  it('falls back to parent text when Agent tool_use has a matching tool_result (completed)', () => {
+    const tmp = path.join(os.tmpdir(), `transcript-${process.pid}-sa3.jsonl`)
+    const lines = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Spawning agent to check docs.' }, { type: 'tool_use', id: 'tu_003', name: 'Agent', input: { prompt: 'Summarize the README.' } }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_003', content: 'done' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Now writing the report.' }] } }),
+    ]
+    fs.writeFileSync(tmp, lines.join('\n') + '\n')
+    try {
+      const result = extractIntent(tmp)
+      expect(result).toBe('Now writing the report.')
+      expect(result).not.toContain('sub-agent')
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+  })
+
+  it('uses [sub-agent] label without description when Agent input has no description', () => {
+    const tmp = path.join(os.tmpdir(), `transcript-${process.pid}-sa4.jsonl`)
+    const turn = {
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'tu_004', name: 'Agent', input: { prompt: 'Do the work.' } },
+        ],
+      },
+    }
+    fs.writeFileSync(tmp, JSON.stringify(turn) + '\n')
+    try {
+      const result = extractIntent(tmp)
+      expect(result).toMatch(/^\[sub-agent\] Do the work\./)
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+  })
 })
 
 // ---- hook integration (subprocess) -----------------------------------------

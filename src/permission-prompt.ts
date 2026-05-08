@@ -113,6 +113,30 @@ export function extractIntent(transcriptPath: string): string {
   const rawLines = text.split('\n')
   // first line after a mid-file seek is likely truncated; drop it
   const lines = text.length < 200_000 ? rawLines : rawLines.slice(1)
+
+  // Pass 1: collect tool_use ids that have completed (have a matching tool_result).
+  const completedIds = new Set<string>()
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let turn: unknown
+    try { turn = JSON.parse(trimmed) } catch { continue }
+    if (typeof turn !== 'object' || turn === null) continue
+    const t = turn as Record<string, unknown>
+    if (t['type'] !== 'user') continue
+    const content = (t['message'] as Record<string, unknown> | undefined)?.['content']
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      if (typeof block !== 'object' || block === null) continue
+      const b = block as Record<string, unknown>
+      if (b['type'] === 'tool_result') {
+        const id = String(b['tool_use_id'] ?? '')
+        if (id) completedIds.add(id)
+      }
+    }
+  }
+
+  // Pass 2: scan backwards for the most recent active sub-agent or last parent text.
   let fallbackThinking = ''
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim()
@@ -124,17 +148,36 @@ export function extractIntent(transcriptPath: string): string {
     if (t['type'] !== 'assistant') continue
     const content = (t['message'] as Record<string, unknown> | undefined)?.['content']
     if (!Array.isArray(content)) continue
+
+    let foundText = ''
+    let activeAgent: { prompt: string; desc: string } | null = null
     for (const block of content) {
       if (typeof block !== 'object' || block === null) continue
       const b = block as Record<string, unknown>
-      if (b['type'] === 'text') {
+      if (b['type'] === 'tool_use' && b['name'] === 'Agent') {
+        const id = String(b['id'] ?? '')
+        if (!completedIds.has(id)) {
+          const input = b['input'] as Record<string, unknown> | undefined
+          activeAgent = {
+            prompt: String(input?.['prompt'] ?? '').trim(),
+            desc: String(input?.['description'] ?? '').trim(),
+          }
+        }
+      } else if (b['type'] === 'text') {
         const txt = String(b['text'] ?? '').trim()
-        if (txt) return clip(txt, 400)
+        if (txt && !foundText) foundText = txt
       } else if (b['type'] === 'thinking' && !fallbackThinking) {
         const think = String(b['thinking'] ?? '').trim()
         if (think) fallbackThinking = clip(think, 400)
       }
     }
+
+    if (activeAgent !== null) {
+      const label = activeAgent.desc ? `[sub-agent: ${activeAgent.desc}]` : '[sub-agent]'
+      if (activeAgent.prompt) return `${label} ${clip(activeAgent.prompt, 400 - label.length - 1)}`
+      return label
+    }
+    if (foundText) return clip(foundText, 400)
   }
   return fallbackThinking
 }
