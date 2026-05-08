@@ -9,18 +9,16 @@ import {
   writeHeartbeat,
   writeLastError,
   clearLastError,
-  coerceRepoEntry,
+  getPluginState,
   SCHEMA_VERSION,
   type OrchestratorConfig,
   type OrchestratorState,
-  type PrSnap,
-  type IssueSnap,
 } from './orchestrator/config.js'
 
-import { type OrchestratorEvent } from './orchestrator/diff.js'
-import { initialIrcChannels } from './orchestrator/format.js'
-import { scrapePr, scrapeIssue } from './orchestrator/scraper.js'
-import { dispatchEventsIrc, connectAndWait } from './orchestrator/dispatch.js'
+import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
+import { GitHubPrsPlugin } from './orchestrator/plugins/github/prs-plugin.js'
+import { GitHubIssuesPlugin } from './orchestrator/plugins/github/issues-plugin.js'
+import type { Plugin, TaggedEvent } from './orchestrator/plugin.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
 // ---- Path setup ------------------------------------------------------------
@@ -30,44 +28,40 @@ const DEFAULT_STATE_DIR = join(REPO_ROOT, '.orchestrator')
 
 // ---- Tick ------------------------------------------------------------------
 
+interface TickResult {
+  taggedEvents: TaggedEvent[]
+  channels: string[]
+}
+
 async function runOneTick(
   stateDir: string,
   config: OrchestratorConfig,
+  plugins: Plugin[],
   opts: { seed: boolean; dryRun: boolean }
-): Promise<OrchestratorEvent[]> {
-  const defaultRepo = config.repo
-  const watchedPrs = config.watched_prs ?? []
-  const watchedIssues = config.watched_issues ?? []
-  const agentLogins = new Set(config.agent_logins ?? [])
-
+): Promise<TickResult> {
   const prev = opts.seed ? null : await loadState(stateDir)
-  const seeding = prev === null
-
   const curState: OrchestratorState = {
     schema_version: SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
-    prs: {},
-    issues: {},
-  }
-  const events: OrchestratorEvent[] = []
-
-  for (const entry of watchedPrs) {
-    const [repo, number] = coerceRepoEntry(entry, defaultRepo)
-    const key = `${repo}#${number}`
-    // undefined = seeding tick (no events); null = new watch entry (emit seed events)
-    const prevPr: PrSnap | null | undefined = seeding ? undefined : ((prev?.prs[key] as PrSnap | undefined) ?? null)
-    const { snap, events: prEvents } = await scrapePr(repo, number, prevPr, agentLogins)
-    events.push(...prEvents)
-    curState.prs[key] = snap
+    plugins: {},
   }
 
-  for (const entry of watchedIssues) {
-    const [repo, number] = coerceRepoEntry(entry, defaultRepo)
-    const key = `${repo}#${number}`
-    const prevIssue: IssueSnap | null | undefined = seeding ? undefined : ((prev?.issues[key] as IssueSnap | undefined) ?? null)
-    const { snap, events: issueEvents } = await scrapeIssue(repo, number, prevIssue, agentLogins)
-    events.push(...issueEvents)
-    curState.issues[key] = snap
+  const allTagged: TaggedEvent[] = []
+  const allChannels = new Set<string>()
+
+  // Plugins are independent — share GH rate limits but no in-process state —
+  // so parallel execution is safe and useful for any N≥2. Seeding is signaled
+  // by `prev === null` (loadState skipped above when opts.seed).
+  const results = await Promise.all(
+    plugins.map(async plugin => ({
+      plugin,
+      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name)),
+    }))
+  )
+  for (const { plugin, result } of results) {
+    curState.plugins[plugin.name] = result.state
+    allTagged.push(...result.taggedEvents)
+    for (const c of result.channels) allChannels.add(c)
   }
 
   if (!opts.dryRun) {
@@ -76,7 +70,22 @@ async function runOneTick(
     await clearLastError(stateDir)
   }
 
-  return seeding ? [] : events
+  return { taggedEvents: allTagged, channels: [...allChannels] }
+}
+
+function buildPlugins(defaultChannel: string): Plugin[] {
+  return [
+    new GitHubPrsPlugin(defaultChannel),
+    new GitHubIssuesPlugin(defaultChannel),
+  ]
+}
+
+function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
+  const chans = new Set<string>([projectChannel])
+  for (const plugin of plugins) {
+    for (const c of plugin.desiredChannels(config)) chans.add(c)
+  }
+  return [...chans].sort()
 }
 
 // ---- Daemon ----------------------------------------------------------------
@@ -100,8 +109,8 @@ async function runDaemon(stateDir: string): Promise<void> {
   const port = ircCfg.port ?? 6667
   const interval = Math.max(5, ircCfg.interval_seconds ?? 60) * 1000
 
-  const state = await loadState(stateDir)
-  const initialChannels = initialIrcChannels(config, projectChannel, state)
+  const plugins = buildPlugins(projectChannel)
+  const initialChannels = bootChannels(plugins, config, projectChannel)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
   const client = new RoostIrcClientImpl({
@@ -142,7 +151,20 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: config load failed: ${e}\n`)
     }
 
-    const desired = new Set(initialIrcChannels(config, projectChannel, await loadState(stateDir)))
+    let result: TickResult
+    try {
+      result = await runOneTick(stateDir, config, plugins, tickOpts)
+    } catch (e) {
+      const msg = String(e)
+      log(`orchestrator[daemon]: tick failed: ${msg}\n`)
+      try { client.say(projectChannel, `[dispatcher_error] ${msg}`) } catch { /* best-effort */ }
+      // Fall back to the config-only channel view so a transient GH/scrape
+      // blip doesn't part every #issue-N until the next success.
+      result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
+    }
+
+    // Sync IRC membership against the plugin's reported desired set + project channel.
+    const desired = new Set<string>([projectChannel, ...result.channels])
     try {
       const currentlyJoined = (await client.whoisChannels()) ?? []
       for (const ch of currentlyJoined) {
@@ -155,19 +177,10 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
     }
 
-    let events: OrchestratorEvent[] = []
-    try {
-      events = await runOneTick(stateDir, config, tickOpts)
-    } catch (e) {
-      const msg = String(e)
-      log(`orchestrator[daemon]: tick failed: ${msg}\n`)
-      try { client.say(projectChannel, `[dispatcher_error] ${msg}`) } catch { /* best-effort */ }
-    }
-
-    if (events.length) {
+    if (result.taggedEvents.length) {
       try {
-        await dispatchEventsIrc(events, client, projectChannel)
-        log(`orchestrator[daemon]: tick dispatched ${events.length} event(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
+        await dispatchTaggedEvents(result.taggedEvents, client)
+        log(`orchestrator[daemon]: tick dispatched ${result.taggedEvents.length} event(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
       } catch (e) {
         log(`orchestrator[daemon]: dispatch error: ${e}\n`)
         try { client.say(projectChannel, `[dispatcher_error] dispatch: ${e}`) } catch { /* best-effort */ }
@@ -195,8 +208,8 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
 
-  const state = await loadState(stateDir)
-  const channels = initialIrcChannels(config, projectChannel, state)
+  const plugins = buildPlugins(projectChannel)
+  const channels = bootChannels(plugins, config, projectChannel)
 
   const client = new RoostIrcClientImpl({
     nick,
@@ -208,10 +221,10 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
 
   await connectAndWait(client, { host: server, port, nick }, channels)
   try {
-    const events = await runOneTick(stateDir, config, { seed, dryRun: false })
-    if (events.length) {
-      await dispatchEventsIrc(events, client, projectChannel)
-      process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${events.length} event(s)\n`)
+    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false })
+    if (result.taggedEvents.length) {
+      await dispatchTaggedEvents(result.taggedEvents, client)
+      process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${result.taggedEvents.length} event(s)\n`)
     } else {
       process.stderr.write('orchestrator[--dispatch-irc]: no events to dispatch\n')
     }
@@ -251,11 +264,13 @@ async function main(): Promise<void> {
 
     // One-shot: fetch + diff, print events JSON
     const config = await loadConfig(stateDir)
-    const events = await runOneTick(stateDir, config, {
+    const projectChannel = config.irc?.project_channel ?? '#general'
+    const plugins = buildPlugins(projectChannel)
+    const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,
     })
-    console.log(JSON.stringify(events, null, 2))
+    console.log(JSON.stringify(result.taggedEvents, null, 2))
   } catch (e) {
     const tb = e instanceof Error ? e.stack ?? String(e) : String(e)
     process.stderr.write(tb + '\n')

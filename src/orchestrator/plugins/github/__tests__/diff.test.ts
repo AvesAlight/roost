@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { diffPr, diffIssue, shouldPush, formatCommentEvent } from '../diff.js'
-import type { PrSnap, IssueSnap } from '../config.js'
+import type { PrSnap, IssueSnap } from '../types.js'
 import type { PrSnapInternal, IssueSnapInternal } from '../snapshot.js'
 
 function basePrSnap(overrides: Partial<PrSnapInternal> = {}): PrSnapInternal {

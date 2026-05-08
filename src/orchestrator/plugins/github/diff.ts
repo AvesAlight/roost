@@ -1,6 +1,6 @@
-import type { PrSnap, IssueSnap } from './config.js'
+import type { PrSnap, IssueSnap } from './types.js'
 import type { PrSnapInternal, IssueSnapInternal } from './snapshot.js'
-import type { GhComment, GhReview } from './github.js'
+import type { GhComment, GhReview } from './github-api.js'
 
 // ---- Event types -----------------------------------------------------------
 

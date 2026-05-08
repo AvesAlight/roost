@@ -1,4 +1,4 @@
-import type { PrSnap, IssueSnap } from './config.js'
+import type { PrSnap, IssueSnap } from './types.js'
 import {
   fetchPr,
   fetchPrReviewComments,
@@ -10,7 +10,7 @@ import {
   labelNames,
   type GhComment,
   type GhReview,
-} from './github.js'
+} from './github-api.js'
 
 export interface PrSnapInternal extends PrSnap {
   _review_comments_by_id: Record<number, GhComment>

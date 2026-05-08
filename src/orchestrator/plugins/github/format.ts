@@ -1,9 +1,15 @@
-import type { OrchestratorConfig, OrchestratorState } from './config.js'
-import { coerceRepoEntry } from './config.js'
 import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent, StateChangeEvent, SeedEvent } from './diff.js'
+import type { TaggedEventPayload } from '../../plugin.js'
+
+const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
+  'pr_review_comment',
+  'pr_conversation_comment',
+  'issue_comment',
+  'pr_review_submitted',
+])
 
 function eventTag(event: OrchestratorEvent): string {
-  const n = (event as { pr?: number; issue?: number }).pr ?? (event as { pr?: number; issue?: number }).issue
+  const n = event.pr ?? event.issue
   const repo = event.repo
   if (n != null && repo) return `${repo}#${n}`
   if (n != null) return `#${n}`
@@ -109,38 +115,17 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-export function eventChannels(event: OrchestratorEvent, defaultChannel: string): string[] {
-  const ev = event as { pr?: number; issue?: number; linked_issues?: number[] }
-  if (ev.pr != null) {
-    const linked = ev.linked_issues ?? []
-    if (linked.length) return linked.map(n => `#issue-${n}`)
-    return [`#issue-${ev.pr}`]
-  }
-  if (ev.issue != null) return [`#issue-${ev.issue}`]
-  return [defaultChannel]
-}
-
-export function initialIrcChannels(
-  config: OrchestratorConfig,
-  projectChannel: string,
-  state: OrchestratorState | null
-): string[] {
-  const chans = new Set<string>([projectChannel])
-  const defaultRepo = config.repo
-  for (const entry of config.watched_prs ?? []) {
-    const [, n] = coerceRepoEntry(entry, defaultRepo)
-    chans.add(`#issue-${n}`)
-  }
-  for (const entry of config.watched_issues ?? []) {
-    const [, n] = coerceRepoEntry(entry, defaultRepo)
-    chans.add(`#issue-${n}`)
-  }
-  if (state) {
-    for (const snap of Object.values(state.prs)) {
-      for (const linkedN of snap.linked_issues ?? []) {
-        chans.add(`#issue-${linkedN}`)
-      }
+// Convert an event into a renderable payload. Comment-style kinds use the
+// multiline form (header + body + url); everything else is a oneline.
+export function formatPayload(event: OrchestratorEvent): TaggedEventPayload {
+  if (MULTILINE_COMMENT_KINDS.has(event.kind)) {
+    const ev = event as CommentEvent & { review_url?: string }
+    return {
+      kind: 'multiline',
+      header: formatCommentHeader(event),
+      body: ev.body ?? '',
+      url: ev.comment_url ?? ev.review_url ?? event.url ?? '',
     }
   }
-  return [...chans].sort()
+  return { kind: 'oneline', text: formatEvent(event) }
 }

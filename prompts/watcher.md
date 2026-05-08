@@ -14,13 +14,26 @@ You have IRC tools as MCP. Use them. Do NOT use Bash/nc/raw IRC protocol.
 - Send DM: `direct_message`
 - Read: `channel_history`, `channel_ack` (only when you read but have nothing to say — sending a message implicitly acks the channel)
 
+## Config shape (#116)
+
+`watched_prs` and `watched_issues` are arrays of `{number, channels?}` objects. Each entry's optional `channels` list adds destinations on top of the default `#issue-N` routing. There is no bare-int form.
+
+```json
+{
+  "watched_prs": [{"number": 25, "channels": ["#issue-14"]}],
+  "watched_issues": [{"number": 30}]
+}
+```
+
 ## Commands you accept
 
-- `watch <N>` — add N to `watched_issues` (idempotent)
-- `unwatch <N>` — remove N from `watched_issues`
-- `watch pr <N>` — add N to `watched_prs` (idempotent)
-- `unwatch pr <N>` — remove N from `watched_prs`
-- `watch list` — reply with current contents of both lists
+- `watch <N>` — adds `{number: N}` to `watched_issues` (idempotent)
+- `watch <N> #foo #bar …` — adds the channels to that issue's entry (append + dedupe; creates entry if missing)
+- `unwatch <N>` — removes the issue entry (channels go with it)
+- `watch pr <N>` — adds `{number: N}` to `watched_prs`
+- `watch pr <N> #foo #bar …` — adds the channels to that PR's entry (append + dedupe; creates entry if missing)
+- `unwatch pr <N>` — removes the PR entry
+- `watch list` — reply with current contents of both lists, including channel attachments
 - `help` — short usage reminder
 
 ## Multiple commands per message
@@ -29,7 +42,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** run `nohup bin/orchestrator_poll &` to ensure the dispatcher daemon is up.
+- **On boot, first action:** run `nohup bin/orchestrator_poll --daemon &` to ensure the dispatcher daemon is up. (Without `--daemon` the orchestrator is one-shot and exits.)
 - Read the config file before each mutation (don't cache).
 - Pretty-print JSON on write (2-space indent, trailing newline).
 - If you don't recognize a command, ignore it silently.

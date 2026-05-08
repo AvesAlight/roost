@@ -1,58 +1,28 @@
 import { describe, it, expect } from 'bun:test'
-import { formatEvent, formatCommentHeader, eventChannels, initialIrcChannels } from '../format.js'
+import { formatEvent, formatCommentHeader, formatPayload } from '../format.js'
 import type { OrchestratorEvent } from '../diff.js'
-import { SCHEMA_VERSION, type OrchestratorState } from '../config.js'
 
-describe('eventChannels', () => {
-  it('routes PR with no linked issues to its own channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25 }, '#proj')).toEqual(['#issue-25'])
+describe('formatPayload', () => {
+  it('returns oneline for non-comment kinds', () => {
+    const ev: OrchestratorEvent = { kind: 'pr_merged', repo: 'org/r', pr: 5, url: 'u', title: 't' } as OrchestratorEvent
+    const p = formatPayload(ev)
+    expect(p.kind).toBe('oneline')
+    if (p.kind === 'oneline') expect(p.text).toContain('PR org/r#5 merged')
   })
 
-  it('routes PR with linked issues to linked channels', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] }, '#proj')).toEqual(['#issue-14', '#issue-7'])
-  })
-
-  it('routes issue events to issue channel', () => {
-    expect(eventChannels({ kind: 'issue_comment', issue: 14 }, '#proj')).toEqual(['#issue-14'])
-  })
-
-  it('falls back to default channel for unrelated events', () => {
-    expect(eventChannels({ kind: 'dispatcher_error' }, '#proj')).toEqual(['#proj'])
-  })
-
-  it('routes PR with single linked issue to that issue channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] }, '#proj')).toEqual(['#issue-3'])
-  })
-})
-
-describe('initialIrcChannels', () => {
-  const fakeState: OrchestratorState = {
-    schema_version: SCHEMA_VERSION,
-    generated_at: '2026-01-01T00:00:00Z',
-    prs: {
-      'MyOrg/repo#25': {
-        repo: 'MyOrg/repo', number: 25, title: null, url: null, head_ref: null, head_oid: null,
-        is_draft: false, merged: false, state: null, labels: [], ci_state: null,
-        linked_issues: [14, 7], seen_review_comment_ids: [], seen_conversation_comment_ids: [], seen_review_ids: [],
-      },
-    },
-    issues: {},
-  }
-
-  it('picks up linked issues from state', () => {
-    expect(initialIrcChannels(
-      { repo: 'MyOrg/repo', watched_prs: [25], watched_issues: [] },
-      '#proj',
-      fakeState
-    )).toEqual(['#issue-14', '#issue-25', '#issue-7', '#proj'].sort())
-  })
-
-  it('uses only config channels when state is null', () => {
-    expect(initialIrcChannels(
-      { repo: 'MyOrg/repo', watched_prs: [25], watched_issues: [14] },
-      '#proj',
-      null
-    )).toEqual(['#issue-14', '#issue-25', '#proj'].sort())
+  it('returns multiline for comment kinds with header/body/url', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment', repo: 'org/r', pr: 5,
+      author: 'alice', body: 'a\nb', body_preview: 'a',
+      comment_url: 'https://example.com/c/1',
+    } as OrchestratorEvent
+    const p = formatPayload(ev)
+    expect(p.kind).toBe('multiline')
+    if (p.kind === 'multiline') {
+      expect(p.header).toBe('PR org/r#5 comment by alice:')
+      expect(p.body).toBe('a\nb')
+      expect(p.url).toBe('https://example.com/c/1')
+    }
   })
 })
 

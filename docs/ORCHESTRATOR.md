@@ -20,14 +20,15 @@ Create `.orchestrator/config.json`:
     "port": 6667,
     "interval_seconds": 60
   },
-  "watched_prs": [22, 25],
-  "watched_issues": [15, 18]
+  "watched_prs": [{"number": 22}, {"number": 25, "channels": ["#issue-14"]}],
+  "watched_issues": [{"number": 15}, {"number": 18}]
 }
 ```
 
 `agent_logins` tags comments by those GitHub users as `is_worker_reply: true` — currently
-informational. Bare ints use the top-level `repo`; use `{"repo": "OWNER/NAME", "number": N}`
-to watch items in a different repo.
+informational. Each watched entry is `{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}`.
+`repo` defaults to the top-level value. `channels` adds destinations on top of the auto-routed
+`#issue-N` (PR events also go to `#issue-N` for each linked issue).
 
 ## Running
 

@@ -5,9 +5,7 @@
 //   undefined → seeding tick (global --seed or no prior state); emit nothing
 //   null      → entity is new to the watch list; emit seed/backlog events
 //   PrSnap    → normal tick; diff against prev and emit change events
-//
-// This seam is the first step toward the plugin architecture in #164.
-import type { PrSnap, IssueSnap } from './config.js'
+import type { PrSnap, IssueSnap } from './types.js'
 import { snapshotPr, snapshotIssue, stripInternals } from './snapshot.js'
 import type { PrSnapInternal, IssueSnapInternal } from './snapshot.js'
 import { diffPr, diffIssue } from './diff.js'

@@ -1,14 +1,15 @@
 import { mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export const SCHEMA_VERSION = 1
+// Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
+// own state slice. Schema bumps trigger a one-time re-seed via loadState().
+export const SCHEMA_VERSION = 3
 
 export interface WatchedEntry {
   repo?: string
   number: number
+  channels?: string[]
 }
-
-export type WatchedEntryInput = number | WatchedEntry
 
 export interface OrchestratorConfig {
   repo?: string
@@ -20,43 +21,14 @@ export interface OrchestratorConfig {
     port?: number
     interval_seconds?: number
   }
-  watched_prs?: WatchedEntryInput[]
-  watched_issues?: WatchedEntryInput[]
-}
-
-export interface PrSnap {
-  repo: string
-  number: number
-  title: string | null
-  url: string | null
-  head_ref: string | null
-  head_oid: string | null
-  is_draft: boolean
-  merged: boolean
-  state: string | null
-  labels: string[]
-  ci_state: string | null
-  linked_issues: number[]
-  seen_review_comment_ids: number[]
-  seen_conversation_comment_ids: number[]
-  seen_review_ids: number[]
-}
-
-export interface IssueSnap {
-  repo: string
-  number: number
-  title: string | null
-  url: string | null
-  state: string | null
-  labels: string[]
-  seen_comment_ids: number[]
+  watched_prs?: WatchedEntry[]
+  watched_issues?: WatchedEntry[]
 }
 
 export interface OrchestratorState {
   schema_version: number
   generated_at: string
-  prs: Record<string, PrSnap>
-  issues: Record<string, IssueSnap>
+  plugins: Record<string, unknown>
 }
 
 function sortedJson(value: unknown): string {
@@ -121,12 +93,14 @@ export async function clearLastError(stateDir: string): Promise<void> {
   try { await unlink(join(stateDir, 'last-error.txt')) } catch { /* ignore if missing */ }
 }
 
-export function coerceRepoEntry(entry: WatchedEntryInput, defaultRepo?: string): [string, number] {
-  if (typeof entry === 'number') {
-    if (!defaultRepo) throw new Error(`bare-int watched entry ${entry} requires a top-level repo in config`)
-    return [defaultRepo, entry]
-  }
+export function resolveRepoEntry(entry: WatchedEntry, defaultRepo?: string): { repo: string; number: number; channels: string[] } {
   const repo = entry.repo ?? defaultRepo
   if (!repo) throw new Error(`watched entry missing repo: ${JSON.stringify(entry)}`)
-  return [repo, entry.number]
+  return { repo, number: entry.number, channels: entry.channels ?? [] }
+}
+
+export function getPluginState<T>(state: OrchestratorState | null, pluginName: string): T | null {
+  if (!state) return null
+  const slice = state.plugins?.[pluginName]
+  return (slice as T) ?? null
 }
