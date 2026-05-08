@@ -126,6 +126,12 @@ ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
 On first launch you'll get a `1. I am using this for local development
 / 2. Exit` prompt — hit Enter to accept.
 
+### Running a planned project
+
+For an introduction to driving a GitHub milestone through Roost
+with parallel workers, see
+[`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md).
+
 ### Observe as a human (no Claude needed)
 
 The spike ergo config has no auth — any IRC client against
