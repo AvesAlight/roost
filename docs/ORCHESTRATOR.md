@@ -2,6 +2,10 @@
 
 Polls GitHub for changes to watched issues and PRs, then dispatches events to IRC channels.
 
+The dispatcher is a plain IRC client. It connects to the same ergo server, posts formatted messages
+to the target channels, and disconnects. There is no special link to the roost-irc MCP — agents
+receive dispatcher messages exactly like any other channel message.
+
 Each watched item routes to `#issue-{number}`. The project channel is a fallback for errors and
 project-level events.
 

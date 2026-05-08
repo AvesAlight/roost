@@ -71,8 +71,10 @@ observer present, recurring directives get silently absorbed and
 re-occur next project.
 
 - **Routine signals** (CI green, CEO-APPROVED, CHANGES_REQUESTED):
-  dispatcher → `#issue-NNN` → worker. PO is in the channel but
-  not in the action path.
+  dispatcher → `#issue-NNN` → worker. The dispatcher is a plain IRC
+  client writing to a channel; the worker's roost-irc MCP receives
+  that write as an ordinary channel message — no special pipeline.
+  PO is in the channel but not in the action path.
 - **Ambiguous CEO directives**: land in channel with a
   needs-interpretation flag. Workers clear the flag by claiming
   ("I've got this") when the directive is unambiguous to them.
