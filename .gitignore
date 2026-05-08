@@ -18,6 +18,7 @@ coverage/
 .orchestrator/last-tick.txt
 .orchestrator/last-error.txt
 .orchestrator/.state.*.tmp
+.orchestrator/daemon.log
 
 # Python bytecode cache (orchestrator_poll runs as a script)
 __pycache__/

@@ -1,0 +1,13 @@
+{
+  "repo": "your-org/your-repo",
+  "agent_logins": [],
+  "irc": {
+    "nick": "dispatcher",
+    "project_channel": "#your-project",
+    "server": "127.0.0.1",
+    "port": 6667,
+    "interval_seconds": 60
+  },
+  "watched_prs": [],
+  "watched_issues": []
+}
