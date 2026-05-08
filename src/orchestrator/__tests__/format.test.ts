@@ -1,58 +1,26 @@
 import { describe, it, expect } from 'bun:test'
-import { formatEvent, formatCommentHeader, eventChannels, initialIrcChannels } from '../format.js'
+import { formatEvent, formatCommentHeader, eventChannels } from '../format.js'
 import type { OrchestratorEvent } from '../diff.js'
-import { SCHEMA_VERSION, type OrchestratorState } from '../config.js'
 
 describe('eventChannels', () => {
   it('routes PR with no linked issues to its own channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25 }, '#proj')).toEqual(['#issue-25'])
+    expect(eventChannels({ kind: 'pr_merged', pr: 25 })).toEqual(['#issue-25'])
   })
 
   it('routes PR with linked issues to linked channels', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] }, '#proj')).toEqual(['#issue-14', '#issue-7'])
+    expect(eventChannels({ kind: 'pr_merged', pr: 25, linked_issues: [14, 7] })).toEqual(['#issue-14', '#issue-7'])
   })
 
   it('routes issue events to issue channel', () => {
-    expect(eventChannels({ kind: 'issue_comment', issue: 14 }, '#proj')).toEqual(['#issue-14'])
+    expect(eventChannels({ kind: 'issue_comment', issue: 14 })).toEqual(['#issue-14'])
   })
 
-  it('falls back to default channel for unrelated events', () => {
-    expect(eventChannels({ kind: 'dispatcher_error' }, '#proj')).toEqual(['#proj'])
+  it('returns empty for orphan events (no entity)', () => {
+    expect(eventChannels({ kind: 'dispatcher_error' })).toEqual([])
   })
 
   it('routes PR with single linked issue to that issue channel', () => {
-    expect(eventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] }, '#proj')).toEqual(['#issue-3'])
-  })
-})
-
-describe('initialIrcChannels', () => {
-  const fakeState: OrchestratorState = {
-    schema_version: SCHEMA_VERSION,
-    generated_at: '2026-01-01T00:00:00Z',
-    prs: {
-      'MyOrg/repo#25': {
-        repo: 'MyOrg/repo', number: 25, title: null, url: null, head_ref: null, head_oid: null,
-        is_draft: false, merged: false, state: null, labels: [], ci_state: null,
-        linked_issues: [14, 7], seen_review_comment_ids: [], seen_conversation_comment_ids: [], seen_review_ids: [],
-      },
-    },
-    issues: {},
-  }
-
-  it('picks up linked issues from state', () => {
-    expect(initialIrcChannels(
-      { repo: 'MyOrg/repo', watched_prs: [25], watched_issues: [] },
-      '#proj',
-      fakeState
-    )).toEqual(['#issue-14', '#issue-25', '#issue-7', '#proj'].sort())
-  })
-
-  it('uses only config channels when state is null', () => {
-    expect(initialIrcChannels(
-      { repo: 'MyOrg/repo', watched_prs: [25], watched_issues: [14] },
-      '#proj',
-      null
-    )).toEqual(['#issue-14', '#issue-25', '#proj'].sort())
+    expect(eventChannels({ kind: 'pr_merged', pr: 99, linked_issues: [3] })).toEqual(['#issue-3'])
   })
 })
 

@@ -1,5 +1,3 @@
-import type { OrchestratorConfig, OrchestratorState } from './config.js'
-import { coerceRepoEntry } from './config.js'
 import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent, StateChangeEvent, SeedEvent } from './diff.js'
 
 function eventTag(event: OrchestratorEvent): string {
@@ -109,7 +107,10 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-export function eventChannels(event: OrchestratorEvent, defaultChannel: string): string[] {
+// Auto-detected channels for an event, based on its entity. Returns [] for
+// orphan events (no pr/issue) — callers compose with entry-declared channels
+// and a default-channel fallback (see BasePlugin.resolveChannels).
+export function eventChannels(event: OrchestratorEvent): string[] {
   const ev = event as { pr?: number; issue?: number; linked_issues?: number[] }
   if (ev.pr != null) {
     const linked = ev.linked_issues ?? []
@@ -117,30 +118,5 @@ export function eventChannels(event: OrchestratorEvent, defaultChannel: string):
     return [`#issue-${ev.pr}`]
   }
   if (ev.issue != null) return [`#issue-${ev.issue}`]
-  return [defaultChannel]
-}
-
-export function initialIrcChannels(
-  config: OrchestratorConfig,
-  projectChannel: string,
-  state: OrchestratorState | null
-): string[] {
-  const chans = new Set<string>([projectChannel])
-  const defaultRepo = config.repo
-  for (const entry of config.watched_prs ?? []) {
-    const [, n] = coerceRepoEntry(entry, defaultRepo)
-    chans.add(`#issue-${n}`)
-  }
-  for (const entry of config.watched_issues ?? []) {
-    const [, n] = coerceRepoEntry(entry, defaultRepo)
-    chans.add(`#issue-${n}`)
-  }
-  if (state) {
-    for (const snap of Object.values(state.prs)) {
-      for (const linkedN of snap.linked_issues ?? []) {
-        chans.add(`#issue-${linkedN}`)
-      }
-    }
-  }
-  return [...chans].sort()
+  return []
 }

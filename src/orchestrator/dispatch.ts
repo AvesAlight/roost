@@ -1,8 +1,8 @@
 import type { RoostIrcClient } from '../irc-client.js'
-import type { OrchestratorEvent } from './diff.js'
 import { shouldPush } from './diff.js'
-import { formatEvent, formatCommentHeader, eventChannels } from './format.js'
+import { formatEvent, formatCommentHeader } from './format.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
+import type { TaggedEvent } from './plugin.js'
 
 const MULTILINE_COMMENT_KINDS = new Set([
   'pr_review_comment',
@@ -42,18 +42,16 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
-// Note: say() is a synchronous socket write with no delivery ack. A mid-tick
-// disconnect will drop in-flight events silently; autoReconnect handles the
-// connection but the current tick's events are lost (same risk as Python).
-export async function dispatchEventsIrc(
-  events: OrchestratorEvent[],
-  client: RoostIrcClient,
-  defaultChannel: string
+// Plugin-agnostic dispatch. Channels are pre-resolved by the plugin; we just
+// format and write. say() is a synchronous socket write with no delivery ack —
+// a mid-tick disconnect drops in-flight events silently.
+export async function dispatchTaggedEvents(
+  taggedEvents: TaggedEvent[],
+  client: RoostIrcClient
 ): Promise<void> {
   const failures: string[] = []
-  for (const ev of events) {
+  for (const { event: ev, channels } of taggedEvents) {
     if (!shouldPush(ev)) continue
-    const targets = eventChannels(ev, defaultChannel)
     const kind = ev.kind
     const isComment = MULTILINE_COMMENT_KINDS.has(kind)
     let text = ''
@@ -68,9 +66,8 @@ export async function dispatchEventsIrc(
     } else {
       text = formatEvent(ev)
     }
-    // De-dup targets, preserve order
     const seen = new Set<string>()
-    for (const target of targets) {
+    for (const target of channels) {
       if (seen.has(target)) continue
       seen.add(target)
       try {

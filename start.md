@@ -15,13 +15,14 @@ Spawn the watcher: `roost spawn watcher --model haiku --channels '#leads-roost-d
 The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
 
 - `watch <N>` — add N to `watched_issues` (idempotent)
+- `watch <N> #foo #bar` — add N and attach extra channels (append + dedupe on existing entry)
 - `unwatch <N>` — remove N from `watched_issues`
-- `watch pr <N>` — add N to `watched_prs` (idempotent)
+- `watch pr <N>` / `watch pr <N> #foo #bar` — same, for PRs
 - `unwatch pr <N>` — remove N from `watched_prs`
-- `watch list` — reply with current contents of both lists
+- `watch list` — reply with current contents of both lists, including channel attachments
 - `help` — short usage reminder
 
-Each watched item routes to `#issue-{number}` automatically. The project channel is a fallback for errors and project-level events. For PRs the issue is determined by the PR's linked_issues.
+Each watched item routes to `#issue-{number}` automatically; entry-attached channels are unioned in. The project channel is a fallback for errors and project-level events. For PRs the issue is determined by the PR's linked_issues.
 
 ## Working In Roost
 
