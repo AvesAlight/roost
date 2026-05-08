@@ -63,12 +63,12 @@ claude flag the wrapper doesn't otherwise know about.
 
 `--perm-irc` runs a permbot routing module inside the worker's MCP
 process. It opens a second IRC connection on the stable nick
-`permbot-{worker}` and serializes the worker's PreToolUse permission
+`permbot-{worker}` and serializes the worker's PermissionRequest
 prompts as DMs to `--perm-target` (required). The operator replies
 `y` / `n` / `yes` / `no` / `allow` / `deny` (case-insensitive); anything
-else or a 30s timeout falls through to the regular terminal prompt as
-a safety net. Permbot lifecycle is the MCP's lifecycle — `roost
-shutdown` reaps it along with the worker.
+else falls through to the regular terminal prompt as a safety net.
+Permbot lifecycle is the MCP's lifecycle — `roost shutdown` reaps it
+along with the worker.
 
 Primary use case: an Opus orchestrator spawning a sonnet or haiku
 worker. Non-Opus workers default to `acceptEdits` (edits auto-approved;

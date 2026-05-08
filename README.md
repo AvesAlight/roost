@@ -44,9 +44,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ```
 
 This puts `roost` and `irc-permission-prompt` on your PATH and
-auto-loads the `roost-irc` MCP for every session. The permbot
-routing daemon (used by `--perm-irc`) runs in-process inside the
-MCP — no separate launcher.
+auto-loads the `roost-irc` MCP for every session.
 
 After installing, pull dependencies:
 
@@ -141,7 +139,7 @@ irssi -c 127.0.0.1 -n myname
 
 `--perm-irc` runs a permbot routing module inside the worker's MCP
 process. The module holds a second IRC connection on a stable nick
-`permbot-{worker}` and serializes the worker's PreToolUse permission prompts as DMs to
+`permbot-{worker}` and serializes the worker's PermissionRequest prompts as DMs to
 `--perm-target` (required). The operator replies `y` / `n` / `yes` /
 `no` / `allow` / `deny`; anything else or a 30s timeout falls through
 to the terminal prompt.
