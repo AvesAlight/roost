@@ -2,6 +2,7 @@
 # roost — manage roost-irc Claude sessions in tmux.
 #
 # Subcommands:
+#   init                    — bootstrap .orchestrator/config.json for a project
 #   spawn <nick> [options]  — bring up a Claude session on the roost
 #   shutdown <nick>         — kill the tmux session for that nick
 #   list                    — show all roost-prefixed tmux sessions
@@ -25,6 +26,7 @@ usage() {
 Usage: roost <command> [args]
 
 Commands:
+  init                     Bootstrap .orchestrator/config.json for a project.
   spawn <nick> [options]   Bring up a Claude session on the roost.
   shutdown <nick>          Kill the tmux session for that nick.
   list                     Show all roost-prefixed tmux sessions.
@@ -35,6 +37,29 @@ Commands:
   send <nick> <message...> Inject text into a nick's tmux pane.
 
 Run 'roost <command> --help' for per-command usage.
+EOF
+}
+
+usage_init() {
+  cat <<EOF
+Usage: roost init [options]
+
+Bootstrap .orchestrator/config.json for a new project. Autodetects project
+name, repo, and GitHub user; each value can be overridden with a flag.
+
+Options:
+  --project NAME         Project name (default: basename of cwd, lowercased).
+  --repo OWNER/REPO      GitHub repo (default: parsed from git origin remote).
+  --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
+                         Default: current gh user.
+  --force                Overwrite existing .orchestrator/config.json.
+  --dry-run              Print what would be written; do not write files.
+
+Examples:
+  roost init
+  roost init --project myapp --repo Owner/myapp
+  roost init --agent-login alice --agent-login bob
+  roost init --force
 EOF
 }
 
@@ -173,6 +198,111 @@ Print the roost plugin root directory.
 Example:
   roost root
 EOF
+}
+
+cmd_init() {
+  local project=""
+  local repo=""
+  local agent_logins=()
+  local force=0
+  local dry_run=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project)     project="$2";              shift 2 ;;
+      --repo)        repo="$2";                 shift 2 ;;
+      --agent-login) agent_logins+=("$2");      shift 2 ;;
+      --force)       force=1;                   shift ;;
+      --dry-run)     dry_run=1;                 shift ;;
+      -h|--help)     usage_init;                exit 0 ;;
+      *) echo "error: unknown init option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "error: not inside a git repo — run \`git init\` first or \`cd\` to a git repo" >&2
+    exit 1
+  fi
+
+  if ! gh auth status &>/dev/null; then
+    echo "error: gh is not authenticated — run \`gh auth login\` first" >&2
+    exit 1
+  fi
+
+  if [ -z "$project" ]; then
+    project="$(basename "$PWD" | tr '[:upper:]' '[:lower:]')"
+  fi
+
+  local project_re='^[a-z0-9][a-z0-9-]*$'
+  if [[ ! "$project" =~ $project_re ]]; then
+    echo "error: invalid project name \"${project}\": must match ^[a-z0-9][a-z0-9-]*$ (lowercase, digits, dashes; must start with a letter or digit)" >&2
+    exit 1
+  fi
+
+  if [ -z "$repo" ]; then
+    local url
+    if ! url="$(git remote get-url origin 2>/dev/null)"; then
+      echo "error: no \`origin\` remote and no \`--repo\` flag — pass \`--repo Owner/repo\` or run \`git remote add origin ...\`" >&2
+      exit 1
+    fi
+    url="${url%.git}"
+    repo="$(printf '%s' "$url" | sed -E 's|.*[:/]([^/:]+/[^/]+)$|\1|')"
+    if [ "$repo" = "$url" ]; then
+      echo "error: could not parse Owner/repo from remote URL: ${url} — pass \`--repo Owner/repo\` explicitly" >&2
+      exit 1
+    fi
+  fi
+
+  if ! gh repo view "$repo" &>/dev/null; then
+    echo "error: repo \`${repo}\` not reachable via gh — check the repo name + your gh auth" >&2
+    exit 1
+  fi
+
+  if [ "${#agent_logins[@]}" -eq 0 ]; then
+    local login
+    if ! login="$(gh api user --jq .login 2>/dev/null)"; then
+      echo "error: could not get gh user login — run \`gh auth login\` first" >&2
+      exit 1
+    fi
+    agent_logins=("$login")
+  fi
+
+  local logins_json='['
+  local sep=''
+  for l in "${agent_logins[@]}"; do
+    logins_json="${logins_json}${sep}\"${l}\""
+    sep=','
+  done
+  logins_json="${logins_json}]"
+
+  local config_path=".orchestrator/config.json"
+  local gitignore_path=".orchestrator/.gitignore"
+
+  if [ -f "$config_path" ] && [ "$force" -eq 0 ]; then
+    echo "error: ${config_path} already exists — pass \`--force\` to overwrite" >&2
+    exit 1
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    echo "--- ${config_path} ---"
+    printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
+      "$project" "$repo" "$logins_json"
+    echo "--- ${gitignore_path} ---"
+    printf 'state.json\nlast-tick.txt\nlast-error.txt\n'
+    exit 0
+  fi
+
+  mkdir -p .orchestrator
+  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
+    "$project" "$repo" "$logins_json" > "$config_path"
+  printf 'state.json\nlast-tick.txt\nlast-error.txt\n' > "$gitignore_path"
+
+  echo "Wrote ${config_path}"
+  echo "Wrote ${gitignore_path}"
+  printf '\nNext step:\n'
+  printf '  roost spawn %s-lead-pm \\\n' "$project"
+  printf "    --channels '#%s-leads' \\\n" "$project"
+  printf "    --prompt '/lead-pm %s <milestone> <your-irc-nick> <your-gh-login>'\n" "$project"
 }
 
 require_tmux() {
@@ -516,6 +646,7 @@ shift
 case "${1:-}" in
   -h|--help)
     case "${cmd}" in
+      init)     usage_init ;;
       spawn)    usage_spawn ;;
       shutdown) usage_shutdown ;;
       list)     usage_list ;;
@@ -530,6 +661,7 @@ case "${1:-}" in
     ;;
 esac
 case "${cmd}" in
+  init)     cmd_init "$@" ;;
   spawn)    cmd_spawn "$@" ;;
   shutdown) cmd_shutdown "$@" ;;
   list)     cmd_list "$@" ;;
