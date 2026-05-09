@@ -355,9 +355,9 @@ cmd_init() {
       fi
     done
     if [ "$wrote_prompts" -eq 1 ]; then
-      printf '\nTip: prompts under %s/ are project-local copies. Edit them\n' "$commands_dir"
-      printf '     to fit your conventions, or delete a file to fall back to the\n'
-      printf "     plugin default. Re-run \`roost init --force-prompts\` to refresh.\n"
+      printf '\nTip: prompts under %s/ are project-local copies of the roost\n' "$commands_dir"
+      printf '     defaults. Edit them to fit your conventions. Re-run\n'
+      printf "     \`roost init --force-prompts\` to refresh from the plugin tree.\n"
     fi
   fi
 
