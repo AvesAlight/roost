@@ -26,7 +26,7 @@ usage() {
 Usage: roost <command> [args]
 
 Commands:
-  init                     Bootstrap .orchestrator/config.json for a project.
+  init                     Bootstrap config, .gitignore, and copy prompts.
   spawn <nick> [options]   Bring up a Claude session on the roost.
   shutdown <nick>          Kill the tmux session for that nick.
   list                     Show all roost-prefixed tmux sessions.
@@ -44,8 +44,9 @@ usage_init() {
   cat <<EOF
 Usage: roost init [options]
 
-Bootstrap .orchestrator/config.json for a new project. Autodetects project
-name, repo, and GitHub user; each value can be overridden with a flag.
+Bootstrap .orchestrator/config.json + .gitignore for a new project and copy
+roost prompt templates to .claude/commands/ for local customization.
+Autodetects project name, repo, and GitHub user; each value can be overridden.
 
 Options:
   --project NAME         Project name (default: basename of cwd, lowercased).
@@ -304,17 +305,25 @@ cmd_init() {
   local gitignore_path=".orchestrator/.gitignore"
   local prompts_dir="${ROOST_DIR}/prompts"
   local commands_dir=".claude/commands"
-  local prompt_names=(lead-pm worker reviewer watcher)
+
+  # Discover prompt files from the plugin tree at runtime so new prompts
+  # added to prompts/ flow through automatically.
+  local prompt_files=()
+  local _pf
+  for _pf in "${prompts_dir}"/*.md; do
+    [ -f "$_pf" ] && prompt_files+=("$_pf")
+  done
 
   if [ "$dry_run" -eq 1 ]; then
     echo "--- ${config_path} ---"
     _init_config_json "$project" "$repo" "$logins_json"
     echo "--- ${gitignore_path} ---"
     _init_gitignore
-    if [ "$no_prompts" -eq 0 ]; then
-      for name in "${prompt_names[@]}"; do
-        local src="${prompts_dir}/${name}.md"
-        [ -f "$src" ] && echo "--- ${commands_dir}/${name}.md (copied verbatim from plugin prompts/${name}.md) ---"
+    if [ "$no_prompts" -eq 0 ] && [ "${#prompt_files[@]}" -gt 0 ]; then
+      for _pf in "${prompt_files[@]}"; do
+        local _name
+        _name="$(basename "$_pf" .md)"
+        echo "--- ${commands_dir}/${_name}.md (copied verbatim from plugin prompts/${_name}.md) ---"
       done
     fi
     exit 0
@@ -334,17 +343,14 @@ cmd_init() {
   fi
 
   local wrote_prompts=0
-  if [ "$no_prompts" -eq 0 ]; then
+  if [ "$no_prompts" -eq 0 ] && [ "${#prompt_files[@]}" -gt 0 ]; then
     mkdir -p "$commands_dir"
-    for name in "${prompt_names[@]}"; do
-      local src="${prompts_dir}/${name}.md"
-      local dst="${commands_dir}/${name}.md"
-      if [ ! -f "$src" ]; then
-        continue
-      fi
-      if [ ! -f "$dst" ] || [ "$force_prompts" -eq 1 ]; then
-        cp "$src" "$dst"
-        echo "Wrote ${dst}"
+    for _pf in "${prompt_files[@]}"; do
+      local _dst
+      _dst="${commands_dir}/$(basename "$_pf" .md).md"
+      if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ]; then
+        cp "$_pf" "$_dst"
+        echo "Wrote ${_dst}"
         wrote_prompts=1
       fi
     done
