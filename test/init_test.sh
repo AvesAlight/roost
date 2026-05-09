@@ -275,6 +275,23 @@ fi
 cd - >/dev/null
 teardown
 
+# --- prompts: --force overwrites (implies --force-prompts) ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .claude/commands .orchestrator
+echo '{"old": true}' > .orchestrator/config.json
+echo 'custom content' > .claude/commands/worker.md
+if roost_init --force >/dev/null 2>&1 \
+    && ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
+    && grep -q 'description' "${TDIR}/.claude/commands/worker.md"; then
+  ok "prompts: --force overwrites prompts"
+else
+  fail "prompts: --force overwrites prompts"
+fi
+cd - >/dev/null
+teardown
+
 # --- prompts: --force-prompts overwrites ---
 
 setup "https://github.com/TestOwner/myproject.git"

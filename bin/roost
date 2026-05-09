@@ -53,10 +53,10 @@ Options:
   --repo OWNER/REPO      GitHub repo (default: parsed from git origin remote).
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
-  --force                Overwrite existing .orchestrator/config.json and
-                         .orchestrator/.gitignore.
-  --force-prompts        Overwrite existing .claude/commands/ prompt copies.
-                         Independent of --force; does not touch config.json.
+  --force                Overwrite everything: config.json, .gitignore, and
+                         .claude/commands/ prompt copies.
+  --force-prompts        Overwrite only .claude/commands/ prompt copies.
+                         Does not touch config.json or .gitignore.
   --no-prompts           Skip copying prompts to .claude/commands/.
   --dry-run              Print what would be written; do not write files.
 
@@ -348,7 +348,7 @@ cmd_init() {
     for _pf in "${prompt_files[@]}"; do
       local _dst
       _dst="${commands_dir}/$(basename "$_pf" .md).md"
-      if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ]; then
+      if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ] || [ "$force" -eq 1 ]; then
         cp "$_pf" "$_dst"
         echo "Wrote ${_dst}"
         wrote_prompts=1
