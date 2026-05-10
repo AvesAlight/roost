@@ -1,21 +1,27 @@
-#!/usr/bin/env python3
-import os
-import signal
-import sys
-
-data_dir = os.environ.get("ROOST_DATA_DIR", "")
-if not data_dir:
-    sys.stderr.write("roost-post-compact-hook: ROOST_DATA_DIR not set, skipping\n")
-    sys.exit(0)
-
-pid_path = os.path.join(data_dir, "mcp.pid")
-if not os.path.exists(pid_path):
-    sys.stderr.write(f"roost-post-compact-hook: {pid_path} not found, skipping\n")
-    sys.exit(0)
-
-try:
-    pid = int(open(pid_path).read().strip())
-    os.kill(pid, signal.SIGUSR2)
-    sys.stderr.write(f"roost-post-compact-hook: sent SIGUSR2 to MCP pid {pid}\n")
-except Exception as e:
-    sys.stderr.write(f"roost-post-compact-hook: failed: {e}\n")
+#!/bin/sh
+# PostCompact hook — signal MCP to replay missed messages (SIGUSR2).
+#
+# Wired by bin/roost at spawn time via roost-settings.json. Never exits
+# non-zero — a hook failure must not block compaction.
+if [ -z "$ROOST_DATA_DIR" ]; then
+  echo "roost-post-compact-hook: ROOST_DATA_DIR not set, skipping" >&2
+  exit 0
+fi
+pid_file="$ROOST_DATA_DIR/mcp.pid"
+if [ ! -f "$pid_file" ]; then
+  echo "roost-post-compact-hook: $pid_file not found, skipping" >&2
+  exit 0
+fi
+pid=$(cat "$pid_file")
+case "$pid" in
+  ''|*[!0-9]*)
+    echo "roost-post-compact-hook: malformed pid in $pid_file: '$pid', skipping" >&2
+    exit 0
+    ;;
+esac
+if kill -USR2 "$pid" 2>/dev/null; then
+  echo "roost-post-compact-hook: sent SIGUSR2 to MCP pid $pid" >&2
+else
+  echo "roost-post-compact-hook: kill -USR2 $pid failed (no such process?)" >&2
+fi
+exit 0
