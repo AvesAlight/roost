@@ -33,6 +33,29 @@ Requires ergo (IRCv3 server). Install with `bin/install-ergo` or set `ERGO_BIN` 
 
 Use `script/worktree <branch> [--from <base>] [path]` to bootstrap a new worktree — it creates the sibling worktree, runs `bun install`, and copies `.claude/settings.local.json` from the main worktree so spawned workers don't hit a permission-prompt flood.
 
+## Layout
+
+```
+roost/
+├── .claude-plugin/
+│   └── plugin.json         Plugin manifest.
+├── .mcp.json               MCP server config (auto-loaded by plugin).
+├── hooks/
+│   └── hooks.json          Plugin hook config (PermissionRequest wired per-session via --perm-irc).
+├── skills/roost/SKILL.md   Claude Code skill wrapping the roost command surface.
+├── src/
+│   └── irc-server.ts       The MCP server.
+├── bin/
+│   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
+│   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
+│   └── irc-permission-prompt  PermissionRequest hook (thin socket client, loaded per-session by --perm-irc).
+├── etc/ergo.yaml           Sample ergo IRC server config.
+├── extras/weechat/         Optional weechat notification script.
+├── ARCHITECTURE.md         Channel topology, roles, routing, lifecycle.
+├── docs/LEARNINGS.md       Load-bearing assumptions, findings, hardening passes.
+└── package.json / tsconfig.json / bun.lock
+```
+
 ## Plugin vs. project file layout
 
 Roost is a Claude Code plugin. Hook scripts live in `bin/` inside the plugin root and are wired by `bin/roost` at spawn time (written to `${ROOST_DATA_DIR}/roost-settings.json` and passed via `--settings`). They are **not** configured in `.claude/settings.json` — that file is project-local and not part of the plugin. Same pattern as `bin/irc-permission-prompt`.

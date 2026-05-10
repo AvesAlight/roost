@@ -1,61 +1,71 @@
+<p align="center">
+  <img src="assets/readme-header.png" alt="Roost — AVES/ALIGHT" width="900">
+</p>
+
 # roost
 
-A channel MCP that rides IRC. Independent Claude Code sessions join named
-channels and exchange messages — replacing the Agent-tool team mechanism's
-SendMessage with a topology a human operator can join from `irssi`.
+Roost lets you run your own team of Claude Code agents on a real project. A
+lead-pm agent picks up issues from a GitHub milestone and spawns workers and
+reviewers to drive each one through PR; the team coordinates over a local IRC
+server you can join from any client. You watch the work happen and step in
+when something needs human judgment.
 
-Status: functional. Local ergo daemon (IRCv3 stack — multiline,
-chathistory, message-tags, server-time, account-tag), six MCP tools,
-inbound channel events with reassembly + JOIN/LEAVE pushes. See
-`ARCHITECTURE.md` for how the team uses it; `docs/LEARNINGS.md` for
-the empirical work that produced it (load-bearing assumptions, test
-log, finding catalog).
+Agents talk to each other and to you over the same channels — not a pipeline,
+a network.
 
-## What you get
+## Security model
 
-When a Claude Code session loads `roost-irc` as an MCP and connects:
+Roost spawns agents that can read, write, and execute in arbitrary working
+directories with arbitrary parameters. Permission gating via `--perm-irc`
+relies on IRC nick identity — local ergo has no authentication, so any process
+with TCP access to `localhost:6667` can claim any unused nick and approve tool
+calls by sending `y` to the permbot.
 
-- **Six MCP tools** for outbound IRC: `channel_message`, `direct_message`,
-  `channel_join`, `channel_leave`, `channel_who`, `channel_history`.
-- **Inbound IRC** arrives as `<channel source="roost-irc" ...>` events
-  in the host session's context — same format channel notifications
-  always take. Messages, JOIN/LEAVE/KICK, and NICK changes all push.
-  The MCP is a plain IRCv3 client: messages from other agents, humans,
-  and bots all arrive identically as normal IRC channel traffic. No
-  special routing layer exists between any sender and the MCP.
-- **One nick per session** (configured at spawn). Ergo refuses
-  collisions. A human `irssi` user against the same server sees
-  everything in real time.
+This is intentional for trusted single-user local environments. Don't run ergo
+on a shared host or expose port 6667 beyond localhost.
+
+## Running a milestone
+
+Roost is built for parallel milestone work. Spawn one agent — lead-pm —
+and hand it a GitHub milestone. It creates a channel per issue, spawns
+workers and reviewers into them, and coordinates with the dispatcher to
+route CI and PR events back in. You watch and intervene from weechat on
+the same box. Workers post plans before coding; reviewers post findings
+to GitHub; lead-pm drives sequencing and flips PRs ready.
+
+Bootstrap your project, then kick off lead-pm:
+
+```bash
+cd ~/Dev/myproject
+roost init                          # writes .orchestrator/config.json + copies role prompts
+roost spawn myproject-lead-pm \
+  --channels '#myproject-leads' \
+  --prompt '/lead-pm myproject <milestone> <your-nick> <your-gh-login>'
+```
+
+See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 ## Prerequisites
 
 - macOS or Linux
-- [bun](https://bun.sh) ≥ 1.0
-- [tmux](https://github.com/tmux/tmux) (`brew install tmux` / `apt install tmux` / `dnf install tmux` / `pacman -S tmux`)
-- An IRCv3 server on `127.0.0.1:6667`. [ergo](https://ergo.chat) is
-  recommended — download a release from
-  https://github.com/ergochat/ergo/releases and use `etc/ergo.yaml`
-  as your starting config.
+- [bun](https://bun.sh) ≥ 1.0 (installed by the brew formula)
+- [tmux](https://github.com/tmux/tmux) (installed by the brew formula)
+- [ergo](https://ergo.chat) (installed by the brew formula)
+- An IRC client ([weechat](https://weechat.org) recommended — `brew install weechat`)
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
 
-### 1. Install the plugin
+### 1. Install roost
 
 ```
-/plugin marketplace add https://github.com/AvesAlight/roost
-/plugin install roost@roost
+brew tap oven-sh/bun
+brew install avesalight/tap/roost
 ```
 
-This puts `roost` and `irc-permission-prompt` on your PATH and
-auto-loads the `roost-irc` MCP for every session.
-
-After installing, pull dependencies:
-
-```bash
-cd "$(roost root)"
-bun install
-```
+Puts `roost` on your PATH. The `roost-irc` MCP loads automatically when you
+start a session via `roost spawn` — running `claude` directly without
+`roost spawn` won't load it.
 
 ### 2. Start your IRC server
 
@@ -105,44 +115,31 @@ after forwards to claude verbatim). Default channel is `#roost`;
 default model is `opus` (Opus 4.7 — required for `--permission-mode
 auto`, which the wrapper always passes).
 
-To do it by hand without the wrapper:
-
-```bash
-ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
-  claude --model opus \
-    --permission-mode auto \
-    --dangerously-load-development-channels server:plugin:roost:roost-irc
-```
-
-Without the plugin, pass `--mcp-config` and use `server:roost-irc`:
-
-```bash
-ROOST_IRC_NICK=myagent ROOST_IRC_CHANNELS='#roost' \
-  claude --model opus \
-    --permission-mode auto \
-    --mcp-config "$(roost root)/.mcp.json" \
-    --dangerously-load-development-channels server:roost-irc
-```
-
-On first launch you'll get a `1. I am using this for local development
-/ 2. Exit` prompt — hit Enter to accept.
-
-### Running a planned project
-
-For an introduction to driving a GitHub milestone through Roost
-with parallel workers, see
-[`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md).
-
 ### Observe as a human (no Claude needed)
 
-The spike ergo config has no auth — any IRC client against
-`127.0.0.1:6667` works:
+The ergo config has no auth — any IRC client against `127.0.0.1:6667` works:
 
 ```bash
-brew install irssi
-irssi -c 127.0.0.1 -n myname
-# inside irssi:
+brew install weechat
+weechat
+# inside weechat:
+/server add roost 127.0.0.1/6667 -notls
+/connect roost -nick myname
 /join #roost
+```
+
+On macOS, `extras/weechat/notification_center.py` adds native notification
+center alerts for mentions and DMs. Get the path from your shell and load it
+in weechat:
+
+```bash
+echo "$(roost root)/extras/weechat/notification_center.py"
+# → e.g. /opt/homebrew/Cellar/roost/0.1.1/libexec/extras/weechat/notification_center.py
+```
+
+```
+# inside weechat — paste the path printed above:
+/script load /opt/homebrew/Cellar/roost/0.1.1/libexec/extras/weechat/notification_center.py
 ```
 
 ## IRC permission oversight (--perm-irc)
@@ -170,44 +167,26 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
   --perm-irc --perm-target mynick
 ```
 
-## Project dispatcher (example poller)
+## Project dispatcher
 
-`bin/orchestrator_poll` is a reference dispatcher that polls GitHub for
-changes to watched issues / PRs and posts events into `#<project>-issue-N`
-channels, waking the agents listening there. Run it from a Roost clone (or
-fork) and point its config at your own repo.
-
-Quickstart:
+`roost init` bootstraps your project's dispatcher config and copies the
+role prompts into `.claude/commands/`. Then spawn the watcher — a haiku
+agent that supervises the poll loop and routes GitHub events (CI
+transitions, PR comments, issue updates) into the right
+`#<project>-issue-N` channels:
 
 ```bash
-cp .orchestrator/config.example.json .orchestrator/config.json
-# edit project, repo, irc.nick, irc.project_channel, watched_prs, watched_issues
-bin/orchestrator_poll --seed     # seed state, no events emitted
-bin/orchestrator_poll --daemon   # production loop
+cd ~/Dev/myproject
+roost init                              # first-time: writes .orchestrator/config.json + prompts
+roost spawn myproject-watcher -m haiku \
+  --channels '#myproject-leads' \
+  --prompt '/watcher'
 ```
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
 `#<project>-issue-N` channels, etc.) so multiple projects can share one ergo.
-See [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md) for the convention.
-
-Run the daemon under whatever supervisor your project already uses (tmux,
-systemd, launchd). Full field reference, event list, and plugin extension
-points are in [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md).
-
-## MCP tools
-
-| Tool | Purpose |
-|------|---------|
-| `channel_message(channel, text)` | Post to a channel. Channel must already be joined. |
-| `direct_message(nick, text)` | Private message to another nick. |
-| `channel_join(channel)` | Join a channel. Returns when JOIN is acknowledged (5s timeout). |
-| `channel_leave(channel)` | PART a channel. |
-| `channel_who(channel)` | List nicks present. |
-| `channel_history(channel, limit?)` | Recent messages since MCP startup. Defaults to 20, capped at `ROOST_IRC_HISTORY` (default 50). |
-
-Long messages use IRCv3 `draft/multiline` batches when the server
-advertises the cap (ergo does). Against servers that don't, falls back
-to ≤300-byte chunks reassembled by receiving roost-irc MCPs.
+See [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md) for config schema, event
+reference, and plugin extension points.
 
 ## Channel events received
 
@@ -243,29 +222,6 @@ Self-events (your own JOIN/LEAVE/NICK) are suppressed.
 | `ROOST_IRC_PORT` | `6667` | IRC server port. |
 | `ROOST_IRC_REALNAME` | same as nick | IRC realname (gecos). |
 | `ROOST_IRC_HISTORY` | `50` | Per-channel ring-buffer size for `channel_history`. |
-
-## Layout
-
-```
-roost/
-├── .claude-plugin/
-│   └── plugin.json         Plugin manifest.
-├── .mcp.json               MCP server config (auto-loaded by plugin).
-├── hooks/
-│   └── hooks.json          Plugin hook config (PermissionRequest wired per-session via --perm-irc).
-├── skills/roost/SKILL.md   Claude Code skill wrapping the roost command surface.
-├── src/
-│   └── irc-server.ts       The MCP server.
-├── bin/
-│   ├── roost               Wrapper: spawn / shutdown / list / attach / tail / status / root.
-│   ├── roost-irc-server    PATH-resolvable launcher for the MCP server.
-│   └── irc-permission-prompt  PermissionRequest hook (thin socket client, loaded per-session by --perm-irc).
-├── etc/ergo.yaml           Sample ergo IRC server config.
-├── extras/weechat/         Optional weechat notification script.
-├── ARCHITECTURE.md         Channel topology, roles, routing, lifecycle.
-├── docs/LEARNINGS.md       Load-bearing assumptions, findings, hardening passes.
-└── package.json / tsconfig.json / bun.lock
-```
 
 ## Testing
 
