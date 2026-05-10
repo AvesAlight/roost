@@ -73,7 +73,7 @@ To work on an issue:
   - Does it believably resolve the issue?
   - Does it set the project up for downstream success, or is it a pending footgun?
   - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
-6. Once the agent posts a draft PR, ask the watcher to watch it with `watch pr`. Then spawn a reviewer agent named `$0-reviewer-<PR>` with `--prompt '/reviewer $0 <PR> <ISSUE> <branch> <pr-url> $2'`. Even if the work was done with Sonnet, if the PR exceeds approximately 250 lines consider using Opus for review.
+6. Once the agent posts a draft PR, ask the watcher to watch it with `watch pr`. Then spawn a reviewer agent named `$0-reviewer-<PR>` with `--prompt '/reviewer $0 <PR> <ISSUE> <branch> <pr-url> $2'`. Default to Opus for review regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) that sonnet misses, and review cost is small relative to the cost of a stale comment shipping. Drop to Sonnet only for trivially-sized PRs (e.g. doc/prompt tweaks well under 100 lines).
 7. Terminate the reviewer once it is done
 8. Once the worker addresses reviewer findings, **you** (the lead-pm) mark the PR ready and add `$3` as reviewer:
    - `gh pr ready N --repo OWNER/REPO`
