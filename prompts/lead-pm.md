@@ -102,7 +102,7 @@ Before merging a PR or removing a worktree, confirm: the PR is approved by the h
 
 Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself, but **treat it the same as a worker-authored PR for engagement**:
 
-- Branch off main, commit, push, open the PR (don't push directly to main, even for one-line changes)
+- Bootstrap a sibling worktree with `script/worktree <branch>` (yes, for one-line changes too — keeps the main worktree free for other in-flight work). Commit, push, open the PR from the worktree
 - Add `$3` as reviewer immediately when you open the PR: `gh pr edit <N> --repo OWNER/REPO --add-reviewer $3`. Self-authored PRs aren't draft + ready toggled, so the request-review step doesn't happen automatically — you have to do it explicitly
 - DM the watcher to watch it: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
 - Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
