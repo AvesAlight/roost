@@ -31,6 +31,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
 import { startPermbot, type PermbotConfig } from './permbot.js'
+import { permbotNickFor } from './permbot-socket.js'
 import { claimOwnership } from './owner-gate.js'
 
 const SOURCE_NAME = 'roost-irc'
@@ -468,12 +469,16 @@ async function runOwnerMcp(args: {
   // talks to us over the unix socket as before.
   const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
   const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
+  const ASK_TARGET = process.env['ROOST_ASK_TARGET'] ?? ''
   let permbotStop: (() => void) | null = null
-  if (PERM_SOCK && PERM_TARGET) {
-    const permbotNick = `permbot-${NICK}`
+  const ASK_CHANNEL = process.env['ROOST_ASK_CHANNEL'] ?? ''
+  if (PERM_SOCK && (PERM_TARGET || ASK_TARGET)) {
+    const permbotNick = permbotNickFor(NICK)
+    // Pre-join the ask channel so the permbot is guaranteed to be joined before
+    // any AskUserQuestion request arrives, avoiding a JOIN/PRIVMSG race.
     const permbotClient = new RoostIrcClientImpl({
       nick: permbotNick,
-      autoJoin: [],
+      autoJoin: ASK_CHANNEL ? [ASK_CHANNEL] : [],
       historySize: 0,
       joinHistoryLines: 0,
       joinHistoryMinutes: 0,
@@ -481,7 +486,6 @@ async function runOwnerMcp(args: {
     const permbotConfig: PermbotConfig = {
       nick: permbotNick,
       sockPath: PERM_SOCK,
-      target: PERM_TARGET,
       worker: NICK,
     }
     const { stop } = startPermbot(permbotConfig, permbotClient)

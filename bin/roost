@@ -99,6 +99,13 @@ Options:
                              mode. Lifecycle = MCP lifecycle.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
+  --ask-irc CHANNEL          Proxy AskUserQuestion calls over IRC. Posts
+                             questions to CHANNEL and waits for a reply from
+                             --ask-target (or --perm-target). Enables permbot
+                             if not already started by --perm-irc.
+  --ask-target NICK          Nick whose replies count for AskUserQuestion.
+                             Defaults to --perm-target when both are set.
+                             Required when --ask-irc is set without --perm-target.
   --permission-mode MODE     Override --permission-mode passed to claude.
                              Default: auto for opus models, acceptEdits for
                              all others.
@@ -412,6 +419,8 @@ cmd_spawn() {
   local cwd="${PWD}"
   local perm_irc=0
   local perm_target=""
+  local ask_irc=""
+  local ask_target=""
   local permission_mode=""
   local extra_args=()
 
@@ -434,6 +443,8 @@ cmd_spawn() {
       --cwd)            cwd="$2"; shift 2 ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
+      --ask-irc)        ask_irc="$2"; shift 2 ;;
+      --ask-target)     ask_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
 
       --)               shift; extra_args=("$@"); break ;;
@@ -475,6 +486,10 @@ cmd_spawn() {
   fi
   if [ "${perm_irc}" -eq 1 ] && [ -z "${perm_target}" ]; then
     echo "error: --perm-irc requires --perm-target NICK" >&2
+    exit 1
+  fi
+  if [ -n "${ask_irc}" ] && [ -z "${perm_target}" ] && [ -z "${ask_target}" ]; then
+    echo "error: --ask-irc requires --ask-target NICK (or --perm-target when also using --perm-irc)" >&2
     exit 1
   fi
   if [ -z "${permission_mode}" ]; then
@@ -522,12 +537,22 @@ cmd_spawn() {
   # cd-derived (no spaces/backslashes).
   local perm_sock=""
   local perm_hook_json=""
-  if [ "${perm_irc}" -eq 1 ]; then
+  local ask_hook_json=""
+  # Question routing is enabled by --ask-irc (channel mode) or --ask-target (DM mode).
+  local ask_routing=0
+  { [ -n "${ask_irc}" ] || [ -n "${ask_target}" ]; } && ask_routing=1
+  # Permbot is needed for --perm-irc or any question routing; all share one socket.
+  if [ "${perm_irc}" -eq 1 ] || [ "${ask_routing}" -eq 1 ]; then
     perm_sock="${ROOST_DATA_DIR}/permbot.sock"
+  fi
+  if [ "${perm_irc}" -eq 1 ]; then
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
+  if [ "${ask_routing}" -eq 1 ]; then
+    ask_hook_json=",\"PreToolUse\":[{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-ask-question\"}]}]"
+  fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-session-start-hook\"}]}]${perm_hook_json}}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-session-start-hook\"}]}]${perm_hook_json}${ask_hook_json}}}" > "${ROOST_SETTINGS}"
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
@@ -536,7 +561,18 @@ cmd_spawn() {
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
-  [ -n "${perm_sock}" ] && tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_TARGET=${perm_target}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
+  if [ -n "${perm_sock}" ]; then
+    tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
+    [ -n "${perm_target}" ] && tmux_env+=(-e "ROOST_PERM_TARGET=${perm_target}")
+  fi
+  if [ "${ask_routing}" -eq 1 ]; then
+    # Channel mode: ROOST_ASK_CHANNEL tells the hook to post to a channel.
+    # DM mode: omit ROOST_ASK_CHANNEL; hook sends no channel → permbot DMs target.
+    [ -n "${ask_irc}" ] && tmux_env+=(-e "ROOST_ASK_CHANNEL=${ask_irc}")
+    # Effective ask-target: explicit --ask-target, else fall back to --perm-target
+    local effective_ask_target="${ask_target:-${perm_target}}"
+    [ -n "${effective_ask_target}" ] && tmux_env+=(-e "ROOST_ASK_TARGET=${effective_ask_target}")
+  fi
 
   # Build the inner zsh command. Bash expands its own ${vars} here, then
   # we append the prompt placeholder as a single-quoted literal so $(...)
