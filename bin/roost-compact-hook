@@ -1,32 +1,23 @@
-#!/usr/bin/env python3
-"""
-PreCompact hook — signals the roost IRC MCP to clear its replay dedupe seen-set.
-
-Fired by Claude Code before context compaction. Sends SIGUSR1 to the MCP
-process so that the next chathistory backfill (after any reconnect) delivers
-messages that were compacted out of the agent's context window.
-
-Wired by bin/roost at spawn time via roost-settings.json; never exits
-non-zero so a hook failure doesn't block compaction.
-"""
-import os
-import signal
-import sys
-
-data_dir = os.environ.get("ROOST_DATA_DIR", "")
-if not data_dir:
-    sys.stderr.write("roost-compact-hook: ROOST_DATA_DIR not set, skipping\n")
-    sys.exit(0)
-
-pid_path = os.path.join(data_dir, "mcp.pid")
-if not os.path.exists(pid_path):
-    sys.stderr.write(f"roost-compact-hook: {pid_path} not found, skipping\n")
-    sys.exit(0)
-
-try:
-    pid = int(open(pid_path).read().strip())
-    os.kill(pid, signal.SIGUSR1)
-    sys.stderr.write(f"roost-compact-hook: sent SIGUSR1 to MCP pid {pid}\n")
-except Exception as e:
-    sys.stderr.write(f"roost-compact-hook: failed: {e}\n")
-    sys.exit(0)
+#!/bin/sh
+# PreCompact hook — signal MCP to clear replay dedupe (SIGUSR1) so the next
+# chathistory backfill after reconnect delivers messages compacted out of
+# the agent's context window.
+#
+# Wired by bin/roost at spawn time via roost-settings.json. Never exits
+# non-zero — a hook failure must not block compaction.
+if [ -z "$ROOST_DATA_DIR" ]; then
+  echo "roost-compact-hook: ROOST_DATA_DIR not set, skipping" >&2
+  exit 0
+fi
+pid_file="$ROOST_DATA_DIR/mcp.pid"
+if [ ! -f "$pid_file" ]; then
+  echo "roost-compact-hook: $pid_file not found, skipping" >&2
+  exit 0
+fi
+pid=$(cat "$pid_file")
+if kill -USR1 "$pid" 2>/dev/null; then
+  echo "roost-compact-hook: sent SIGUSR1 to MCP pid $pid" >&2
+else
+  echo "roost-compact-hook: kill -USR1 $pid failed" >&2
+fi
+exit 0
