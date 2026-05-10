@@ -10,7 +10,7 @@ export interface PeerMessage {
   text: string
 }
 
-// IMPORTANT: waitForMessage / waitForPart register the waiter when called.
+// IMPORTANT: waitForMessage / waitForPart / waitForKick register the waiter when called.
 // irc-framework's EventEmitter is synchronous and does NOT replay past events,
 // so an event that fires before the waiter is registered is lost forever.
 // Always start the wait BEFORE the action that triggers the event:
@@ -94,6 +94,22 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
       client.on('part', onPart)
     }))
 
+  const waitForKick = (channel: string, kicked: string, timeoutMs = 5000): Promise<void> =>
+    suppressLateRejection(new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.removeListener('kick', onKick)
+        reject(new Error(`waitForKick ${kicked} in ${channel} timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      const onKick = (event: { kicked: string; channel: string }) => {
+        if (event.kicked === kicked && event.channel === channel) {
+          client.removeListener('kick', onKick)
+          clearTimeout(timer)
+          resolve()
+        }
+      }
+      client.on('kick', onKick)
+    }))
+
   return {
     nick: peerNick,
 
@@ -148,22 +164,7 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
     waitForPart,
 
-    waitForKick(channel: string, kicked: string, timeoutMs = 5000): Promise<void> {
-      return suppressLateRejection(new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          client.removeListener('kick', onKick)
-          reject(new Error(`waitForKick ${kicked} in ${channel} timed out after ${timeoutMs}ms`))
-        }, timeoutMs)
-        const onKick = (event: { kicked: string; channel: string }) => {
-          if (event.kicked === kicked && event.channel === channel) {
-            client.removeListener('kick', onKick)
-            clearTimeout(timer)
-            resolve()
-          }
-        }
-        client.on('kick', onKick)
-      }))
-    },
+    waitForKick,
 
     waitForMessage(channel, pred, timeoutMs = 5000) {
       return suppressLateRejection(new Promise<PeerMessage>((resolve, reject) => {

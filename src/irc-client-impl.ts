@@ -455,6 +455,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private handleQuit(event: QuitEvent): void {
     if (event.nick === this.nick) {
       this.channelUsers.clear()
+      // don't clear unread on quit — reconnect replays as historical, badges don't double-count
       return
     }
     for (const [chan, set] of this.channelUsers) {

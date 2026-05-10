@@ -258,6 +258,26 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(ack)).not.toContain('unread:')
   })
 
+  it('rejoin after leave resumes unread tracking from zero', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-unread11')
+    const peer = await connectPeer(ergo, 'ip-unread11-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread11' } })
+    await peer.joinChannel('#ip-unread11')
+
+    peer.say('#ip-unread11', 'first')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread11' && n.content === 'first')
+
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-unread11' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-unread11' } })
+
+    peer.say('#ip-unread11', 'after rejoin')
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-unread11' && n.content === 'after rejoin')
+
+    const list = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    // unread count should be 1 (only post-rejoin message), not 2
+    expect(toolText(list)).toMatch(/\(1\)/)
+  })
+
   it('channel_ack response includes unread suffix for other channels, omits if none', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-unread8')
     const peer = await connectPeer(ergo, 'ip-unread8-peer')
