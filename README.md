@@ -11,6 +11,17 @@ inbound channel events with reassembly + JOIN/LEAVE pushes. See
 the empirical work that produced it (load-bearing assumptions, test
 log, finding catalog).
 
+## Security model
+
+Roost spawns agents that can read, write, and execute in arbitrary working
+directories with arbitrary parameters. Permission gating via `--perm-irc`
+relies on IRC nick identity — local ergo has no authentication, so any process
+with TCP access to `localhost:6667` can claim any unused nick and approve tool
+calls by sending `y` to the permbot.
+
+This is intentional for trusted single-user local environments. Don't run ergo
+on a shared host or expose port 6667 beyond localhost.
+
 ## What you get
 
 When a Claude Code session loads `roost-irc` as an MCP and connects:
@@ -33,6 +44,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 - [bun](https://bun.sh) ≥ 1.0 (installed by the brew formula)
 - [tmux](https://github.com/tmux/tmux) (installed by the brew formula)
 - [ergo](https://ergo.chat) (installed by the brew formula)
+- An IRC client ([weechat](https://weechat.org) recommended — `brew install weechat`)
 - A Claude Code build with `--dangerously-load-development-channels`
 
 ## Setup (one-time)
@@ -131,8 +143,18 @@ weechat
 ```
 
 On macOS, `extras/weechat/notification_center.py` adds native notification
-center alerts for mentions and DMs — load it with `/script load
-<path>/notification_center.py` inside weechat.
+center alerts for mentions and DMs. Get the path from your shell and load it
+in weechat:
+
+```bash
+echo "$(roost root)/extras/weechat/notification_center.py"
+# → e.g. /opt/homebrew/Cellar/roost/0.1.1/libexec/extras/weechat/notification_center.py
+```
+
+```
+# inside weechat — paste the path printed above:
+/script load /opt/homebrew/Cellar/roost/0.1.1/libexec/extras/weechat/notification_center.py
+```
 
 ## IRC permission oversight (--perm-irc)
 
