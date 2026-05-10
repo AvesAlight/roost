@@ -35,11 +35,7 @@ Use `script/worktree <branch> [--from <base>] [path]` to bootstrap a new worktre
 
 ## Previewing assets
 
-IRC has no inline image preview, and human reviewers run weechat in tmux. When sharing a rendered asset, post the path as text and let the human view it with OS tools:
-
-- macOS: `qlmanage -p path/to/file.png` (Quick Look popup, space to dismiss)
-- Linux: `xdg-open path/to/file.png`
-- Cross-platform: `feh path/to/file.png` if installed
+IRC has no inline image preview, and human reviewers run weechat in tmux. When sharing a rendered asset, post the path as text and let the human view it with their OS tools (e.g. macOS Quick Look via `qlmanage -p path/to/file.png`).
 
 The render → post path → human-views-externally → reply round-trip is the floor of working in this medium, congruent with the brand. Don't bolt new abstractions onto IRC to bridge it.
 
