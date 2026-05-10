@@ -39,14 +39,13 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 **Homebrew (recommended):**
 
 ```
-brew tap oven-sh/bun   # required — auto-tap of qualified deps is unreliable
+brew tap oven-sh/bun
 brew install avesalight/tap/roost
 ```
 
-Installs roost along with bun, tmux, and ergo as dependencies. Puts `roost` and
-`irc-permission-prompt` on your PATH. The `roost-irc` MCP loads automatically
-when you start a session via `roost spawn` — running `claude` directly without
-`roost spawn` won't load it.
+Installs roost along with bun, tmux, and ergo as dependencies. Puts `roost` on
+your PATH. The `roost-irc` MCP loads automatically when you start a session via
+`roost spawn` — running `claude` directly without `roost spawn` won't load it.
 
 **Plugin marketplace (plugin-only / source installs):**
 
