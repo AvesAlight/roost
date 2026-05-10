@@ -108,13 +108,13 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Read /foo', timeout: 5 })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Read /foo', timeout: 5, replyTarget: 'operator' })
     // give the socket handler a tick to enqueue and dispatch
     await new Promise(r => setTimeout(r, 20))
     expect(said.length).toBeGreaterThan(0)
@@ -129,13 +129,13 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
     await ready
 
-    const resp = await socketRoundtrip(sockPath, { summary: 'Bash rm -rf', timeout: 0.05 })
+    const resp = await socketRoundtrip(sockPath, { summary: 'Bash rm -rf', timeout: 0.05, replyTarget: 'operator' })
     expect(resp).toEqual({ timeout: true })
   })
 
@@ -143,16 +143,16 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
     await ready
 
-    const { response: resp1 } = await socketSend(sockPath, { summary: 'first', timeout: 5 })
+    const { response: resp1 } = await socketSend(sockPath, { summary: 'first', timeout: 5, replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
-    const { response: resp2 } = await socketSend(sockPath, { summary: 'second', timeout: 5 })
+    const { response: resp2 } = await socketSend(sockPath, { summary: 'second', timeout: 5, replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
 
     // only first should have been dispatched so far
@@ -174,13 +174,13 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 50 },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 50 },
       client,
     )
     stops.push(stop)
     await ready
 
-    socketRoundtrip(sockPath, { summary: 'Read /secret', timeout: 5 }).catch(() => {})
+    socketRoundtrip(sockPath, { summary: 'Read /secret', timeout: 5, replyTarget: 'operator' }).catch(() => {})
     await new Promise(r => setTimeout(r, 20))
     expect(said.some(m => m.text.includes('Read /secret'))).toBe(true)
     // nudge not yet fired
@@ -195,13 +195,13 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client, said, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 80 },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null', nudgeAfterMs: 80 },
       client,
     )
     stops.push(stop)
     await ready
 
-    const respPromise = socketRoundtrip(sockPath, { summary: 'Bash ls', timeout: 5 })
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Bash ls', timeout: 5, replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 20))
     replyDm('operator', 'y')
     await respPromise
@@ -215,14 +215,14 @@ describe('permbot queue dispatch', () => {
     const sockPath = tmpSock()
     const { client } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
     await ready
 
-    const { response: resp1 } = await socketSend(sockPath, { summary: 'req1', timeout: 30 })
-    const { response: resp2 } = await socketSend(sockPath, { summary: 'req2', timeout: 30 })
+    const { response: resp1 } = await socketSend(sockPath, { summary: 'req1', timeout: 30, replyTarget: 'operator' })
+    const { response: resp2 } = await socketSend(sockPath, { summary: 'req2', timeout: 30, replyTarget: 'operator' })
     await new Promise(r => setTimeout(r, 30))
 
     stop()
@@ -239,7 +239,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, said, replyChannel } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -266,7 +266,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, replyDm } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -285,7 +285,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, said, replyChannel } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -313,7 +313,7 @@ describe('permbot ask-question channel routing', () => {
     client.join = async (ch: string) => { joined.push(ch); return origJoin(ch) }
 
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -334,7 +334,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, replyChannel } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'config-target', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -356,7 +356,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, replyChannel } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)
@@ -379,7 +379,7 @@ describe('permbot ask-question channel routing', () => {
     const sockPath = tmpSock()
     const { client, replyChannel } = makeMockClient()
     const { stop, ready } = startPermbot(
-      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      { nick: 'permbot-test', sockPath, worker: 'test', debugLog: '/dev/null' },
       client,
     )
     stops.push(stop)

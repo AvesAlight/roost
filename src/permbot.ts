@@ -13,7 +13,6 @@ import type { IrcMessage, RoostIrcClient } from './irc-client.js'
 export interface PermbotConfig {
   nick: string
   sockPath: string
-  target: string
   worker: string
   // Defaults to <dirname(sockPath)>/permbot.log when omitted. Pass '/dev/null'
   // in tests to silence file output.
@@ -34,10 +33,8 @@ interface QueueEntry {
   summary: string
   timeout: number
   kind: 'permission' | 'question'
-  // For kind='question': channel to post to; accept in-channel replies in addition to DMs.
-  channel?: string
-  // When set: accept replies from this nick instead of config.target.
-  replyTarget?: string
+  replyTarget: string  // required on every request
+  channel?: string     // set → channel mode (post + accept in-channel); absent → DM mode
 }
 
 interface InFlight {
@@ -79,7 +76,7 @@ export function startPermbot(
   config: PermbotConfig,
   client: RoostIrcClient,
 ): { stop: () => void; ready: Promise<void> } {
-  const { nick, sockPath, target, worker } = config
+  const { nick, sockPath, worker } = config
   const debugLog = config.debugLog ?? path.join(path.dirname(sockPath), 'permbot.log')
   const nudgeAfterMs = config.nudgeAfterMs ?? 5 * 60 * 1000
   const log = (msg: string) => dlog(debugLog, nick, msg)
@@ -96,9 +93,9 @@ export function startPermbot(
   function maybeDispatch(): void {
     if (inFlight !== null || queue.length === 0 || shuttingDown) return
     const entry = queue.shift()!
-    const { kind } = entry
-    const postTarget = entry.channel ?? target
-    const effectiveReplyTarget = (entry.replyTarget ?? target).toLowerCase()
+    const { kind, replyTarget } = entry
+    const postTarget = entry.channel ?? replyTarget
+    const replyTargetLc = replyTarget.toLowerCase()
     const summaryLines = entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
 
     const lines = [
@@ -107,7 +104,7 @@ export function startPermbot(
       ...(kind === 'question' ? [] : ['reply y/n']),
     ]
     client.say(postTarget, lines.join('\n'))
-    log(`in-flight to ${postTarget} (kind: ${kind}, replyTarget: ${effectiveReplyTarget}, ${lines.length} lines, timeout ${entry.timeout}s)`)
+    log(`in-flight to ${postTarget} (kind: ${kind}, replyTarget: ${replyTargetLc}, ${lines.length} lines, timeout ${entry.timeout}s)`)
 
     const timer = setTimeout(() => {
       log('in-flight timed out')
@@ -134,7 +131,7 @@ export function startPermbot(
     }, nudgeAfterMs)
     nudgeTimer.unref?.()
 
-    inFlight = { socket: entry.socket, timer, nudgeTimer, kind, channel: entry.channel ?? null, replyTarget: effectiveReplyTarget }
+    inFlight = { socket: entry.socket, timer, nudgeTimer, kind, channel: entry.channel ?? null, replyTarget: replyTargetLc }
   }
 
   function stop(): void {
@@ -178,7 +175,12 @@ export function startPermbot(
       const summary = typeof req.summary === 'string' ? req.summary : '(no summary)'
       const timeout = Number(req.timeout) > 0 ? Number(req.timeout) : 30
       const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
-      const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : undefined
+      const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : null
+      if (!replyTarget) {
+        log('request missing replyTarget — rejected')
+        respond(socket, { error: 'replyTarget is required' })
+        return
+      }
       // Explicit kind takes precedence; fall back to channel-presence for backward compat.
       const kind: 'permission' | 'question' = req.kind === 'question' || req.kind === 'permission'
         ? req.kind
@@ -191,8 +193,8 @@ export function startPermbot(
         log(`auto-joining ${channel} for question routing`)
       }
 
-      log(`queued request: kind=${kind} ${JSON.stringify(req)}`)
-      queue.push({ socket, summary, timeout, kind, channel, replyTarget })
+      log(`queued request: kind=${kind} replyTarget=${replyTarget} ${JSON.stringify(req)}`)
+      queue.push({ socket, summary, timeout, kind, replyTarget, channel })
       maybeDispatch()
     })
     socket.on('error', (e) => log(`client socket error: ${e}`))
@@ -237,8 +239,8 @@ export function startPermbot(
       }
     }
 
-    // Unsolicited DM from primary target
-    if (msg.isDirect && senderLower === target.toLowerCase()) {
+    // Unsolicited DM when nothing is in-flight — let the sender know
+    if (msg.isDirect) {
       log(`unsolicited DM from ${msg.sender}: ${JSON.stringify(body)}`)
       client.say(msg.sender, 'late — request already timed out (no in-flight prompt)')
     }

@@ -485,7 +485,6 @@ async function runOwnerMcp(args: {
     const permbotConfig: PermbotConfig = {
       nick: permbotNick,
       sockPath: PERM_SOCK,
-      target: PERM_TARGET || ASK_TARGET,
       worker: NICK,
     }
     const { stop } = startPermbot(permbotConfig, permbotClient)

@@ -154,11 +154,9 @@ export function resolveTranscriptPath(transcriptPath: string, agentId: string): 
 // ---- Socket round-trip to permbot daemon ------------------------------------
 
 export async function askDaemon(summary: string): Promise<string | null> {
-  return socketRoundtrip(
-    SOCK_PATH,
-    { summary, timeout: SOCKET_SAFETY_TIMEOUT },
-    (msg) => { process.stderr.write(`perm-hook: ${msg}\n`) },
-  )
+  const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT }
+  if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
+  return socketRoundtrip(SOCK_PATH, req, (msg) => { process.stderr.write(`perm-hook: ${msg}\n`) })
 }
 
 // ---- Fallback DM via RoostIrcClient (transient connection) ------------------
