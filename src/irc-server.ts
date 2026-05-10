@@ -470,11 +470,14 @@ async function runOwnerMcp(args: {
   const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
   const ASK_TARGET = process.env['ROOST_ASK_TARGET'] ?? ''
   let permbotStop: (() => void) | null = null
+  const ASK_CHANNEL = process.env['ROOST_ASK_CHANNEL'] ?? ''
   if (PERM_SOCK && (PERM_TARGET || ASK_TARGET)) {
     const permbotNick = `permbot-${NICK}`
+    // Pre-join the ask channel so the permbot is guaranteed to be joined before
+    // any AskUserQuestion request arrives, avoiding a JOIN/PRIVMSG race.
     const permbotClient = new RoostIrcClientImpl({
       nick: permbotNick,
-      autoJoin: [],
+      autoJoin: ASK_CHANNEL ? [ASK_CHANNEL] : [],
       historySize: 0,
       joinHistoryLines: 0,
       joinHistoryMinutes: 0,

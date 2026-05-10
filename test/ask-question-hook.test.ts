@@ -4,6 +4,7 @@ import * as net from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { formatQuestionsForIRC, mapOneReply, mapReplyToAnswers } from '../src/ask-question-hook.js'
+import { suppressLateRejection } from './helpers/tool.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/ask-question-hook.ts')
 
@@ -201,7 +202,7 @@ describe('ask-question-hook subprocess', () => {
     const sockPath = makeSock()
     // Stub that accepts connections but never responds → triggers socket timeout
     const server = net.createServer(() => {})
-    await new Promise<void>(r => server.listen(sockPath, r))
+    await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))
 
     try {
       const { stdout, stderr } = await runHook({

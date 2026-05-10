@@ -21,6 +21,13 @@ export interface PermbotConfig {
   nudgeAfterMs?: number  // default: 5 minutes; exposed for testing
 }
 
+interface PermBotRequest {
+  summary?: unknown
+  timeout?: unknown
+  channel?: unknown
+  replyTarget?: unknown
+}
+
 interface QueueEntry {
   socket: net.Socket
   summary: string
@@ -73,14 +80,15 @@ export function startPermbot(
   function maybeDispatch(): void {
     if (inFlight !== null || queue.length === 0 || shuttingDown) return
     const entry = queue.shift()!
-    const isQuestion = !!entry.channel
+    const isChannelTarget = !!entry.channel
     const postTarget = entry.channel ?? target
     const effectiveReplyTarget = (entry.replyTarget ?? target).toLowerCase()
+    const summaryLines = entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
 
     const lines = [
-      `[${worker}] ${isQuestion ? 'question:' : 'permission requested:'}`,
-      ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
-      ...(isQuestion ? [] : ['reply y/n']),
+      `[${worker}] ${isChannelTarget ? 'question:' : 'permission requested:'}`,
+      ...summaryLines,
+      ...(isChannelTarget ? [] : ['reply y/n']),
     ]
     client.say(postTarget, lines.join('\n'))
     log(`in-flight to ${postTarget} (replyTarget: ${effectiveReplyTarget}, ${lines.length} lines, timeout ${entry.timeout}s)`)
@@ -96,14 +104,14 @@ export function startPermbot(
     const nudgeTimer = setTimeout(() => {
       if (inFlight === null) return
       log('nudge: 5min elapsed without reply')
-      const nudgeLines = isQuestion
+      const nudgeLines = isChannelTarget
         ? [
             `[${worker}] question still pending (5min elapsed):`,
-            ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
+            ...summaryLines,
           ]
         : [
             `[${worker}] permission prompt still pending (5min elapsed):`,
-            ...entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim()),
+            ...summaryLines,
             `reply y/n — or: \`roost tail ${worker}\` to see context, \`roost send ${worker} y\` to unblock`,
           ]
       client.say(postTarget, nudgeLines.join('\n'))
@@ -143,9 +151,9 @@ export function startPermbot(
       if (nl === -1) return
       const line = buf.slice(0, nl)
       buf = buf.slice(nl + 1)
-      let req: { summary?: unknown; timeout?: unknown; channel?: unknown; replyTarget?: unknown }
+      let req: PermBotRequest
       try {
-        req = JSON.parse(line) as { summary?: unknown; timeout?: unknown; channel?: unknown; replyTarget?: unknown }
+        req = JSON.parse(line) as PermBotRequest
       } catch (e) {
         log(`bad request json: ${e}`)
         respond(socket, { error: `bad request json: ${e}` })
@@ -156,9 +164,8 @@ export function startPermbot(
       const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
       const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : undefined
 
-      // Auto-join the target channel before posting. Fire-and-forget: the IRC
-      // client writes JOIN to the socket synchronously, and PRIVMSG follows in
-      // order, so the server processes JOIN before PRIVMSG even without awaiting.
+      // Fallback join: irc-server pre-joins ROOST_ASK_CHANNEL via autoJoin at
+      // startup. This covers dynamically-specified channels from the request.
       if (channel && !client.isJoined(channel)) {
         void client.join(channel)
         log(`auto-joining ${channel} for question routing`)

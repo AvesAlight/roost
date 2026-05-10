@@ -1,18 +1,17 @@
 #!/usr/bin/env bun
 
-import * as fs from 'node:fs'
-import * as net from 'node:net'
 import { checkOwnership } from './owner-gate.js'
+import { socketRoundtrip } from './permbot-socket.js'
 
+const HOOK_EVENT   = 'PreToolUse'
 const WORKER       = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH    = process.env['ROOST_PERM_SOCK'] ?? ''
 const ASK_CHANNEL  = process.env['ROOST_ASK_CHANNEL'] ?? ''
-const ASK_TARGET   = process.env['ROOST_ASK_TARGET'] ?? process.env['ROOST_PERM_TARGET'] ?? ''
+const ASK_TARGET   = process.env['ROOST_ASK_TARGET'] ?? ''
 const DATA_DIR     = process.env['ROOST_DATA_DIR'] ?? ''
 const SESSION_ID   = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 const TIMEOUT_SECS = Math.max(10, Number(process.env['ROOST_ASK_TIMEOUT_SECS'] ?? '300'))
-// Stay under Claude Code's 600s hook default
-const SOCKET_TIMEOUT = Math.min(TIMEOUT_SECS, 570)
+const SOCKET_TIMEOUT = Math.min(TIMEOUT_SECS, 570) // stay under Claude Code's 600s hook default
 
 // ---- Types ------------------------------------------------------------------
 
@@ -33,7 +32,7 @@ function passthrough(): never {
 function allow(questions: Question[], answers: Record<string, string>): never {
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
+      hookEventName: HOOK_EVENT,
       permissionDecision: 'allow',
       updatedInput: { questions, answers },
     },
@@ -45,7 +44,7 @@ function deny(reason: string): never {
   process.stderr.write(`ask-question-hook[${WORKER}]: ${reason}\n`)
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
+      hookEventName: HOOK_EVENT,
       permissionDecision: 'deny',
       permissionDecisionReason: reason,
     },
@@ -119,46 +118,10 @@ export function mapReplyToAnswers(reply: string, questions: Question[]): Record<
 // ---- Socket round-trip to permbot -------------------------------------------
 
 export async function askPermbot(summary: string): Promise<string | null> {
-  if (!SOCK_PATH || !fs.existsSync(SOCK_PATH)) {
-    process.stderr.write(`ask-question-hook[${WORKER}]: ROOST_PERM_SOCK not set or socket missing\n`)
-    return null
-  }
-  return new Promise((resolve) => {
-    const sock = net.createConnection(SOCK_PATH)
-    sock.setTimeout(SOCKET_TIMEOUT * 1000)
-    let buf = ''
-    sock.on('connect', () => {
-      const req: Record<string, unknown> = {
-        summary,
-        timeout: SOCKET_TIMEOUT,
-        channel: ASK_CHANNEL,
-      }
-      if (ASK_TARGET) req.replyTarget = ASK_TARGET
-      sock.write(JSON.stringify(req) + '\n')
-    })
-    sock.on('data', (chunk) => {
-      buf += chunk.toString('utf8')
-      if (!buf.includes('\n')) return
-      const line = buf.split('\n')[0]
-      sock.destroy()
-      try {
-        const resp = JSON.parse(line) as Record<string, unknown>
-        if (resp['timeout']) { resolve(null); return }
-        if (resp['error']) {
-          process.stderr.write(`ask-question-hook[${WORKER}]: daemon error: ${resp['error']}\n`)
-          resolve(null); return
-        }
-        resolve(String(resp['reply'] ?? ''))
-      } catch (e) {
-        process.stderr.write(`ask-question-hook[${WORKER}]: bad daemon response: ${e}\n`)
-        resolve(null)
-      }
-    })
-    sock.on('timeout', () => { sock.destroy(); resolve(null) })
-    sock.on('error', (e) => {
-      process.stderr.write(`ask-question-hook[${WORKER}]: connect ${SOCK_PATH} failed: ${e}\n`)
-      resolve(null)
-    })
+  const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT, channel: ASK_CHANNEL }
+  if (ASK_TARGET) req['replyTarget'] = ASK_TARGET
+  return socketRoundtrip(SOCK_PATH, req, (msg) => {
+    process.stderr.write(`ask-question-hook[${WORKER}]: ${msg}\n`)
   })
 }
 

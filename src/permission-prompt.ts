@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import * as fs from 'node:fs'
-import * as net from 'node:net'
 import * as path from 'node:path'
 import { checkOwnership } from './owner-gate.js'
+import { socketRoundtrip } from './permbot-socket.js'
 
 const WORKER      = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
@@ -154,44 +154,11 @@ export function resolveTranscriptPath(transcriptPath: string, agentId: string): 
 // ---- Socket round-trip to permbot daemon ------------------------------------
 
 export async function askDaemon(summary: string): Promise<string | null> {
-  if (!SOCK_PATH || !fs.existsSync(SOCK_PATH)) {
-    process.stderr.write('perm-hook: ROOST_PERM_SOCK not set or socket missing\n')
-    return null
-  }
-  return new Promise((resolve) => {
-    const sock = net.createConnection(SOCK_PATH)
-    sock.setTimeout(SOCKET_SAFETY_TIMEOUT * 1000)
-    let buf = ''
-    sock.on('connect', () => {
-      sock.write(JSON.stringify({ summary, timeout: SOCKET_SAFETY_TIMEOUT }) + '\n')
-    })
-    sock.on('data', (chunk) => {
-      buf += chunk.toString('utf8')
-      if (!buf.includes('\n')) return
-      const line = buf.split('\n')[0]
-      sock.destroy()
-      try {
-        const resp = JSON.parse(line) as Record<string, unknown>
-        if (resp['timeout']) { resolve(null); return }
-        if (resp['error']) {
-          process.stderr.write(`perm-hook: daemon error: ${resp['error']}\n`)
-          resolve(null); return
-        }
-        resolve(String(resp['reply'] ?? ''))
-      } catch (e) {
-        process.stderr.write(`perm-hook: bad daemon response: ${e}\n`)
-        resolve(null)
-      }
-    })
-    sock.on('timeout', () => {
-      process.stderr.write('perm-hook: daemon response truncated\n')
-      sock.destroy(); resolve(null)
-    })
-    sock.on('error', (e) => {
-      process.stderr.write(`perm-hook: connect ${SOCK_PATH} failed: ${e}\n`)
-      resolve(null)
-    })
-  })
+  return socketRoundtrip(
+    SOCK_PATH,
+    { summary, timeout: SOCKET_SAFETY_TIMEOUT },
+    (msg) => { process.stderr.write(`perm-hook: ${msg}\n`) },
+  )
 }
 
 // ---- Fallback DM via RoostIrcClient (transient connection) ------------------
