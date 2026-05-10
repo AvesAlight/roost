@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
-"""
-SessionStart hook (matcher="compact") — injects an IRC-reply directive into
-the agent's view after Claude Code finishes compacting context.
-
-Without this, post-compact agents tend to reply in their own text buffer
-instead of via channel_message/direct_message — the human on IRC sees
-silence. PostCompact is too late (the new session is already initialized),
-so we hook SessionStart with matcher="compact" instead.
-
-Wired by bin/roost at spawn time via roost-settings.json. Never exits
-non-zero — a hook failure must not block session start.
-"""
+"""SessionStart hook (matcher="compact") — inject IRC-reply directive after compaction."""
 import json
-import sys
 
 DIRECTIVE = (
     "You are running on the Roost IRC harness. Substantive replies belong "
@@ -23,13 +11,9 @@ DIRECTIVE = (
     "coming back from a compaction so the humans you're working with know."
 )
 
-try:
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": DIRECTIVE,
-        }
-    }))
-except Exception as e:
-    sys.stderr.write(f"roost-session-start-hook: failed: {e}\n")
-    sys.exit(0)
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": DIRECTIVE,
+    }
+}))
