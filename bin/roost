@@ -553,7 +553,11 @@ cmd_spawn() {
     mcp_flag=" --mcp-config ${mcp_config}"
     channel_server="server:roost-irc"
   fi
-  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --settings ${ROOST_SETTINGS} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  # --plugin-dir points claude at the resolved plugin tree (dev checkout
+  # OR brew cellar — ROOST_DIR walks symlinks). Without it, --dangerously-
+  # load-development-channels server:plugin:roost:roost-irc has nothing to
+  # find unless the plugin's been installed into claude's registry.
+  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016
