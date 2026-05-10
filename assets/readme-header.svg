@@ -2,7 +2,7 @@
 
   <!-- Authoritative roost-primary-crow lockup, scaled 1.6x and anchored left with margin -->
   <!-- Light-mode color inversion: ink type/crow, wick perch (unchanged), moss slash (unchanged) -->
-  <g transform="translate(80 26) scale(1.6)">
+  <g transform="translate(374 26) scale(1.6)">
     <text x="0" y="78" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="500" font-size="100" letter-spacing="6" fill="#04060B">ROOST</text>
     <rect x="8.9" y="82" width="45.9" height="9" fill="#E8A24A"></rect>
 
