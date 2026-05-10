@@ -43,7 +43,7 @@ When a Claude Code session loads `roost-irc` as an MCP and connects:
 ### 1. Install the plugin
 
 ```
-/plugin marketplace add https://github.com/AlexSc/roost
+/plugin marketplace add https://github.com/AvesAlight/roost
 /plugin install roost@roost
 ```
 

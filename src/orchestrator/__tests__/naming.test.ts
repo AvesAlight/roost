@@ -23,11 +23,11 @@ describe('validateProject', () => {
 
 describe('defaultProject', () => {
   it('returns the explicit project when set', () => {
-    expect(defaultProject({ project: 'roost', repo: 'AlexSc/roost' })).toBe('roost')
+    expect(defaultProject({ project: 'roost', repo: 'AvesAlight/roost' })).toBe('roost')
   })
 
   it('falls back to lowercased basename of repo', () => {
-    expect(defaultProject({ repo: 'AlexSc/Roost' })).toBe('roost')
+    expect(defaultProject({ repo: 'AvesAlight/Roost' })).toBe('roost')
   })
 
   it('throws when project invalid', () => {
