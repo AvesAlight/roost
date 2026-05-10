@@ -1,0 +1,36 @@
+name: Release
+
+# Push a tag (e.g. v0.2.0) to trigger a GitHub release and a PR against the
+# Homebrew tap (AvesAlight/homebrew-tap) that bumps Formula/roost.rb.
+#
+# Required secret: COMMITTER_TOKEN
+#   Fine-grained PAT with "Contents: Read and write" and
+#   "Pull requests: Read and write" on AvesAlight/homebrew-tap.
+#   Settings → Secrets and variables → Actions → New repository secret.
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+
+      - name: Bump Homebrew formula
+        uses: mislav/bump-homebrew-formula-action@v4.1
+        with:
+          formula-name: roost
+          formula-path: Formula/roost.rb
+          homebrew-tap: AvesAlight/homebrew-tap
+        env:
+          COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
