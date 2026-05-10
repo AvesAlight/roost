@@ -98,6 +98,17 @@ To work on an issue:
 
 Before merging a PR or removing a worktree, confirm: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
+## When you author a PR yourself
+
+Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself, but **treat it the same as a worker-authored PR for engagement**:
+
+- Branch off main, commit, push, open the PR (don't push directly to main, even for one-line changes)
+- DM the watcher to watch it: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
+- Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget
+- After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, unwatch
+
+The temptation to skip the watch step "because it's just a small docs change" is the failure mode. Channel routing is what tells you when the human reviewed.
+
 ## Ready?
 
 Post a message in #$0-leads with your starting strategy. Wait until the human pressure tests and approves your plan before beginning the first wave. Once you begin you may proceed autonomously and spawn new workers as needed.
