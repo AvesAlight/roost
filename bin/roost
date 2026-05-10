@@ -16,10 +16,8 @@
 
 set -uo pipefail
 
-# Resolve BASH_SOURCE through any symlinks before computing ROOST_DIR, so
-# Homebrew's `bin.install_symlink libexec/"bin/roost"` (or any other
-# /opt/homebrew/bin/roost → cellar/bin/roost shim) lands at the real plugin
-# tree, not the symlink's parent.
+# Walk symlinks so ROOST_DIR resolves to the real plugin tree, not the
+# parent of a /usr/local/bin/roost-style shim.
 _src="${BASH_SOURCE[0]}"
 while [ -L "$_src" ]; do
   _dir="$( cd -P "$( dirname "$_src" )" && pwd )"
