@@ -220,10 +220,21 @@ describe('ask-question-hook subprocess', () => {
     }
   }, 15_000)
 
-  it('falls through (exit 0, no stdout) when socket missing', async () => {
+  it('denies when socket is configured but missing (permbot not running)', async () => {
     const { stdout, exit } = await runHook({
       ROOST_IRC_NICK: 'worker-test',
       ROOST_PERM_SOCK: '/tmp/nonexistent-ask-hook-test.sock',
+      ROOST_ASK_CHANNEL: '#ask-channel',
+    })
+    expect(exit).toBe(0)
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+  }, 5_000)
+
+  it('falls through (exit 0, no stdout) when not configured (no SOCK_PATH)', async () => {
+    const { stdout, exit } = await runHook({
+      ROOST_IRC_NICK: 'worker-test',
+      // ROOST_PERM_SOCK not set → passthrough
       ROOST_ASK_CHANNEL: '#ask-channel',
     })
     expect(exit).toBe(0)
