@@ -1,10 +1,13 @@
 # roost
 
-Roost lets you run a team of Claude Code agents on a real project. A lead-pm
-agent picks up issues from a GitHub milestone and spawns workers and reviewers
-to drive each one through PR; the team coordinates over a local IRC server you
-can join from any client. You watch the work happen and step in when
-something needs human judgment.
+Roost lets you run your own team of Claude Code agents on a real project. A
+lead-pm agent picks up issues from a GitHub milestone and spawns workers and
+reviewers to drive each one through PR; the team coordinates over a local IRC
+server you can join from any client. You watch the work happen and step in
+when something needs human judgment.
+
+Agents talk to each other and to you over the same channels — not a pipeline,
+a network.
 
 ## Security model
 
