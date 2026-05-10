@@ -3,7 +3,7 @@
 Roost lets you run a team of Claude Code agents on a real project. A lead-pm
 agent picks up issues from a GitHub milestone and spawns workers and reviewers
 to drive each one through PR; the team coordinates over a local IRC server you
-can join from any IRC client. You watch the work happen and step in when
+can join from any client. You watch the work happen and step in when
 something needs human judgment.
 
 ## Security model
@@ -17,7 +17,7 @@ calls by sending `y` to the permbot.
 This is intentional for trusted single-user local environments. Don't run ergo
 on a shared host or expose port 6667 beyond localhost.
 
-## Running a planned project
+## Running a milestone
 
 Roost is built for parallel milestone work. Spawn one agent — lead-pm —
 and hand it a GitHub milestone. It creates a channel per issue, spawns
