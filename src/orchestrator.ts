@@ -24,8 +24,7 @@ import { RoostIrcClientImpl } from './irc-client-impl.js'
 
 // ---- Path setup ------------------------------------------------------------
 
-const REPO_ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '')
-const DEFAULT_STATE_DIR = join(REPO_ROOT, '.orchestrator')
+const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
 
 // ---- Tick ------------------------------------------------------------------
 
