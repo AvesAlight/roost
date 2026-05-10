@@ -52,6 +52,10 @@ function deny(reason: string): never {
   process.exit(0)
 }
 
+// Keywords the operator can send to abort the question and return to chat.
+// Must stay in sync with permbot.ts CHAT_KEYWORDS.
+const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
+
 // ---- Question formatting ----------------------------------------------------
 
 export function formatQuestionsForIRC(questions: Question[]): string {
@@ -66,9 +70,9 @@ export function formatQuestionsForIRC(questions: Question[]): string {
     if (q.multiSelect) lines.push('  (multi-select: comma-separate multiple choices)')
   })
   if (questions.length > 1) {
-    lines.push('Reply: one answer per question, comma-separated (e.g. 1, 2)')
+    lines.push("Reply: number per question, comma-separated (e.g. 1, 2) — or 'chat' to discuss; DM for text answers")
   } else {
-    lines.push('Reply: number or option label')
+    lines.push("Reply: number, your own answer, or 'chat' to discuss")
   }
   return lines.join('\n')
 }
@@ -160,6 +164,10 @@ if (import.meta.main) {
 
   if (reply === null) {
     deny(`No IRC reply within ${TIMEOUT_SECS}s — permbot unavailable or timed out. Decide without user input or retry.`)
+  }
+
+  if (CHAT_KEYWORDS.has(reply!.trim().toLowerCase())) {
+    deny('operator requested to chat — decide without user input or re-ask via a follow-up message')
   }
 
   const answers = mapReplyToAnswers(reply!, questions)

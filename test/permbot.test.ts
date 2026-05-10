@@ -325,9 +325,9 @@ describe('permbot ask-question channel routing', () => {
     expect(joined).toContain('#new-channel')
     expect(said.some(m => m.target === '#new-channel')).toBe(true)
 
-    replyChannel('operator', '#new-channel', 'yes')
+    replyChannel('operator', '#new-channel', '1')
     const resp = await respPromise
-    expect(resp).toEqual({ reply: 'yes' })
+    expect(resp).toEqual({ reply: '1' })
   })
 
   it('uses replyTarget instead of config.target for channel questions', async () => {
@@ -343,12 +343,53 @@ describe('permbot ask-question channel routing', () => {
     const respPromise = socketRoundtrip(sockPath, { summary: 'Q', timeout: 5, channel: '#ch', replyTarget: 'custom-target' })
     await new Promise(r => setTimeout(r, 20))
 
-    // Reply from config-target should be ignored; custom-target's reply should count
-    replyChannel('config-target', '#ch', 'wrong')
+    // Reply from config-target should be ignored; custom-target's numeric reply should count
+    replyChannel('config-target', '#ch', '1')
     await new Promise(r => setTimeout(r, 20))
 
-    replyChannel('custom-target', '#ch', 'correct')
+    replyChannel('custom-target', '#ch', '2')
     const resp = await respPromise
-    expect(resp).toEqual({ reply: 'correct' })
+    expect(resp).toEqual({ reply: '2' })
+  })
+
+  it('ignores non-answer-shaped in-channel messages from replyTarget', async () => {
+    const sockPath = tmpSock()
+    const { client, replyChannel } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, channel: '#ch', replyTarget: 'operator' })
+    await new Promise(r => setTimeout(r, 20))
+
+    // Conversational message should be ignored even though it's from replyTarget
+    replyChannel('operator', '#ch', 'lead, what do you think of option 1?')
+    await new Promise(r => setTimeout(r, 20))
+
+    // Numeric reply should now be accepted
+    replyChannel('operator', '#ch', '1')
+    const resp = await respPromise
+    expect(resp).toEqual({ reply: '1' })
+  })
+
+  it('accepts chat keyword in-channel and passes it through', async () => {
+    const sockPath = tmpSock()
+    const { client, replyChannel } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, target: 'operator', worker: 'test', debugLog: '/dev/null' },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    const respPromise = socketRoundtrip(sockPath, { summary: 'Pick?', timeout: 5, channel: '#ch', replyTarget: 'operator' })
+    await new Promise(r => setTimeout(r, 20))
+
+    replyChannel('operator', '#ch', 'chat')
+    const resp = await respPromise
+    expect(resp).toEqual({ reply: 'chat' })
   })
 })

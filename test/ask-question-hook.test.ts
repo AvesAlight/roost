@@ -19,7 +19,7 @@ describe('formatQuestionsForIRC', () => {
     expect(text).toContain('Which framework?')
     expect(text).toContain('1. React')
     expect(text).toContain('2. Vue')
-    expect(text).toContain('Reply: number or option label')
+    expect(text).toContain("Reply: number, your own answer, or 'chat' to discuss")
   })
 
   it('no Q prefix for single question', () => {
@@ -35,6 +35,7 @@ describe('formatQuestionsForIRC', () => {
     expect(text).toContain('Q1: First?')
     expect(text).toContain('Q2: Second?')
     expect(text).toContain('comma-separated')
+    expect(text).toContain("'chat'")
   })
 
   it('includes option description when present', () => {
@@ -250,6 +251,25 @@ describe('ask-question-hook subprocess', () => {
     expect(exit).toBe(0)
     expect(stdout.trim()).toBe('')
   }, 5_000)
+
+  it('returns deny when operator replies with chat keyword', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'chat' })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_ASK_CHANNEL: '#ask-channel',
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('chat')
+  }, 10_000)
 
   it('passes the questions array through to updatedInput', async () => {
     const sockPath = makeSock()

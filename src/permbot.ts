@@ -32,8 +32,8 @@ interface QueueEntry {
   socket: net.Socket
   summary: string
   timeout: number
-  // When set: post to this channel instead of DM'ing target; accept in-channel
-  // replies from replyTarget in this channel in addition to DMs.
+  kind: 'permission' | 'question'
+  // For kind='question': channel to post to; accept in-channel replies in addition to DMs.
   channel?: string
   // When set: accept replies from this nick instead of config.target.
   replyTarget?: string
@@ -43,8 +43,23 @@ interface InFlight {
   socket: net.Socket
   timer: ReturnType<typeof setTimeout>
   nudgeTimer: ReturnType<typeof setTimeout>
+  kind: 'permission' | 'question'
   channel: string | null   // channel the question was posted to (null for DM-style)
   replyTarget: string      // lowercase nick whose messages count as the reply
+}
+
+// Keywords the operator can send in-channel to abort AskUserQuestion and
+// return to normal chat flow. The hook maps these to permissionDecision: deny.
+const CHAT_KEYWORDS = new Set(['chat', 'skip', 'cancel'])
+
+/** For in-channel question replies: only accept bare numeric answers, slash-
+ *  separated multi-select combos, or chat-flow keywords. Anything else risks
+ *  eating side-conversation. DM replies bypass this check entirely. */
+function looksLikeAnswer(text: string, botNick: string): boolean {
+  const stripped = text.replace(new RegExp(`^(!ask|@${botNick.toLowerCase()})\\s+`, 'i'), '').trim()
+  if (/^[\d,/\s]+$/.test(stripped)) return true
+  if (CHAT_KEYWORDS.has(stripped.toLowerCase())) return true
+  return false
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -80,18 +95,18 @@ export function startPermbot(
   function maybeDispatch(): void {
     if (inFlight !== null || queue.length === 0 || shuttingDown) return
     const entry = queue.shift()!
-    const isChannelTarget = !!entry.channel
+    const { kind } = entry
     const postTarget = entry.channel ?? target
     const effectiveReplyTarget = (entry.replyTarget ?? target).toLowerCase()
     const summaryLines = entry.summary.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
 
     const lines = [
-      `[${worker}] ${isChannelTarget ? 'question:' : 'permission requested:'}`,
+      `[${worker}] ${kind === 'question' ? 'question:' : 'permission requested:'}`,
       ...summaryLines,
-      ...(isChannelTarget ? [] : ['reply y/n']),
+      ...(kind === 'question' ? [] : ['reply y/n']),
     ]
     client.say(postTarget, lines.join('\n'))
-    log(`in-flight to ${postTarget} (replyTarget: ${effectiveReplyTarget}, ${lines.length} lines, timeout ${entry.timeout}s)`)
+    log(`in-flight to ${postTarget} (kind: ${kind}, replyTarget: ${effectiveReplyTarget}, ${lines.length} lines, timeout ${entry.timeout}s)`)
 
     const timer = setTimeout(() => {
       log('in-flight timed out')
@@ -104,7 +119,7 @@ export function startPermbot(
     const nudgeTimer = setTimeout(() => {
       if (inFlight === null) return
       log('nudge: 5min elapsed without reply')
-      const nudgeLines = isChannelTarget
+      const nudgeLines = kind === 'question'
         ? [
             `[${worker}] question still pending (5min elapsed):`,
             ...summaryLines,
@@ -118,7 +133,7 @@ export function startPermbot(
     }, nudgeAfterMs)
     nudgeTimer.unref?.()
 
-    inFlight = { socket: entry.socket, timer, nudgeTimer, channel: entry.channel ?? null, replyTarget: effectiveReplyTarget }
+    inFlight = { socket: entry.socket, timer, nudgeTimer, kind, channel: entry.channel ?? null, replyTarget: effectiveReplyTarget }
   }
 
   function stop(): void {
@@ -163,6 +178,7 @@ export function startPermbot(
       const timeout = Number(req.timeout) > 0 ? Number(req.timeout) : 30
       const channel = typeof req.channel === 'string' && req.channel ? req.channel.toLowerCase() : undefined
       const replyTarget = typeof req.replyTarget === 'string' && req.replyTarget ? req.replyTarget : undefined
+      const kind: 'permission' | 'question' = channel ? 'question' : 'permission'
 
       // Fallback join: irc-server pre-joins ROOST_ASK_CHANNEL via autoJoin at
       // startup. This covers dynamically-specified channels from the request.
@@ -171,8 +187,8 @@ export function startPermbot(
         log(`auto-joining ${channel} for question routing`)
       }
 
-      log(`queued request: ${JSON.stringify(req)}`)
-      queue.push({ socket, summary, timeout, channel, replyTarget })
+      log(`queued request: kind=${kind} ${JSON.stringify(req)}`)
+      queue.push({ socket, summary, timeout, kind, channel, replyTarget })
       maybeDispatch()
     })
     socket.on('error', (e) => log(`client socket error: ${e}`))
@@ -200,6 +216,12 @@ export function startPermbot(
         && senderLower === inFlight.replyTarget
 
       if (isDmFromTarget || isChannelReply) {
+        // For in-channel question replies, only accept bare numeric answers or
+        // chat keywords. DM replies are unambiguous and bypass this check.
+        if (isChannelReply && inFlight.kind === 'question' && !looksLikeAnswer(body, nick)) {
+          log(`ignoring in-channel message from ${msg.sender} (not answer-shaped): ${JSON.stringify(body)}`)
+          return
+        }
         log(`reply from ${msg.sender} (${msg.isDirect ? 'DM' : 'channel'}): ${JSON.stringify(body)}`)
         clearTimeout(inFlight.timer)
         clearTimeout(inFlight.nudgeTimer)
