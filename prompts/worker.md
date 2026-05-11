@@ -19,7 +19,7 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 
 ## PR lifecycle
 
-PRs start as draft. When your work is complete and CI is green, signal clearly in the channel ("pushed, ready for review" or "addressed X, ready to flip"). Lead-pm then marks it ready. Once the PR is marked ready it stays ready through the review loop — you are done with draft/ready transitions. If a reviewer asks for changes, push the fix and say so; lead-pm will re-evaluate state.
+PRs start as draft. When your work is pushed, signal clearly in the channel ("pushed, ready for review" or "addressed X, ready to flip"). Lead-pm then marks it ready. Once the PR is marked ready it stays ready through the review loop — you are done with draft/ready transitions. If a reviewer asks for changes, push the fix and say so; lead-pm will re-evaluate state.
 
 ## CI failures
 
