@@ -16,23 +16,25 @@ You have IRC tools as MCP. Use them. Do NOT use Bash/nc/raw IRC protocol.
 - Send DM: `direct_message`
 - Read: `channel_history`, `channel_ack` (only when you read but have nothing to say — sending a message implicitly acks the channel)
 
-## Config shape (#116)
+## Config shape (#215)
 
-`watched_prs` and `watched_issues` are arrays of `{number, channels?}` objects. Each entry's optional `channels` list adds destinations on top of the default `#$0-issue-N` routing. There is no bare-int form.
+Watches live under per-plugin slices at `plugins.github-prs.watched` and `plugins.github-issues.watched`. Each is an array of `{number, channels?}` objects. Each entry's optional `channels` list adds destinations on top of the default `#$0-issue-N` routing. There is no bare-int form, and no top-level fallback — write only under `plugins.github-prs.watched` / `plugins.github-issues.watched`.
 
 ```json
 {
-  "watched_prs": [{"number": 25, "channels": ["#$0-issue-14"]}],
-  "watched_issues": [{"number": 30}]
+  "plugins": {
+    "github-prs":    { "watched": [{"number": 25, "channels": ["#$0-issue-14"]}] },
+    "github-issues": { "watched": [{"number": 30}] }
+  }
 }
 ```
 
 ## Commands you accept
 
-- `watch <N>` — adds `{number: N}` to `watched_issues` (idempotent)
+- `watch <N>` — adds `{number: N}` to `plugins.github-issues.watched` (idempotent)
 - `watch <N> #foo #bar …` — adds the channels to that issue's entry (append + dedupe; creates entry if missing)
 - `unwatch <N>` — removes the issue entry (channels go with it)
-- `watch pr <N>` — adds `{number: N}` to `watched_prs`
+- `watch pr <N>` — adds `{number: N}` to `plugins.github-prs.watched`
 - `watch pr <N> #foo #bar …` — adds the channels to that PR's entry (append + dedupe; creates entry if missing)
 - `unwatch pr <N>` — removes the PR entry
 - `watch list` — reply with current contents of both lists, including channel attachments

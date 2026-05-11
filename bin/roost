@@ -224,7 +224,7 @@ EOF
 }
 
 _init_config_json() {
-  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "watched_issues": [],\n  "watched_prs": []\n}\n' \
+  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-prs": { "watched": [] },\n    "github-issues": { "watched": [] }\n  }\n}\n' \
     "$1" "$2" "$3"
 }
 

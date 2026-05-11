@@ -37,11 +37,11 @@ roost spawn $0-watcher --model haiku --channels '#$0-leads' --prompt "/watcher $
 
 The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
 
-- `watch <N>` — add N to `watched_issues` (idempotent)
+- `watch <N>` — add N to `plugins.github-issues.watched` (idempotent)
 - `watch <N> #foo #bar` — add N and attach extra channels (append + dedupe on existing entry)
-- `unwatch <N>` — remove N from `watched_issues`
+- `unwatch <N>` — remove N from `plugins.github-issues.watched`
 - `watch pr <N>` / `watch pr <N> #foo #bar` — same, for PRs
-- `unwatch pr <N>` — remove N from `watched_prs`
+- `unwatch pr <N>` — remove N from `plugins.github-prs.watched`
 - `watch list` — reply with current contents of both lists, including channel attachments
 - `help` — short usage reminder
 

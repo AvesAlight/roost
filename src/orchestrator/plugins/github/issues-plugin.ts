@@ -1,4 +1,4 @@
-import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
+import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
@@ -8,16 +8,8 @@ import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { IssueSnap, IssuePluginState } from './types.js'
 
-interface GitHubIssuesPluginConfig {
-  watched?: WatchedEntry[]
-}
-
 export class GitHubIssuesPlugin extends GhBase {
   readonly name = 'github-issues'
-
-  private watched(config: OrchestratorConfig): WatchedEntry[] {
-    return this.pluginConfig<GitHubIssuesPluginConfig>(config)?.watched ?? []
-  }
 
   desiredChannels(config: OrchestratorConfig): string[] {
     return this.entryChannels(config, this.watched(config))

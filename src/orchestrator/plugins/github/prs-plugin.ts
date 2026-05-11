@@ -1,4 +1,4 @@
-import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
+import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
@@ -8,16 +8,8 @@ import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { PrSnap, PrPluginState } from './types.js'
 
-interface GitHubPrsPluginConfig {
-  watched?: WatchedEntry[]
-}
-
 export class GitHubPrsPlugin extends GhBase {
   readonly name = 'github-prs'
-
-  private watched(config: OrchestratorConfig): WatchedEntry[] {
-    return this.pluginConfig<GitHubPrsPluginConfig>(config)?.watched ?? []
-  }
 
   desiredChannels(config: OrchestratorConfig): string[] {
     return this.entryChannels(config, this.watched(config))

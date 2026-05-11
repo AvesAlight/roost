@@ -16,7 +16,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { getPluginFactory, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
+import { getPluginFactory, registeredPluginNames, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
@@ -79,7 +79,10 @@ function buildPlugins(config: OrchestratorConfig, defaultChannel: string): Plugi
   const names = Object.keys(config.plugins ?? {})
   return names.map(name => {
     const factory = getPluginFactory(name)
-    if (!factory) throw new Error(`unknown plugin in config: ${name}`)
+    if (!factory) {
+      const available = registeredPluginNames().sort().join(', ') || '(none)'
+      throw new Error(`unknown plugin in config: ${name}. available: ${available}`)
+    }
     return factory(defaultChannel)
   })
 }

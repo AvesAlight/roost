@@ -147,4 +147,19 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
     expect(getPluginFactory('github-prs')).toBeTypeOf('function')
     expect(getPluginFactory('github-issues')).toBeTypeOf('function')
   })
+
+  // The plugin's `name` field is the slot key for state.plugins[name]; the
+  // registry key is the slot key for config.plugins[name]. If these drift,
+  // state silently disappears across ticks. These assertions are the cheap
+  // guard against that drift.
+  it('couples class name to registry key for the stub plugin', () => {
+    registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
+    expect(getPluginFactory('stub')!('#x').name).toBe('stub')
+  })
+
+  it('couples class name to registry key for both built-ins', async () => {
+    await import('../registry.js')
+    expect(getPluginFactory('github-prs')!('#x').name).toBe('github-prs')
+    expect(getPluginFactory('github-issues')!('#x').name).toBe('github-issues')
+  })
 })
