@@ -443,10 +443,14 @@ long-run side-effect.
 - IRC server choice: ngircd default. solanum if we want SASL/services
   *and* IRCv3 message-tags (Finding E); bouncer integration question
   for replay-on-reconnect.
-- Mention/highlight semantics: separate channel source
-  (`irc-mention` vs `irc-ambient`), event meta field, or convention?
-  Affects how agents behave on noisy channels — wake on every CI tick
-  on `#dispatch-feed`, or only when addressed?
+- ~~Mention/highlight semantics: separate channel source
+  (`irc-mention` vs `irc-ambient`), event meta field, or convention?~~
+  Resolved (#237): event meta field — `mention="true"` on the
+  `event="message"` notification when body contains agent's nick
+  (word-boundary) or message is a DM. Absent otherwise.
+  Note: `UnreadInfo.mentionCount` (client layer) is text-match only — a DM
+  body that doesn't contain the nick scores 0. The wire attribute is
+  text-OR-isDirect. They are intentionally different and should stay so.
 - One MCP per session (configured at launch with nick + connection),
   or shared MCP service all sessions connect to? Per-session is simpler;
   shared is one process but couples lifecycles. Per-session seems

@@ -248,7 +248,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   // Record a message in history and dedupe set; increment unread unless historical.
   // Empty-sender messages (server NOTICEs) are recorded to history/fingerprint but excluded from unread.
-  private recordMessage(msg: IrcMessage, historical = false): void {
+  // Returns whether the message is a text-body mention (nick word-boundary match). Always false for historical.
+  private recordMessage(msg: IrcMessage, historical = false): boolean {
     this.pushHistory(msg.channel, msg)
     this.addFingerprint(msg)
     if (!historical && msg.sender !== '') {
@@ -262,7 +263,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         lastMentionSender: isMention ? msg.sender : (prev?.lastMentionSender ?? ''),
         lastMentionPreview: isMention ? msg.text : (prev?.lastMentionPreview ?? ''),
       })
+      return isMention
     }
+    return false
   }
 
   // ---- Typed event emitters ----------------------------------------------
@@ -508,8 +511,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const channel = isDirect ? event.nick.toLowerCase() : event.target.toLowerCase()
     const ts = event.tags?.['time'] ?? new Date().toISOString()
     const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
-    this.recordMessage(msg)
-    this.emitMessage(msg, {})
+    const mention = this.recordMessage(msg)
+    this.emitMessage(msg, mention ? { mention: true } : {})
   }
 
   private handleMultilineBatch(event: BatchEndEvent): void {
@@ -525,8 +528,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const serverTimeMs = cmds[0].getServerTime?.()
     const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
     const msg: IrcMessage = { channel, sender, text, ts, isDirect }
-    this.recordMessage(msg)
-    this.emitMessage(msg, { buffered: cmds.length > 1, chunkCount: cmds.length })
+    const mention = this.recordMessage(msg)
+    this.emitMessage(msg, { buffered: cmds.length > 1, chunkCount: cmds.length, ...(mention ? { mention: true } : {}) })
   }
 
   private handleChathistoryBatch(event: BatchEndEvent): void {

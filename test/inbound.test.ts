@@ -205,4 +205,52 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(summary.content).toContain('ip-in-peer9b (1)')
     expect(summary.content).not.toContain('ip-in-peer9 (')
   })
+
+  // ---- mention="true" attribute (issue #237) --------------------------------
+
+  it('channel message containing own nick carries mention="true"', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-ment1')
+    const peer = await connectPeer(ergo, 'ip-in-ment1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-ment1' } })
+    await peer.joinChannel('#ip-in-ment1')
+
+    peer.say('#ip-in-ment1', 'ip-in-ment1: are you there?')
+    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment1' && n.content === 'ip-in-ment1: are you there?')
+
+    expect(n.meta.mention).toBe('true')
+  })
+
+  it('channel message not containing own nick has no mention attribute', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-ment2')
+    const peer = await connectPeer(ergo, 'ip-in-ment2-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-ment2' } })
+    await peer.joinChannel('#ip-in-ment2')
+
+    peer.say('#ip-in-ment2', 'just chatting')
+    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment2' && n.content === 'just chatting')
+
+    expect(n.meta.mention).toBeUndefined()
+  })
+
+  it('word-boundary: nick as prefix of longer word does not set mention', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-ment3')
+    const peer = await connectPeer(ergo, 'ip-in-ment3-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-ment3' } })
+    await peer.joinChannel('#ip-in-ment3')
+
+    peer.say('#ip-in-ment3', 'ip-in-ment3x is not the target nick')
+    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment3' && n.content === 'ip-in-ment3x is not the target nick')
+
+    expect(n.meta.mention).toBeUndefined()
+  })
+
+  it('DM always carries mention="true"', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-ment4')
+    const peer = await connectPeer(ergo, 'ip-in-ment4-peer')
+
+    peer.say('ip-in-ment4', 'hey there')
+    const n = await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'hey there')
+
+    expect(n.meta.mention).toBe('true')
+  })
 })

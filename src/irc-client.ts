@@ -26,6 +26,7 @@ export interface MessageMeta {
   buffered?: boolean
   chunkCount?: number
   historical?: boolean
+  mention?: boolean
 }
 
 // Extras on membership events from join/part/kick/quit/nick.
