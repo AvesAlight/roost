@@ -106,7 +106,7 @@ export function formatEvent(event: OrchestratorEvent): string {
   }
 
   if (kind === 'pr_no_linked_issues') {
-    return `⚠️ PR ${tag} has no linked issues — events won't be routed. Add Closes #<issue> (or Fixes/Resolves) to the PR body: ${event.url ?? ''}`
+    return `WARN PR ${tag} has no linked issues — events won't be routed. Add Closes #<issue> (or Fixes/Resolves) to the PR body: ${event.url ?? ''}`
   }
 
   if (kind === 'dispatcher_error') {
