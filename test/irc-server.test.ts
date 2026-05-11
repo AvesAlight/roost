@@ -228,7 +228,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-histshape5')
 
     peer.say('#ip-histshape5', 'line one\nline two')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape5' && n.content.includes('line one'))
+    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape5' && n.content.includes('line two'))
 
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape5' } })
     const text = toolText(hist)

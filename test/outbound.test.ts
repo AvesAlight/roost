@@ -65,11 +65,11 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     const sender = await startMcpInProcess(ergo, 'ip-out-mcp4')
     const receiver = await startMcpInProcess(ergo, 'ip-out-mcp5')
 
-    await Promise.all([
-      sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } }),
-      receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } }),
-    ])
-    // wait for sender to see receiver's JOIN so channelUsers reflects 2 members
+    // Sequence the joins: sender joins first, then receiver, so sender deterministically
+    // sees receiver's JOIN event. Promise.all races the joins and if receiver wins, sender
+    // arrives into an already-populated channel and never sees the JOIN it's waiting for.
+    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } })
+    await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } })
     await sender.waitForNotification(n => n.meta.event === 'join' && n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp5')
 
     const longText = 'a'.repeat(150) + '\n' + 'b'.repeat(150) + '\n' + 'c'.repeat(50)
