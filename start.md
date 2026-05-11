@@ -25,7 +25,11 @@ When you spawn an agent, always pass the namespaced nick + the matching `--chann
 
 ## Getting started
 
-Spawn the watcher: `roost spawn roost-watcher --model haiku --channels '#roost-leads' --prompt '/watcher roost roost-lead-pm alex' --perm-irc --perm-target roost-lead-pm`
+Spawn the watcher:
+```bash
+CONFIG_DIR="$(pwd)/.orchestrator"
+roost spawn roost-watcher --model haiku --channels '#roost-leads' --prompt "/watcher roost roost-lead-pm alex $CONFIG_DIR" --perm-irc --perm-target roost-lead-pm
+```
 
 The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
 
