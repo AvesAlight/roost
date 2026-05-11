@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
-import { messagePredicate } from './helpers/mcp-core.js'
+import { messagePredicate, eventPredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 
@@ -53,7 +53,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     peer.say('ip-out-mcp3', 'dm from peer')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.isDirect === 'true' && n.meta.sender === 'ip-out-peer3' && n.content === 'dm from peer',
+      messagePredicate({ isDirect: true, sender: 'ip-out-peer3', content: 'dm from peer' }),
     )
     expect(n.content).toBe('dm from peer')
     expect(n.meta.isDirect).toBe('true')
@@ -71,7 +71,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     // arrives into an already-populated channel and never sees the JOIN it's waiting for.
     await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } })
     await receiver.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-ml' } })
-    await sender.waitForNotification(n => n.meta.event === 'join' && n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp5')
+    await sender.waitForNotification(eventPredicate('join', { channel: '#ip-out-ml', sender: 'ip-out-mcp5' }))
 
     const longText = 'a'.repeat(150) + '\n' + 'b'.repeat(150) + '\n' + 'c'.repeat(50)
     // 352 bytes total, two embedded newlines — forces draft/multiline batch
@@ -97,7 +97,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-bcast' } })
     await peer.joinChannel('#ip-out-bcast')
     // wait for MCP to process peer's JOIN so channelUsers cache reflects 2 members
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.channel === '#ip-out-bcast' && n.meta.sender === 'ip-out-bcast-peer1')
+    await mcp.waitForNotification(eventPredicate('join', { channel: '#ip-out-bcast', sender: 'ip-out-bcast-peer1' }))
 
     const result = await mcp.client.callTool({
       name: 'channel_message',
@@ -150,13 +150,13 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     // Send one at a time, waiting for each notification so the receive buffer
     // doesn't coalesce them into a single event.
     peer.say('#ip-out-hist', 'hist-msg-1')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-1')
+    await mcp.waitForNotification(messagePredicate({ channel: '#ip-out-hist', content: 'hist-msg-1' }))
 
     peer.say('#ip-out-hist', 'hist-msg-2')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-2')
+    await mcp.waitForNotification(messagePredicate({ channel: '#ip-out-hist', content: 'hist-msg-2' }))
 
     peer.say('#ip-out-hist', 'hist-msg-3')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-out-hist' && n.content === 'hist-msg-3')
+    await mcp.waitForNotification(messagePredicate({ channel: '#ip-out-hist', content: 'hist-msg-3' }))
 
     const hist = await mcp.client.callTool({
       name: 'channel_history',

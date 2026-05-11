@@ -1,47 +1,70 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { NOT_READY_SENTINEL } from '../../src/irc-server.js'
+import type { MembershipKind, SystemKind } from '../../src/irc-client.js'
+import type {
+  WireMeta,
+  WireMessageMeta,
+  WireReminderMeta,
+  WireMembershipMeta,
+  WireSystemMeta,
+  WireUnreadSummaryMeta,
+} from '../../src/wire-meta.js'
 import { sleep, suppressLateRejection } from './tool.js'
 
 let nextWaiterId = 0
 
+export type ChannelNotificationMeta = WireMeta & { seq: string }
+export type MessageNotificationMeta = WireMessageMeta & { seq: string }
+
 export interface ChannelNotification {
   content: string
-  meta: Record<string, string>
+  meta: ChannelNotificationMeta
   /** Pass as `fromCursor` on the next call to skip past this notification. */
   cursor: number
 }
 
+export type MessageNotification = ChannelNotification & { meta: MessageNotificationMeta }
+
 // Match-by-fields against an `event="message"` wire notification. Each field
-// is optional and ignored if undefined; if set, all must match. Centralizing
-// this avoids the per-site inline-predicate pattern that bit #246 — adding
-// a new field to the wire is a one-file edit here, and the helper enforces
-// the positive `event === 'message'` discriminator.
+// is optional and ignored if undefined; if set, all must match. An empty
+// `MessageMatch` ({}) matches any message notification — useful as a
+// wait-for-any-message form. Centralizing this avoids the per-site inline
+// predicate pattern that bit #246: a wire-shape change is a one-file edit
+// here, and the helper enforces the positive `event === 'message'`
+// discriminator.
 export interface MessageMatch {
   channel?: string
   sender?: string
   content?: string
   isDirect?: boolean
   mention?: boolean
+  historical?: boolean
 }
 
-function matchesMessage(n: ChannelNotification, m: MessageMatch): boolean {
+function matchesMessage(n: ChannelNotification, m: MessageMatch): n is MessageNotification {
   if (n.meta.event !== 'message') return false
   if (m.channel !== undefined && n.meta.channel !== m.channel) return false
   if (m.sender !== undefined && n.meta.sender !== m.sender) return false
   if (m.content !== undefined && n.content !== m.content) return false
   if (m.isDirect !== undefined && (n.meta.isDirect === 'true') !== m.isDirect) return false
   if (m.mention !== undefined && (n.meta.mention === 'true') !== m.mention) return false
+  if (m.historical !== undefined && (n.meta.historical === 'true') !== m.historical) return false
   return true
 }
 
-/** Build a predicate suitable for `waitForNotification`. */
-export function messagePredicate(m: MessageMatch): (n: ChannelNotification) => boolean {
-  return (n) => matchesMessage(n, m)
+/** Type-predicate factory for `waitForNotification`. The narrowed result has
+ *  `meta: WireMessageMeta & { seq: string }`. `messagePredicate({})` matches
+ *  any message notification — useful as a wait-for-any-message form. */
+export function messagePredicate(m: MessageMatch = {}): (n: ChannelNotification) => n is MessageNotification {
+  return (n): n is MessageNotification => matchesMessage(n, m)
 }
 
-/** Fail-fast assertion when you already hold a notification and want to verify its shape. */
-export function assertChannelMessage(n: ChannelNotification, m: MessageMatch): void {
+/** Fail-fast assertion: throws on mismatch, narrows `n` to MessageNotification on success. */
+export function assertChannelMessage(
+  n: ChannelNotification,
+  m: MessageMatch,
+): asserts n is MessageNotification {
   if (matchesMessage(n, m)) return
   const got = {
     event: n.meta.event,
@@ -49,17 +72,65 @@ export function assertChannelMessage(n: ChannelNotification, m: MessageMatch): v
     sender: n.meta.sender,
     content: n.content,
     isDirect: n.meta.isDirect,
-    mention: n.meta.mention,
   }
   throw new Error(
     `channel message mismatch\n  expected: ${JSON.stringify(m)}\n  got: ${JSON.stringify(got)}`,
   )
 }
 
+// Generic event-narrowing helpers for non-message events (membership, reminder,
+// system, unread-summary). `eventPredicate('join', { sender: 'x' })` narrows
+// awaited notifications to the matching variant; `expectEvent(n, 'leave')`
+// asserts an already-held notification and narrows it.
+//
+// The mapping is explicit (rather than `Extract<>`) because variants with a
+// union-typed `event` field (WireMembershipMeta, WireSystemMeta) aren't
+// assignable to `{event: 'join'}` and would `Extract` to `never`.
+export type EventVariantMeta<E extends WireMeta['event']> =
+  E extends 'message' ? WireMessageMeta & { event: 'message' }
+  : E extends 'reminder' ? WireReminderMeta & { event: 'reminder' }
+  : E extends MembershipKind ? WireMembershipMeta & { event: E }
+  : E extends 'unread-summary' ? WireUnreadSummaryMeta & { event: 'unread-summary' }
+  : E extends SystemKind ? WireSystemMeta & { event: E }
+  : never
+export type EventNotification<E extends WireMeta['event']> =
+  ChannelNotification & { meta: EventVariantMeta<E> & { seq: string } }
+
+export function eventPredicate<E extends WireMeta['event']>(
+  event: E,
+  opts: Partial<Omit<EventVariantMeta<E>, 'event' | 'seq'>> = {},
+): (n: ChannelNotification) => n is EventNotification<E> {
+  return (n): n is EventNotification<E> => {
+    if (n.meta.event !== event) return false
+    const meta = n.meta as unknown as Record<string, string | undefined>
+    for (const [k, v] of Object.entries(opts as Record<string, string | undefined>)) {
+      if (v === undefined) continue
+      if (meta[k] !== v) return false
+    }
+    return true
+  }
+}
+
+export function expectEvent<E extends WireMeta['event']>(
+  n: ChannelNotification,
+  event: E,
+): asserts n is EventNotification<E> {
+  if (n.meta.event !== event) {
+    throw new Error(`expected event="${event}", got event="${n.meta.event}"`)
+  }
+}
+
 export interface McpHandle {
   client: Client
   nick: string
   notifications: ChannelNotification[]
+  // Type-predicate overload: a narrowing predicate (e.g. from `messagePredicate`)
+  // propagates the narrowed type through to the awaited result.
+  waitForNotification<T extends ChannelNotification>(
+    pred: (n: ChannelNotification) => n is T,
+    timeoutMs?: number,
+    fromCursor?: number,
+  ): Promise<T>
   waitForNotification(
     pred: (n: ChannelNotification) => boolean,
     timeoutMs?: number,
@@ -88,7 +159,7 @@ export async function wireMcpClient(
 
   client.fallbackNotificationHandler = async (notification) => {
     if (notification.method !== 'notifications/claude/channel') return
-    const params = notification.params as { content: string; meta: Record<string, string> }
+    const params = notification.params as { content: string; meta: ChannelNotificationMeta }
     const n: ChannelNotification = {
       content: params.content,
       meta: params.meta,
@@ -110,21 +181,23 @@ export async function wireMcpClient(
     nick,
     notifications,
     waiterCount: () => waiters.length,
-    waitForNotification(pred, timeoutMs = 15000, fromCursor = 0) {
-      return suppressLateRejection(new Promise((resolve, reject) => {
-        for (let i = fromCursor; i < notifications.length; i++) {
-          if (pred(notifications[i])) { resolve(notifications[i]); return }
-        }
-        const waiterId = nextWaiterId++
-        const wrappedResolve = (n: ChannelNotification) => { clearTimeout(timer); resolve(n) }
-        const timer = setTimeout(() => {
-          const idx = waiters.findIndex(w => w.id === waiterId)
-          if (idx !== -1) waiters.splice(idx, 1)
-          reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
-        }, timeoutMs)
-        waiters.push({ id: waiterId, pred, resolve: wrappedResolve })
-      }))
-    },
+    waitForNotification: ((
+      pred: (n: ChannelNotification) => boolean,
+      timeoutMs = 15000,
+      fromCursor = 0,
+    ) => suppressLateRejection(new Promise<ChannelNotification>((resolve, reject) => {
+      for (let i = fromCursor; i < notifications.length; i++) {
+        if (pred(notifications[i])) { resolve(notifications[i]); return }
+      }
+      const waiterId = nextWaiterId++
+      const wrappedResolve = (n: ChannelNotification) => { clearTimeout(timer); resolve(n) }
+      const timer = setTimeout(() => {
+        const idx = waiters.findIndex(w => w.id === waiterId)
+        if (idx !== -1) waiters.splice(idx, 1)
+        reject(new Error(`waitForNotification timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      waiters.push({ id: waiterId, pred, resolve: wrappedResolve })
+    }))) as McpHandle['waitForNotification'],
   }
 }
 

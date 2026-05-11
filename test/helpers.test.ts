@@ -30,7 +30,7 @@ describe.if(isErgoAvailable())('test helpers', () => {
 
     peer.say('#smoke-mcp', 'hello from peer')
     const n = await mcp.waitForNotification(
-      (n) => n.meta.channel === '#smoke-mcp' && n.content.includes('hello from peer'),
+      (n) => n.meta.event === 'message' && n.meta.channel === '#smoke-mcp' && n.content.includes('hello from peer'),
     )
     expect(n.meta.sender).toBe('smoke-peer2')
   })
@@ -67,7 +67,7 @@ describe.if(isErgoAvailable())('test helpers', () => {
     await peer.joinChannel('#waiter-cleanup')
 
     const notifP = mcp.waitForNotification(
-      n => n.meta.channel === '#waiter-cleanup' && n.content.includes('cleanup-probe'),
+      n => n.meta.event === 'message' && n.meta.channel === '#waiter-cleanup' && n.content.includes('cleanup-probe'),
     )
     peer.say('#waiter-cleanup', 'cleanup-probe')
     await notifP
