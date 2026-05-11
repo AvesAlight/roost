@@ -49,6 +49,7 @@ export class GitHubIssuesPlugin extends GhBase {
       curState.issues[key] = snap
       for (const event of events) {
         if (event.kind === 'issue_added_to_watch') {
+          // Issues always get a confirmation — no no-linked-issues analogue here.
           const routingChannels = this.resolveChannels(
             GitHubIssuesPlugin.issueEventChannels(project, event),
             entryChannels
