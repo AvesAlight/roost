@@ -30,6 +30,7 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
+import type { WireMeta, WireMessageMeta, WireMembershipMeta } from './wire-meta.js'
 import { startPermbot, type PermbotConfig } from './permbot.js'
 import { permbotNickFor } from './permbot-socket.js'
 import { claimOwnership } from './owner-gate.js'
@@ -197,7 +198,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     },
   )
 
-  const pushNotification = (content: string, meta: Record<string, string>): Promise<void> => {
+  // Typed via WireMeta: every emit site picks a variant of the discriminated
+  // union, so adding a new event value is a compile error at every consumer
+  // that narrows on `event`. See src/wire-meta.ts. `seq` is appended here.
+  const pushNotification = (content: string, meta: WireMeta): Promise<void> => {
     const seq = ++receiveSeq
     return mcp.notification({
       method: 'notifications/claude/channel',
@@ -233,11 +237,11 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   // ---- Typed event subscriptions -----------------------------------------
 
   client.on('message', (msg, meta) => {
-    const metaRecord: Record<string, string> = {
+    const metaRecord: WireMessageMeta = {
       event: 'message',
       sender: msg.sender,
       channel: msg.channel,
-      isDirect: String(msg.isDirect),
+      isDirect: msg.isDirect ? 'true' : 'false',
       ts: msg.ts,
     }
     if (meta.buffered) {
@@ -258,7 +262,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
           event: 'reminder',
           channel: msg.channel,
           sender: '',
-          isDirect: String(msg.isDirect),
+          isDirect: msg.isDirect ? 'true' : 'false',
           ts: msg.ts,
         })
       }
@@ -268,7 +272,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
 
   client.on('membership', (kind, nick, channel, extras) => {
     const ts = new Date().toISOString()
-    const meta: Record<string, string> = {
+    const meta: WireMembershipMeta = {
       sender: nick,
       channel,
       isDirect: 'false',
