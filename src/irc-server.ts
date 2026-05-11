@@ -201,7 +201,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     const seq = ++receiveSeq
     return mcp.notification({
       method: 'notifications/claude/channel',
-      params: { content, meta: { ...meta, source: SOURCE_NAME, seq: String(seq) } },
+      params: { content, meta: { ...meta, seq: String(seq) } },
     }).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       if (/not connected/i.test(msg)) return
@@ -230,6 +230,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
 
   client.on('message', (msg, meta) => {
     const metaRecord: Record<string, string> = {
+      event: 'message',
       sender: msg.sender,
       channel: msg.channel,
       isDirect: String(msg.isDirect),

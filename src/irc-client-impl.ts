@@ -250,7 +250,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private recordMessage(msg: IrcMessage, historical = false): void {
     this.pushHistory(msg.channel, msg)
     this.addFingerprint(msg)
-    if (!historical) {
+    if (!historical && msg.sender !== '') {
       const prev = this.unread.get(msg.channel)
       const isMention = this.nickMentionRegex.test(msg.text)
       this.unread.set(msg.channel, {

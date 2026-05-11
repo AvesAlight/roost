@@ -63,6 +63,8 @@ automatically.
 The daemon is dumb on purpose — it loops, ticks, sleeps. Bring it up under
 whatever process supervisor your project already uses (tmux, systemd, launchd).
 
+Run from your project root — `.orchestrator/` is resolved relative to `process.cwd()`.
+
 State files in `.orchestrator/`:
 
 | File | Purpose |

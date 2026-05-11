@@ -196,6 +196,24 @@ describe('NAMES timeout fallback on join', () => {
   })
 })
 
+describe('unread filter: empty-sender messages', () => {
+  it('server notices with sender="" do not increment unread', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new RoostIrcClientImpl(config) as any
+    const ts = new Date().toISOString()
+    client.recordMessage({ channel: '*', sender: '', text: 'This server is in debug mode', ts, isDirect: false })
+    expect(client.unread.size).toBe(0)
+  })
+
+  it('messages with a real sender still increment unread', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new RoostIrcClientImpl(config) as any
+    const ts = new Date().toISOString()
+    client.recordMessage({ channel: '#test', sender: 'alice', text: 'hello', ts, isDirect: false })
+    expect(client.unread.get('#test')?.count).toBe(1)
+  })
+})
+
 describe('whoisChannels', () => {
   it('returns null on timeout (whois callback never fires)', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

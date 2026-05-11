@@ -25,10 +25,11 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     )
 
     expect(n.content).toBe('hello channel')
+    expect(n.meta.event).toBe('message')
     expect(n.meta.sender).toBe('ip-in-peer1')
     expect(n.meta.channel).toBe('#ip-in-chan')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBe('roost-irc')
+    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -43,10 +44,11 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
       n => n.meta.isDirect === 'true' && n.content === 'hello dm',
     )
 
+    expect(n.meta.event).toBe('message')
     expect(n.meta.sender).toBe('ip-in-peer2')
     expect(n.meta.channel).toBe('ip-in-peer2')
     expect(n.meta.isDirect).toBe('true')
-    expect(n.meta.source).toBe('roost-irc')
+    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -66,7 +68,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.sender).toBe('ip-in-peer3')
     expect(n.meta.channel).toBe('#ip-in-join')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBe('roost-irc')
+    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -89,7 +91,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.sender).toBe('ip-in-peer4')
     expect(n.meta.channel).toBe('#ip-in-part')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBe('roost-irc')
+    expect(n.meta.source).toBeUndefined()
   })
 
   it('peer KICK: notification with event=leave, reason contains "kicked"', async () => {
@@ -135,7 +137,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.newNick).toBe('ip-in-peer6b')
     expect(n.meta.channel).toBe('')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBe('roost-irc')
+    expect(n.meta.source).toBeUndefined()
   })
 
   it('self JOIN/LEAVE suppressed: own events not emitted', async () => {
