@@ -105,6 +105,10 @@ export function formatEvent(event: OrchestratorEvent): string {
     return `Issue ${tag} BACKLOG: ${ev.comment_count ?? 0} comments existed before watch — scan manually: ${event.url ?? ''}`
   }
 
+  if (kind === 'pr_no_linked_issues') {
+    return `⚠️ PR ${tag} has no linked issues — events won't be routed. Add Closes #N (or Fixes/Resolves) to the PR body: ${event.url ?? ''}`
+  }
+
   if (kind === 'dispatcher_error') {
     const ev = event as SeedEvent
     const tb = (ev.stderr ?? '').trim().split('\n')

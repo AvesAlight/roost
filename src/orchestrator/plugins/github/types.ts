@@ -14,6 +14,7 @@ export interface PrSnap {
   seen_review_comment_ids: number[]
   seen_conversation_comment_ids: number[]
   seen_review_ids: number[]
+  warned_no_linked?: boolean
 }
 
 export interface IssueSnap {

@@ -28,6 +28,7 @@ export function computePrEvents(
   const linked = snap.linked_issues ?? []
   const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
+  if (linked.length === 0) events.push({ kind: 'pr_no_linked_issues', ...base })
   const existingRev = snap.seen_review_comment_ids.length
   const existingConv = snap.seen_conversation_comment_ids.length
   if (existingRev || existingConv) {
@@ -64,7 +65,17 @@ export async function scrapePr(
   agentLogins: Set<string>
 ): Promise<ScrapeResult<PrSnap>> {
   const snap = await snapshotPr(repo, number, prevSnap ?? undefined)
-  return { snap: stripInternals(snap) as PrSnap, events: computePrEvents(snap, prevSnap, agentLogins) }
+  const events = computePrEvents(snap, prevSnap, agentLogins)
+  const stripped = stripInternals(snap) as PrSnap
+  const linked = stripped.linked_issues ?? []
+  if (linked.length > 0) {
+    stripped.warned_no_linked = false
+  } else if (events.some(e => e.kind === 'pr_no_linked_issues')) {
+    stripped.warned_no_linked = true
+  } else {
+    stripped.warned_no_linked = prevSnap?.warned_no_linked ?? false
+  }
+  return { snap: stripped, events }
 }
 
 export async function scrapeIssue(

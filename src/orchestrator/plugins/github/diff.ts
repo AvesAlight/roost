@@ -70,6 +70,7 @@ export interface SeedEvent extends BaseEvent {
     | 'pr_returned_to_draft'
     | 'pr_merged'
     | 'pr_closed'
+    | 'pr_no_linked_issues'
   review_comment_count?: number
   conversation_comment_count?: number
   comment_count?: number
@@ -92,6 +93,7 @@ const ALWAYS_PUSH_KINDS = new Set([
   'pr_has_existing_ci_state',
   'issue_has_existing_comments',
   'dispatcher_error',
+  'pr_no_linked_issues',
 ])
 const MEANINGFUL_LABEL_PREFIXES = ['phase:', 'plan:']
 const MEANINGFUL_LABELS_EXACT = new Set(['ready-for-merge'])
@@ -180,6 +182,8 @@ export function diffPr(
   const repo = cur.repo
   const linked = cur.linked_issues ?? []
   const base = { repo, pr: n, url: cur.url ?? '', title: cur.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
+
+  if (linked.length === 0 && !prev.warned_no_linked) events.push({ kind: 'pr_no_linked_issues', ...base })
 
   if (prev.is_draft && !cur.is_draft) events.push({ kind: 'pr_ready_for_review', ...base })
   if (!prev.is_draft && cur.is_draft) events.push({ kind: 'pr_returned_to_draft', ...base })

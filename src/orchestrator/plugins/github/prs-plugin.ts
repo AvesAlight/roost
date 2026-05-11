@@ -1,6 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
-import { defaultProject, issueChannel } from '../../naming.js'
+import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { scrapePr } from './scraper.js'
@@ -15,10 +15,11 @@ export class GitHubPrsPlugin extends GhBase {
     return this.entryChannels(config, config.watched_prs)
   }
 
-  // Auto-detected channels for a PR event: linked-issue channels, or its own
-  // issue channel if no linked issues.
-  private static prEventChannels(project: string, event: OrchestratorEvent): string[] {
+  // Auto-detected channels for a PR event: linked-issue channels, project
+  // channel for no-linked-issues warnings, or PR's own issue channel as fallback.
+  private static prEventChannels(project: string, event: OrchestratorEvent, projectChannel: string): string[] {
     if (event.pr == null) return []
+    if (event.kind === 'pr_no_linked_issues') return [projectChannel]
     const linked = event.linked_issues ?? []
     return linked.length
       ? linked.map(n => issueChannel(project, n))
@@ -30,6 +31,7 @@ export class GitHubPrsPlugin extends GhBase {
     prevState: unknown
   ): Promise<PluginTickResult> {
     const project = defaultProject(config)
+    const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
     const watched = config.watched_prs ?? []
     const agentLogins = this.agentLogins(config)
@@ -55,7 +57,7 @@ export class GitHubPrsPlugin extends GhBase {
       for (const event of events) {
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event), entryChannels),
+          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event, projectChannel), entryChannels),
           payload: formatPayload(event),
         })
       }
