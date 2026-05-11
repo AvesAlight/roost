@@ -83,7 +83,6 @@ export type OrchestratorEvent = BaseEvent | LabelEvent | CiEvent | CommentEvent 
 
 // ---- Classification --------------------------------------------------------
 
-const SKIP_KINDS = new Set(['pr_added_to_watch', 'issue_added_to_watch'])
 const ALWAYS_PUSH_KINDS = new Set([
   'pr_ready_for_review',
   'pr_returned_to_draft',
@@ -100,7 +99,6 @@ const MEANINGFUL_LABELS_EXACT = new Set(['ready-for-merge'])
 
 export function shouldPush(event: OrchestratorEvent): boolean {
   const kind = event.kind
-  if (SKIP_KINDS.has(kind)) return false
   if (ALWAYS_PUSH_KINDS.has(kind)) return true
   if (['pr_review_comment', 'pr_conversation_comment', 'issue_comment', 'pr_review_submitted'].includes(kind)) return true
   if (kind === 'ci_transitioned') {

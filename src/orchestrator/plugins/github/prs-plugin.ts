@@ -59,11 +59,11 @@ export class GitHubPrsPlugin extends GhBase {
           const linked = event.linked_issues ?? []
           // Suppress when no linked issues — pr_no_linked_issues already fires
           // with the clearer "events won't be routed" message on the same tick.
-          if (linked.length > 0) {
+          if (linked.length) {
             const routingChannels = this.resolveChannels(
               GitHubPrsPlugin.prEventChannels(project, event, projectChannel),
               entryChannels
-            )
+            ).filter(ch => ch !== projectChannel)
             taggedEvents.push({
               channels: [projectChannel],
               payload: { kind: 'oneline', text: `now watching PR ${key} — routing events to ${routingChannels.join(', ')}` },

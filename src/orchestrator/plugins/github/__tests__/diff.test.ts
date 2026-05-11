@@ -148,10 +148,6 @@ describe('diffIssue', () => {
 })
 
 describe('shouldPush', () => {
-  it('skips pr_added_to_watch', () => {
-    expect(shouldPush({ kind: 'pr_added_to_watch' })).toBe(false)
-  })
-
   it('pushes pr_merged', () => {
     expect(shouldPush({ kind: 'pr_merged' })).toBe(true)
   })

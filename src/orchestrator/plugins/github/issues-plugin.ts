@@ -53,7 +53,7 @@ export class GitHubIssuesPlugin extends GhBase {
           const routingChannels = this.resolveChannels(
             GitHubIssuesPlugin.issueEventChannels(project, event),
             entryChannels
-          )
+          ).filter(ch => ch !== projectChannel)
           taggedEvents.push({
             channels: [projectChannel],
             payload: { kind: 'oneline', text: `now watching issue ${key} — routing events to ${routingChannels.join(', ')}` },
