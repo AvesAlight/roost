@@ -42,14 +42,23 @@ export interface MessageMatch {
   historical?: boolean
 }
 
+function isMessageNotification(n: ChannelNotification): n is MessageNotification {
+  return n.meta.event === 'message'
+}
+
 function matchesMessage(n: ChannelNotification, m: MessageMatch): n is MessageNotification {
-  if (n.meta.event !== 'message') return false
-  if (m.channel !== undefined && n.meta.channel !== m.channel) return false
-  if (m.sender !== undefined && n.meta.sender !== m.sender) return false
+  if (!isMessageNotification(n)) return false
+  // Bind the narrowed meta to its concrete variant. Direct field reads through
+  // `n.meta` after a discriminant check work locally on TS6/macOS but fail on
+  // TS6/linux for the `WireMeta & { seq }` intersection — the union still
+  // surfaces in later reads. The explicit-typed local locks the narrowing.
+  const meta: MessageNotificationMeta = n.meta
+  if (m.channel !== undefined && meta.channel !== m.channel) return false
+  if (m.sender !== undefined && meta.sender !== m.sender) return false
   if (m.content !== undefined && n.content !== m.content) return false
-  if (m.isDirect !== undefined && (n.meta.isDirect === 'true') !== m.isDirect) return false
-  if (m.mention !== undefined && (n.meta.mention === 'true') !== m.mention) return false
-  if (m.historical !== undefined && (n.meta.historical === 'true') !== m.historical) return false
+  if (m.isDirect !== undefined && (meta.isDirect === 'true') !== m.isDirect) return false
+  if (m.mention !== undefined && (meta.mention === 'true') !== m.mention) return false
+  if (m.historical !== undefined && (meta.historical === 'true') !== m.historical) return false
   return true
 }
 
