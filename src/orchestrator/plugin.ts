@@ -1,9 +1,8 @@
-// Plugin seam (#116, extended in #215). A plugin owns a slice of
-// `state.plugins[name]` and the symmetric slice of `config.plugins[name]`,
-// declares which IRC channels it wants joined, and on each tick returns
-// pre-routed, pre-formatted events. Event kinds are plugin-internal —
-// the dispatcher iterates `TaggedEvent[]` and writes to IRC, agnostic to
-// the source plugin's event vocabulary.
+// Plugin seam. A plugin owns symmetric slices of `state.plugins[name]` and
+// `config.plugins[name]`, declares which IRC channels it wants joined, and on
+// each tick returns pre-routed, pre-formatted events. Event kinds are
+// plugin-internal — the dispatcher iterates `TaggedEvent[]` and writes to IRC,
+// agnostic to the source plugin's event vocabulary.
 import type { OrchestratorConfig } from './config.js'
 
 // Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
@@ -61,7 +60,7 @@ export abstract class BasePlugin implements Plugin {
   }
 }
 
-// ---- Registry (#215) -------------------------------------------------------
+// ---- Registry --------------------------------------------------------------
 // Config-driven instantiation: each plugin module registers a factory keyed
 // on the same name it uses for its state slice. orchestrator.ts iterates
 // `config.plugins` and instantiates via `getPluginFactory`. Side-effect

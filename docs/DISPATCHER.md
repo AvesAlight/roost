@@ -42,28 +42,8 @@ For watched entries, `repo` defaults to the top-level value. `channels` adds
 destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
 to `#<project>-issue-N` for each linked issue).
 
-### Migrating from 0.x
-
-Pre-1.0 configs declared watches at the top level as `watched_prs` and
-`watched_issues`. As of #215 each plugin owns its own config slice, mirroring
-the way `state.plugins.{name}` already works. Move both lists under a
-`plugins` block keyed by plugin name:
-
-```jsonc
-// before
-{ "watched_prs": [...], "watched_issues": [...] }
-
-// after
-{
-  "plugins": {
-    "github-prs":    { "watched": [...] },
-    "github-issues": { "watched": [...] }
-  }
-}
-```
-
-This is a clean break — there is no top-level fallback. A plugin not listed
-under `plugins` is not instantiated.
+A plugin not listed under `plugins` is not instantiated — there is no top-level
+fallback.
 
 ## Running
 

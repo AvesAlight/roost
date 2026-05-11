@@ -72,9 +72,9 @@ async function runOneTick(
   return { taggedEvents: allTagged, channels: [...allChannels] }
 }
 
-// Instantiate plugins from `config.plugins` via the registry (#215). Order
-// follows `Object.keys` insertion order in the config JSON, so emission order
-// is predictable from the operator's POV.
+// Instantiate plugins from `config.plugins` via the registry. Order follows
+// `Object.keys` insertion order in the config JSON, so emission order is
+// predictable from the operator's POV.
 function buildPlugins(config: OrchestratorConfig, defaultChannel: string): Plugin[] {
   const names = Object.keys(config.plugins ?? {})
   return names.map(name => {

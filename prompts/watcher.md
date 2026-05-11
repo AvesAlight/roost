@@ -16,7 +16,7 @@ You have IRC tools as MCP. Use them. Do NOT use Bash/nc/raw IRC protocol.
 - Send DM: `direct_message`
 - Read: `channel_history`, `channel_ack` (only when you read but have nothing to say — sending a message implicitly acks the channel)
 
-## Config shape (#215)
+## Config shape
 
 Watches live under per-plugin slices at `plugins.github-prs.watched` and `plugins.github-issues.watched`. Each is an array of `{number, channels?}` objects. Each entry's optional `channels` list adds destinations on top of the default `#$0-issue-N` routing. There is no bare-int form, and no top-level fallback — write only under `plugins.github-prs.watched` / `plugins.github-issues.watched`.
 

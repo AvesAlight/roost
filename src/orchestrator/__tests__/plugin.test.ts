@@ -59,10 +59,10 @@ describe('resolveRepoEntry', () => {
   })
 })
 
-// End-to-end seam test (#215): a stub plugin defines its own event kind and
-// config slice, registers via the registry, and ticks through dispatch.
-// Proves the three seams compose — registry, plugin-owned events, plugin
-// config slice — without leaning on the GH plugins.
+// End-to-end seam test: a stub plugin defines its own event kind and config
+// slice, registers via the registry, and ticks through dispatch. Proves the
+// three seams compose — registry, plugin-owned events, plugin config slice —
+// without leaning on the GH plugins.
 
 interface StubPluginConfig {
   rooms?: string[]

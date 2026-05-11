@@ -17,8 +17,8 @@ export abstract class GhBase extends BasePlugin {
     return new Set(config.agent_logins ?? [])
   }
 
-  // The plugin's `watched` list from `config.plugins[name].watched` — same
-  // shape for both GH plugins; #215 made this the convention.
+  // The plugin's `watched` list from `config.plugins[name].watched` — the
+  // shared shape for every GhBase plugin.
   protected watched(config: OrchestratorConfig): WatchedEntry[] {
     return this.pluginConfig<GhPluginConfig>(config)?.watched ?? []
   }
