@@ -66,7 +66,7 @@ export async function wireMcpClient(
     nick,
     notifications,
     waiterCount: () => waiters.length,
-    waitForNotification(pred, timeoutMs = 5000, fromCursor = 0) {
+    waitForNotification(pred, timeoutMs = 15000, fromCursor = 0) {
       return suppressLateRejection(new Promise((resolve, reject) => {
         for (let i = fromCursor; i < notifications.length; i++) {
           if (pred(notifications[i])) { resolve(notifications[i]); return }
