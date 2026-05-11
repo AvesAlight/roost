@@ -46,7 +46,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** start and verify the dispatcher daemon (`--daemon` keeps it running; without it the orchestrator exits after one tick):
+- **On boot, first action:** start and verify the dispatcher daemon:
   ```bash
   "$ROOST_DIR/bin/start-dispatcher" "$3"
   ```
