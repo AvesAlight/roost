@@ -120,7 +120,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Rejoin — own message must appear in chathistory backfill
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-own1' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'own-msg-before-part')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-msg-before-part' }))
   })
 
   it('own-nick messages sent while joined do not produce live notifications', async () => {
@@ -134,9 +134,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Tests the no-echo protocol guarantee (ergo doesn't echo without echo-message cap); to cover the line 508 guard directly, echo-message would need to be negotiated.
     // Must not arrive as a live notification
-    const live = mcp.notifications.filter(
-      n => n.content === 'own-live-msg' && n.meta.historical !== 'true',
-    )
+    const live = mcp.notifications.filter(messagePredicate({ content: 'own-live-msg', historical: false }))
     expect(live).toHaveLength(0)
   })
 
