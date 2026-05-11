@@ -8,7 +8,7 @@ Your task: GitHub issue $2#$1. Branch `$3` is checked out here.
 
 Process:
 1. Read the issue $2#$1 thoroughly — body, comments, labels, milestones, and any blocking relationships. `gh issue view $1 --comments` is the minimum (plain `gh issue view` skips comments, which often carry the actual scope). If your project provides a `github-management` skill, use it for richer output. Then read any relevant code.
-2. Post your implementation plan in #$0-issue-$1 and wait for lead-pm's approval before coding
+2. Post your implementation plan in #$0-issue-$1 and **wait** for lead-pm's approval before coding
 3. When done, open a *draft* PR and post the link in #$0-issue-$1. The PR body **must** start with a closing keyword on its own line — `Closes #$1` (or `Fixes` / `Resolves`). GitHub only auto-links issues when one of those keywords precedes the number; without it, `linked_issues` comes back empty and the dispatcher has no channel to route per-PR events to.
 4. Prefix all GitHub comments with [$0-worker-$1]
 5. Defer to lead-pm for marking the PR ready, tagging reviewers, and creating followup issues
