@@ -1,6 +1,6 @@
 {
   "project": "roost",
-  "repo": "AlexSc/roost",
+  "repo": "AvesAlight/roost",
   "agent_logins": ["TeakBuilds"],
   "irc": {
     "nick": "roost-dispatcher",

@@ -559,7 +559,7 @@ cmd_spawn() {
   # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
   # the inner command stays a clean single-quoted string.
-  local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}")
+  local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
   if [ -n "${perm_sock}" ]; then
     tmux_env+=(-e "ROOST_PERM_SOCK=${perm_sock}" -e "ROOST_PERM_HOST=${IRC_HOST}" -e "ROOST_PERM_PORT=${IRC_PORT}")
