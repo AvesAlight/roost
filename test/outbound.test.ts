@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
+import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 
@@ -84,7 +85,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(toolText(result)).toContain('[#ip-out-ml: 2 members]')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-out-ml' && n.meta.sender === 'ip-out-mcp4' && n.meta.event === 'message',
+      messagePredicate({ channel: '#ip-out-ml', sender: 'ip-out-mcp4' }),
     )
     expect(n.content).toBe(longText)
   })

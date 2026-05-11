@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
+import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 import { MULTILINE_LINE_BYTES } from '../src/constants.js'
@@ -25,7 +26,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-ml-ec1', text } })
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec1' && n.meta.sender === 'ip-ml-ec1-s' && n.meta.event === 'message',
+      messagePredicate({ channel: '#ip-ml-ec1', sender: 'ip-ml-ec1-s' }),
     )
     expect(n.content).toBe(text)
   })
@@ -42,7 +43,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-ml-ec2', text } })
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec2' && n.meta.sender === 'ip-ml-ec2-s' && n.meta.event === 'message',
+      messagePredicate({ channel: '#ip-ml-ec2', sender: 'ip-ml-ec2-s' }),
     )
     expect(n.content).toBe(text)
   })
@@ -82,7 +83,7 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
     expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ip-ml-ec4' && n.meta.sender === 'ip-ml-ec4-s' && n.meta.event === 'message',
+      messagePredicate({ channel: '#ip-ml-ec4', sender: 'ip-ml-ec4-s' }),
     )
     expect(n.content).toBe(text)
   })
@@ -138,7 +139,7 @@ describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
     expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
-      n => n.meta.channel === '#ml-ec6' && n.meta.sender === 'ml-ec6-s' && n.meta.event === 'message',
+      messagePredicate({ channel: '#ml-ec6', sender: 'ml-ec6-s' }),
     )
     expect(n.content).toBe(text)
   })

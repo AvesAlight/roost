@@ -12,6 +12,50 @@ export interface ChannelNotification {
   cursor: number
 }
 
+// Match-by-fields against an `event="message"` wire notification. Each field
+// is optional and ignored if undefined; if set, all must match. Centralizing
+// this avoids the per-site inline-predicate pattern that bit #246 — adding
+// a new field to the wire is a one-file edit here, and the helper enforces
+// the positive `event === 'message'` discriminator.
+export interface MessageMatch {
+  channel?: string
+  sender?: string
+  content?: string
+  isDirect?: boolean
+  mention?: boolean
+}
+
+function matchesMessage(n: ChannelNotification, m: MessageMatch): boolean {
+  if (n.meta.event !== 'message') return false
+  if (m.channel !== undefined && n.meta.channel !== m.channel) return false
+  if (m.sender !== undefined && n.meta.sender !== m.sender) return false
+  if (m.content !== undefined && n.content !== m.content) return false
+  if (m.isDirect !== undefined && (n.meta.isDirect === 'true') !== m.isDirect) return false
+  if (m.mention !== undefined && (n.meta.mention === 'true') !== m.mention) return false
+  return true
+}
+
+/** Build a predicate suitable for `waitForNotification`. */
+export function messagePredicate(m: MessageMatch): (n: ChannelNotification) => boolean {
+  return (n) => matchesMessage(n, m)
+}
+
+/** Fail-fast assertion when you already hold a notification and want to verify its shape. */
+export function assertChannelMessage(n: ChannelNotification, m: MessageMatch): void {
+  if (matchesMessage(n, m)) return
+  const got = {
+    event: n.meta.event,
+    channel: n.meta.channel,
+    sender: n.meta.sender,
+    content: n.content,
+    isDirect: n.meta.isDirect,
+    mention: n.meta.mention,
+  }
+  throw new Error(
+    `channel message mismatch\n  expected: ${JSON.stringify(m)}\n  got: ${JSON.stringify(got)}`,
+  )
+}
+
 export interface McpHandle {
   client: Client
   nick: string
