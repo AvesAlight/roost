@@ -29,7 +29,8 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.sender).toBe('ip-in-peer1')
     expect(n.meta.channel).toBe('#ip-in-chan')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBeUndefined() // harness adds source="plugin:roost:roost-irc"; we must not emit our own
+    // roost no longer emits `source` on meta; the harness sets its own source attr at the envelope layer.
+    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
