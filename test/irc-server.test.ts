@@ -443,7 +443,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     const msg = await mcp.waitForNotification(
       n => n.meta.channel === '#ip-rem1' && n.content === 'first message',
     )
-    expect(msg.meta.event).toBeUndefined()
+    expect(msg.meta.event).toBe('message')
 
     const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
     expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
