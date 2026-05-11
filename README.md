@@ -185,7 +185,7 @@ roost spawn myproject-watcher -m haiku \
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
 `#<project>-issue-N` channels, etc.) so multiple projects can share one ergo.
-See [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md) for config schema, event
+See [`docs/DISPATCHER.md`](docs/DISPATCHER.md) for config schema, event
 reference, and plugin extension points.
 
 ## Channel events received
