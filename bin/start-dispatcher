@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# start-dispatcher <config-dir>
+#
+# Starts the roost dispatcher daemon for the given config directory and
+# verifies it is alive after a 2-second boot window.
+#
+# Exits 0 on success. Exits 1 on failure with a diagnostic on stderr
+# prefixed "start-dispatcher: FAIL: <reason>".
+#
+# Idempotency: no existing-PID guard. If a dispatcher is already running
+# for this config-dir a second copy will start. The watcher calls this
+# once on boot; avoiding double-starts is the caller's responsibility.
+
+set -uo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "start-dispatcher: usage: start-dispatcher <config-dir>" >&2
+  exit 1
+fi
+
+CONFIG_DIR="$1"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+nohup "$DIR/dispatcher" --daemon --config-dir "$CONFIG_DIR" >> "$CONFIG_DIR/dispatcher-boot.log" 2>&1 &
+DISP_PID=$!
+
+# 2s catches immediate failures (missing config, env, syntax);
+# steady-state crashes are visible in daemon.log
+sleep 2
+
+if kill -0 "$DISP_PID" 2>/dev/null; then
+  echo "dispatcher ok (pid $DISP_PID)"
+else
+  echo "start-dispatcher: FAIL: dispatcher (pid $DISP_PID) exited within 2s — see $CONFIG_DIR/dispatcher-boot.log" >&2
+  exit 1
+fi
