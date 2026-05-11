@@ -330,6 +330,28 @@ PRIVMSGs flush fast and two genuine quick sends stay separate;
 extended once multi-chunk shape is confirmed so server-side pauses
 don't fragment the logical message.
 
+### Finding H — Invariant-by-omission in tests is a footgun (#246)
+
+Surfaced 2026-05 from the #244 review cycle. Adding `event="message"`
+to the wire shape so that *message* became a positive discriminator
+(alongside `event="join"`, `event="reminder"`, etc.) silently broke
+six test predicates that filtered regular messages with `!n.meta.event`
+plus one assertion that the attr was *un*defined — seven sites total.
+Under `bun test --coverage` the runner wedged on the post-timeout
+failure instead of surfacing a clean fail — a single attr change
+cascaded into a 24-min CI hang.
+
+**Lesson:** never encode a contract as the *absence* of an attr. The
+positive discriminator (`event === 'message'`) is the only safe form;
+`!n.meta.event` quietly trusts a guarantee the wire never made.
+
+**Mitigation:** the wire shape is now a typed discriminated union at
+`src/wire-meta.ts` — adding a new `event` value is a compile error
+at every emit site and every consumer that narrows on `event`. Tests
+prefer the shared predicate / assertion helpers in `test/helpers/`
+over hand-rolled inline filters, so a wire-shape change is a one-file
+edit.
+
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
 Worked out 2026-04-28 in a #roost session with productops-customer

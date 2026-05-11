@@ -3,7 +3,7 @@ import { startErgo, startErgoDedicated, isErgoAvailable, type ErgoContext } from
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
-import type { ChannelNotification } from './helpers/mcp-core.js'
+import { messagePredicate, eventPredicate, type ChannelNotification } from './helpers/mcp-core.js'
 
 describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => {
   let ergo: ErgoContext
@@ -24,7 +24,7 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
 
     // Drain join notifications so they don't interfere with message collection
     await Promise.all(
-      peers.map(p => mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === p.nick)),
+      peers.map(p => mcp.waitForNotification(eventPredicate('join', { sender: p.nick }))),
     )
 
     // Send all messages simultaneously — each peer→channel pair gets its own
@@ -35,7 +35,7 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
     const notifs: ChannelNotification[] = []
     for (let i = 0; i < N; i++) {
       const n = await mcp.waitForNotification(
-        n => n.meta.channel === '#ip-seq-test' && n.content.startsWith('seq-msg-'),
+        n => n.meta.event === 'message' && n.meta.channel === '#ip-seq-test' && n.content.startsWith('seq-msg-'),
         5000,
         cursor,
       )
@@ -124,14 +124,14 @@ describe.if(isErgoAvailable())('reconnect (subprocess)', () => {
       await new Promise<void>(res => setTimeout(res, 6000))
 
       // Kill ergo — expect a disconnected notification
-      const disconnPromise = mcp.waitForNotification(n => n.meta.event === 'disconnected', 8000)
+      const disconnPromise = mcp.waitForNotification(eventPredicate('disconnected'), 8000)
       await dedicated.kill()
       const disconnNotif = await disconnPromise
       expect(disconnNotif.content).toContain('disconnected from IRC')
 
       // Restart ergo — expect a reconnected notification listing the channel
       await dedicated.restart()
-      const reconnNotif = await mcp.waitForNotification(n => n.meta.event === 'reconnected', 15000)
+      const reconnNotif = await mcp.waitForNotification(eventPredicate('reconnected'), 15000)
       expect(reconnNotif.content).toContain('reconnected to IRC')
       expect(reconnNotif.content).toContain('#rc-notif-ch')
 
@@ -140,7 +140,7 @@ describe.if(isErgoAvailable())('reconnect (subprocess)', () => {
       await peer.joinChannel('#rc-notif-ch')
       peer.say('#rc-notif-ch', 'post-reconnect-hello')
       const msgNotif = await mcp.waitForNotification(
-        n => n.meta.channel === '#rc-notif-ch' && n.content === 'post-reconnect-hello',
+        messagePredicate({ channel: '#rc-notif-ch', content: 'post-reconnect-hello' }),
         10000,
       )
       expect(msgNotif.content).toBe('post-reconnect-hello')

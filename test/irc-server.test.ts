@@ -7,6 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
+import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 import { createMcpServer } from '../src/irc-server.js'
@@ -199,7 +200,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await peer.joinChannel('#ip-histshape3')
 
     peer.say('#ip-histshape3', 'hey ip-histshape3 are you there?')
-    await mcp.waitForNotification(n => n.meta.channel === '#ip-histshape3' && n.meta.mention === 'true')
+    await mcp.waitForNotification(messagePredicate({ channel: '#ip-histshape3', mention: true }))
 
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-histshape3' } })
     expect(toolText(hist)).toContain('mention="true"')
@@ -558,7 +559,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     await echoSeen
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-rem4' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'historical-first')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'historical-first' }))
 
     peer.say('#ip-rem4', 'live-after-historical')
     const live = await mcp.waitForNotification(

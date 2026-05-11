@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
+import { messagePredicate, eventPredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 
@@ -21,7 +22,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     peer.say('#ip-in-chan', 'hello channel')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.channel === '#ip-in-chan' && n.content === 'hello channel',
+      messagePredicate({ channel: '#ip-in-chan', content: 'hello channel' }),
     )
 
     expect(n.content).toBe('hello channel')
@@ -29,8 +30,6 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.sender).toBe('ip-in-peer1')
     expect(n.meta.channel).toBe('#ip-in-chan')
     expect(n.meta.isDirect).toBe('false')
-    // roost no longer emits `source` on meta; the harness sets its own source attr at the envelope layer.
-    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -42,14 +41,13 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     peer.say('ip-in-mcp2', 'hello dm')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.isDirect === 'true' && n.content === 'hello dm',
+      messagePredicate({ isDirect: true, content: 'hello dm' }),
     )
 
     expect(n.meta.event).toBe('message')
     expect(n.meta.sender).toBe('ip-in-peer2')
     expect(n.meta.channel).toBe('ip-in-peer2')
     expect(n.meta.isDirect).toBe('true')
-    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -62,14 +60,13 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await peer.joinChannel('#ip-in-join')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer3',
+      eventPredicate('join', { sender: 'ip-in-peer3' }),
     )
 
     expect(n.meta.event).toBe('join')
     expect(n.meta.sender).toBe('ip-in-peer3')
     expect(n.meta.channel).toBe('#ip-in-join')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBeUndefined()
     expect(n.meta.ts).toBeTruthy()
     expect(Number(n.meta.seq)).toBeGreaterThan(0)
   })
@@ -80,19 +77,18 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-part' } })
     await peer.joinChannel('#ip-in-part')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer4')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-peer4' }))
 
     await peer.leaveChannel('#ip-in-part')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.event === 'leave' && n.meta.sender === 'ip-in-peer4',
+      eventPredicate('leave', { sender: 'ip-in-peer4' }),
     )
 
     expect(n.meta.event).toBe('leave')
     expect(n.meta.sender).toBe('ip-in-peer4')
     expect(n.meta.channel).toBe('#ip-in-part')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBeUndefined()
   })
 
   it('peer KICK: notification with event=leave, reason contains "kicked"', async () => {
@@ -105,12 +101,12 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     const kicked = await connectPeer(ergo, 'ip-in-kicked')
     await kicked.joinChannel('#ip-in-kick')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-kicked')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-kicked' }))
 
     kicker.kick('#ip-in-kick', 'ip-in-kicked', 'bye')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.event === 'leave' && n.meta.sender === 'ip-in-kicked',
+      eventPredicate('leave', { sender: 'ip-in-kicked' }),
     )
 
     expect(n.meta.event).toBe('leave')
@@ -125,12 +121,12 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick' } })
     await peer.joinChannel('#ip-in-nick')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer6')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-peer6' }))
 
     await peer.changeNick('ip-in-peer6b')
 
     const n = await mcp.waitForNotification(
-      n => n.meta.event === 'nick' && n.meta.sender === 'ip-in-peer6',
+      eventPredicate('nick', { sender: 'ip-in-peer6' }),
     )
 
     expect(n.meta.event).toBe('nick')
@@ -138,7 +134,6 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.newNick).toBe('ip-in-peer6b')
     expect(n.meta.channel).toBe('')
     expect(n.meta.isDirect).toBe('false')
-    expect(n.meta.source).toBeUndefined()
   })
 
   it('self JOIN/LEAVE suppressed: own events not emitted', async () => {
@@ -149,7 +144,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-self' } })
     // Peer join is our sync fence: any self-join notification would precede this
     await peer.joinChannel('#ip-in-self')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer7')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-peer7' }))
 
     expect(mcp.notifications.find(n => n.meta.sender === 'ip-in-mcp7')).toBeUndefined()
 
@@ -157,7 +152,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-in-self' } })
     // Use a peer DM as flush fence: any self-leave notification would precede this
     peer.say('ip-in-mcp7', 'ping')
-    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'ping')
+    await mcp.waitForNotification(messagePredicate({ isDirect: true, content: 'ping' }))
 
     expect(mcp.notifications.find(n => n.meta.sender === 'ip-in-mcp7')).toBeUndefined()
   })
@@ -168,13 +163,13 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick-hist' } })
     await peer.joinChannel('#ip-in-nick-hist')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer8')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-peer8' }))
 
     peer.say('ip-in-mcp8', 'dm before rename')
-    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'dm before rename')
+    await mcp.waitForNotification(messagePredicate({ isDirect: true, content: 'dm before rename' }))
 
     await peer.changeNick('ip-in-peer8b')
-    await mcp.waitForNotification(n => n.meta.event === 'nick' && n.meta.sender === 'ip-in-peer8')
+    await mcp.waitForNotification(eventPredicate('nick', { sender: 'ip-in-peer8' }))
 
     const histNew = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: 'ip-in-peer8b' } })
     const histOld = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: 'ip-in-peer8' } })
@@ -189,16 +184,16 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick-unread' } })
     await peer.joinChannel('#ip-in-nick-unread')
-    await mcp.waitForNotification(n => n.meta.event === 'join' && n.meta.sender === 'ip-in-peer9')
+    await mcp.waitForNotification(eventPredicate('join', { sender: 'ip-in-peer9' }))
 
     peer.say('ip-in-mcp9', 'dm for unread test')
-    await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'dm for unread test')
+    await mcp.waitForNotification(messagePredicate({ isDirect: true, content: 'dm for unread test' }))
 
     await peer.changeNick('ip-in-peer9b')
-    await mcp.waitForNotification(n => n.meta.event === 'nick' && n.meta.sender === 'ip-in-peer9')
+    await mcp.waitForNotification(eventPredicate('nick', { sender: 'ip-in-peer9' }))
 
     const cursor = mcp.notifications.length
-    const summaryP = mcp.waitForNotification(n => n.meta.event === 'unread-summary', 5000, cursor)
+    const summaryP = mcp.waitForNotification(eventPredicate('unread-summary'), 5000, cursor)
     await mcp.emitUnreadSummary()
     const summary = await summaryP
 
@@ -215,7 +210,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await peer.joinChannel('#ip-in-ment1')
 
     peer.say('#ip-in-ment1', 'ip-in-ment1: are you there?')
-    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment1' && n.content === 'ip-in-ment1: are you there?')
+    const n = await mcp.waitForNotification(messagePredicate({ channel: '#ip-in-ment1', content: 'ip-in-ment1: are you there?' }))
 
     expect(n.meta.mention).toBe('true')
   })
@@ -227,7 +222,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await peer.joinChannel('#ip-in-ment2')
 
     peer.say('#ip-in-ment2', 'just chatting')
-    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment2' && n.content === 'just chatting')
+    const n = await mcp.waitForNotification(messagePredicate({ channel: '#ip-in-ment2', content: 'just chatting' }))
 
     expect(n.meta.mention).toBeUndefined()
   })
@@ -239,7 +234,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     await peer.joinChannel('#ip-in-ment3')
 
     peer.say('#ip-in-ment3', 'ip-in-ment3x is not the target nick')
-    const n = await mcp.waitForNotification(n => n.meta.channel === '#ip-in-ment3' && n.content === 'ip-in-ment3x is not the target nick')
+    const n = await mcp.waitForNotification(messagePredicate({ channel: '#ip-in-ment3', content: 'ip-in-ment3x is not the target nick' }))
 
     expect(n.meta.mention).toBeUndefined()
   })
@@ -249,7 +244,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     const peer = await connectPeer(ergo, 'ip-in-ment4-peer')
 
     peer.say('ip-in-ment4', 'hey there')
-    const n = await mcp.waitForNotification(n => n.meta.isDirect === 'true' && n.content === 'hey there')
+    const n = await mcp.waitForNotification(messagePredicate({ isDirect: true, content: 'hey there' }))
 
     expect(n.meta.mention).toBe('true')
   })

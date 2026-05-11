@@ -12,6 +12,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Surface a wedged test run as a clean failure at ~10min instead of
+    # GitHub's 6h default — see #246 for the original 24-min hang.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v6

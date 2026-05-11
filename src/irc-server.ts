@@ -29,7 +29,9 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import type { RoostIrcClient, ClientConfig, UnreadInfo } from './irc-client.js'
+import type { RoostIrcClient, ClientConfig, UnreadInfo, MessageMeta } from './irc-client.js'
+import type { IrcMessage } from './irc-lib.js'
+import type { WireMeta, WireMessageMeta, WireMembershipMeta } from './wire-meta.js'
 import { startPermbot, type PermbotConfig } from './permbot.js'
 import { permbotNickFor } from './permbot-socket.js'
 import { claimOwnership } from './owner-gate.js'
@@ -197,7 +199,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     },
   )
 
-  const pushNotification = (content: string, meta: Record<string, string>): Promise<void> => {
+  // Typed via WireMeta: every emit site picks a variant of the discriminated
+  // union, so adding a new event value is a compile error at every consumer
+  // that narrows on `event`. See src/wire-meta.ts. `seq` is appended here.
+  const pushNotification = (content: string, meta: WireMeta): Promise<void> => {
     const seq = ++receiveSeq
     return mcp.notification({
       method: 'notifications/claude/channel',
@@ -212,6 +217,34 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
   const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const wireMention = (msg: { mention?: boolean; isDirect: boolean }) => msg.mention || msg.isDirect
+
+  // Single source of truth for the message wire shape — used by the live emit
+  // path (notifications/claude/channel) and by channel_history's tool response
+  // (which synthesizes <channel ...> elements with the same attrs). A new key
+  // on WireMessageMeta needs to be set here once; both consumers pick it up
+  // automatically via renderMessageAttrs.
+  // isDirect literal is `'true' | 'false'` to satisfy WireMessageMeta's
+  // narrowed type — don't revert to `String(msg.isDirect)` (same wire bytes,
+  // but defeats the union's typecheck contract).
+  const buildMessageMeta = (msg: IrcMessage, meta: MessageMeta): WireMessageMeta => {
+    const r: WireMessageMeta = {
+      event: 'message',
+      sender: msg.sender,
+      channel: msg.channel,
+      isDirect: msg.isDirect ? 'true' : 'false',
+      ts: msg.ts,
+    }
+    if (meta.buffered) {
+      r.buffered = 'true'
+      if (meta.chunkCount && meta.chunkCount > 1) r.chunkCount = String(meta.chunkCount)
+    }
+    if (meta.historical) r.historical = 'true'
+    if (wireMention({ mention: meta.mention, isDirect: msg.isDirect })) r.mention = 'true'
+    return r
+  }
+
+  const renderMessageAttrs = (meta: WireMessageMeta): string =>
+    Object.entries(meta).map(([k, v]) => `${k}="${escAttr(String(v))}"`).join(' ')
 
   const formatUnreadLine = (ch: string, info: UnreadInfo, previewLength = 40): string => {
     const hasMention = info.mentionCount > 0
@@ -233,21 +266,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   // ---- Typed event subscriptions -----------------------------------------
 
   client.on('message', (msg, meta) => {
-    const metaRecord: Record<string, string> = {
-      event: 'message',
-      sender: msg.sender,
-      channel: msg.channel,
-      isDirect: String(msg.isDirect),
-      ts: msg.ts,
-    }
-    if (meta.buffered) {
-      metaRecord.buffered = 'true'
-      if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
-    }
-    if (meta.historical) metaRecord.historical = 'true'
-    if (wireMention({ mention: meta.mention, isDirect: msg.isDirect })) metaRecord.mention = 'true'
-
-    pushNotification(msg.text, metaRecord)
+    pushNotification(msg.text, buildMessageMeta(msg, meta))
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
@@ -258,7 +277,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
           event: 'reminder',
           channel: msg.channel,
           sender: '',
-          isDirect: String(msg.isDirect),
+          isDirect: msg.isDirect ? 'true' : 'false',
           ts: msg.ts,
         })
       }
@@ -268,7 +287,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
 
   client.on('membership', (kind, nick, channel, extras) => {
     const ts = new Date().toISOString()
-    const meta: Record<string, string> = {
+    const meta: WireMembershipMeta = {
       sender: nick,
       channel,
       isDirect: 'false',
@@ -356,8 +375,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const slice = client.getHistory(key, limit)
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key} (since this MCP started)</channel>` }] }
         const lines = slice.map(m => {
-          const mention = wireMention(m) ? ' mention="true"' : ''
-          return `<channel sender="${escAttr(m.sender)}" channel="${escAttr(m.channel)}" isDirect="${m.isDirect}" ts="${escAttr(m.ts)}" event="message" historical="true"${mention}>${escBody(m.text)}</channel>`
+          const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })
+          return `<channel ${renderMessageAttrs(wireMeta)}>${escBody(m.text)}</channel>`
         })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
       }

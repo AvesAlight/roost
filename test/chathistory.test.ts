@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
+import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText, sleep } from './helpers/tool.js'
 
@@ -27,9 +28,9 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-backfill1' } })
 
     const [n1, n2, n3] = await Promise.all([
-      mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'before-join-1'),
-      mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'before-join-2'),
-      mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'before-join-3'),
+      mcp.waitForNotification(messagePredicate({ historical: true, content: 'before-join-1' })),
+      mcp.waitForNotification(messagePredicate({ historical: true, content: 'before-join-2' })),
+      mcp.waitForNotification(messagePredicate({ historical: true, content: 'before-join-3' })),
     ])
 
     expect(n1.meta.channel).toBe('#ip-hist-backfill1')
@@ -52,8 +53,8 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-backfill2' } })
 
     const [n1, n2] = await Promise.all([
-      mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'while-parted-1'),
-      mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'while-parted-2'),
+      mcp.waitForNotification(messagePredicate({ historical: true, content: 'while-parted-1' })),
+      mcp.waitForNotification(messagePredicate({ historical: true, content: 'while-parted-2' })),
     ])
 
     expect(Number(n2.meta.seq)).toBeGreaterThan(Number(n1.meta.seq))
@@ -73,11 +74,11 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-limit' } })
 
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'limit-three')
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'limit-four')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'limit-three' }))
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'limit-four' }))
 
     // Earlier messages are outside the limit and must not appear.
-    const all = mcp.notifications.filter(n => n.meta.historical === 'true' && n.meta.channel === '#ip-hist-limit')
+    const all = mcp.notifications.filter(messagePredicate({ historical: true, channel: '#ip-hist-limit' }))
     expect(all.some(n => n.content === 'limit-one')).toBe(false)
     expect(all.some(n => n.content === 'limit-two')).toBe(false)
   })
@@ -92,7 +93,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     await sleep(200)
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-order3' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'order-two')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'order-two' }))
 
     const hist = await mcp.client.callTool({
       name: 'channel_history',
@@ -119,7 +120,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Rejoin — own message must appear in chathistory backfill
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-own1' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'own-msg-before-part')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-msg-before-part' }))
   })
 
   it('own-nick messages sent while joined do not produce live notifications', async () => {
@@ -133,9 +134,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Tests the no-echo protocol guarantee (ergo doesn't echo without echo-message cap); to cover the line 508 guard directly, echo-message would need to be negotiated.
     // Must not arrive as a live notification
-    const live = mcp.notifications.filter(
-      n => n.content === 'own-live-msg' && n.meta.historical !== 'true',
-    )
+    const live = mcp.notifications.filter(messagePredicate({ content: 'own-live-msg', historical: false }))
     expect(live).toHaveLength(0)
   })
 
@@ -148,7 +147,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // Receive message live — MCP adds it to seen-set
     peer.say('#ip-hist-dedup1', 'dedup-live-msg')
-    await mcp.waitForNotification(n => n.content === 'dedup-live-msg' && n.meta.channel === '#ip-hist-dedup1')
+    await mcp.waitForNotification(messagePredicate({ content: 'dedup-live-msg', channel: '#ip-hist-dedup1' }))
 
     // Part and rejoin — ergo replays chathistory including dedup-live-msg
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-hist-dedup1' } })
@@ -156,9 +155,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     await sleep(500)
 
     // The message must not arrive again as historical
-    const dupes = mcp.notifications.filter(
-      n => n.content === 'dedup-live-msg' && n.meta.historical === 'true',
-    )
+    const dupes = mcp.notifications.filter(messagePredicate({ content: 'dedup-live-msg', historical: true }))
     expect(dupes).toHaveLength(0)
   })
 
@@ -173,7 +170,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 
     // First join — received as historical, added to seen-set
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-dedup2' } })
-    await mcp.waitForNotification(n => n.meta.historical === 'true' && n.content === 'dedup-hist-msg')
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'dedup-hist-msg' }))
 
     // Part and rejoin — chathistory would replay it again without dedupe
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-hist-dedup2' } })
@@ -211,13 +208,13 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
 
     peer.say('#hist-dedup3', 'dedup-reset-msg')
-    await mcp.waitForNotification(n => n.content === 'dedup-reset-msg' && n.meta.channel === '#hist-dedup3')
+    await mcp.waitForNotification(messagePredicate({ content: 'dedup-reset-msg', channel: '#hist-dedup3' }))
 
     // Verify dedupe works before reset: part+rejoin → no duplicate
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#hist-dedup3' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
     await sleep(500)
-    expect(mcp.notifications.filter(n => n.content === 'dedup-reset-msg' && n.meta.historical === 'true')).toHaveLength(0)
+    expect(mcp.notifications.filter(messagePredicate({ content: 'dedup-reset-msg', historical: true }))).toHaveLength(0)
 
     // Simulate compaction: send SIGUSR1 via the pidfile
     const pidPath = `${dataDir}/mcp.pid`
@@ -228,6 +225,6 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
     // Part+rejoin after reset → message replays as historical
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#hist-dedup3' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
-    await mcp.waitForNotification(n => n.content === 'dedup-reset-msg' && n.meta.historical === 'true', 5000)
+    await mcp.waitForNotification(messagePredicate({ content: 'dedup-reset-msg', historical: true }), 5000)
   })
 })
