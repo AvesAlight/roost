@@ -14,6 +14,11 @@ export interface PrSnap {
   seen_review_comment_ids: number[]
   seen_conversation_comment_ids: number[]
   seen_review_ids: number[]
+  // Mute flag: set after pr_no_linked_issues warning, cleared when
+  // linked_issues becomes non-empty so a subsequent loss re-warns.
+  // Absent in old snapshots (pre-upgrade) — !undefined is true, so upgrade
+  // path warns on first tick without any special handling.
+  warned_no_linked?: boolean
 }
 
 export interface IssueSnap {

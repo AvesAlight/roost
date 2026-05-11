@@ -20,14 +20,19 @@ export function computePrEvents(
   snap: PrSnapInternal,
   prevSnap: PrSnap | null | undefined,
   agentLogins: Set<string>
-): OrchestratorEvent[] {
-  if (prevSnap === undefined) return []   // seeding tick — no events
-  if (prevSnap !== null) return diffPr(prevSnap, snap, agentLogins)
+): { events: OrchestratorEvent[], nextWarnedNoLinked: boolean } {
+  const linked = snap.linked_issues ?? []
+
+  if (prevSnap === undefined) return { events: [], nextWarnedNoLinked: false }  // seeding tick
+
+  if (prevSnap !== null) {
+    return { events: diffPr(prevSnap, snap, agentLogins), nextWarnedNoLinked: linked.length === 0 }
+  }
 
   // New PR added to watch list
-  const linked = snap.linked_issues ?? []
   const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
+  if (linked.length === 0) events.push({ kind: 'pr_no_linked_issues', ...base })
   const existingRev = snap.seen_review_comment_ids.length
   const existingConv = snap.seen_conversation_comment_ids.length
   if (existingRev || existingConv) {
@@ -36,7 +41,7 @@ export function computePrEvents(
   if (snap.ci_state === 'SUCCESS' || snap.ci_state === 'FAILURE') {
     events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, ...base })
   }
-  return events
+  return { events, nextWarnedNoLinked: linked.length === 0 }
 }
 
 export function computeIssueEvents(
@@ -64,7 +69,10 @@ export async function scrapePr(
   agentLogins: Set<string>
 ): Promise<ScrapeResult<PrSnap>> {
   const snap = await snapshotPr(repo, number, prevSnap ?? undefined)
-  return { snap: stripInternals(snap) as PrSnap, events: computePrEvents(snap, prevSnap, agentLogins) }
+  const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, agentLogins)
+  const stripped = stripInternals(snap) as PrSnap
+  stripped.warned_no_linked = nextWarnedNoLinked
+  return { snap: stripped, events }
 }
 
 export async function scrapeIssue(

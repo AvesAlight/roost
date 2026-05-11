@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { diffPr, diffIssue, shouldPush, formatCommentEvent } from '../diff.js'
+import { computePrEvents } from '../scraper.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import type { PrSnapInternal, IssueSnapInternal } from '../snapshot.js'
 
@@ -177,6 +178,75 @@ describe('shouldPush', () => {
 
   it('does not push issue_state_changed to open', () => {
     expect(shouldPush({ kind: 'issue_state_changed', from: 'closed', to: 'open' })).toBe(false)
+  })
+})
+
+describe('diffPr — pr_no_linked_issues', () => {
+  it('emits pr_no_linked_issues when linked_issues is empty and not yet warned', () => {
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [], warned_no_linked: false }) }
+    const cur = basePrSnap({ linked_issues: [] })
+    const events = diffPr(prev, cur)
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
+  })
+
+  it('does not re-emit pr_no_linked_issues when already warned', () => {
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [], warned_no_linked: true }) }
+    const cur = basePrSnap({ linked_issues: [] })
+    const events = diffPr(prev, cur)
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
+  })
+
+  it('does not emit pr_no_linked_issues when linked_issues is non-empty', () => {
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [] }) }
+    const cur = basePrSnap({ linked_issues: [42] })
+    const events = diffPr(prev, cur)
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
+  })
+
+  it('warns again after linked_issues cleared ([N] → [] transition)', () => {
+    // prev had linked issues so warned_no_linked was reset to false
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [42], warned_no_linked: false }) }
+    const cur = basePrSnap({ linked_issues: [] })
+    const events = diffPr(prev, cur)
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
+  })
+
+  it('treats absent warned_no_linked as false (warns on upgrade)', () => {
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [] }) }
+    // warned_no_linked is undefined (absent from old snapshot)
+    delete (prev as Partial<PrSnap>).warned_no_linked
+    const cur = basePrSnap({ linked_issues: [] })
+    const events = diffPr(prev, cur)
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
+  })
+})
+
+describe('computePrEvents — pr_no_linked_issues', () => {
+  it('emits pr_no_linked_issues and sets nextWarnedNoLinked for new PR with empty linked_issues', () => {
+    const snap = basePrSnap({ linked_issues: [] })
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, null, new Set())
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
+    expect(nextWarnedNoLinked).toBe(true)
+  })
+
+  it('does not emit pr_no_linked_issues and clears flag for new PR with linked issues', () => {
+    const snap = basePrSnap({ linked_issues: [5] })
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, null, new Set())
+    expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
+    expect(nextWarnedNoLinked).toBe(false)
+  })
+
+  it('does not emit for seeding tick (prevSnap undefined), nextWarnedNoLinked false', () => {
+    const snap = basePrSnap({ linked_issues: [] })
+    const { events, nextWarnedNoLinked } = computePrEvents(snap, undefined, new Set())
+    expect(events).toHaveLength(0)
+    expect(nextWarnedNoLinked).toBe(false)
+  })
+})
+
+describe('shouldPush — pr_no_linked_issues', () => {
+  it('pushes pr_no_linked_issues', () => {
+    expect(shouldPush({ kind: 'pr_no_linked_issues', pr: 5 })).toBe(true)
   })
 })
 

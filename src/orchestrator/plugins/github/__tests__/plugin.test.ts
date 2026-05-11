@@ -71,6 +71,23 @@ describe('GitHubPrsPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
+  it('routes pr_no_linked_issues to project channel', async () => {
+    const warningEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues',
+      repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
+    } as OrchestratorEvent
+    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }),
+      events: [warningEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toContain('#proj-leads')
+    } finally { spy.mockRestore() }
+  })
+
   it('filters non-pushable events (e.g. pr_added_to_watch) before tagging', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',

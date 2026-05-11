@@ -43,51 +43,53 @@ function baseIssueInternal(overrides: Partial<IssueSnapInternal> = {}): IssueSna
 
 describe('computePrEvents — seeding tick (prevSnap = undefined)', () => {
   it('returns no events on a seeding tick', () => {
-    expect(computePrEvents(basePrInternal(), undefined, new Set())).toEqual([])
+    const { events, nextWarnedNoLinked } = computePrEvents(basePrInternal(), undefined, new Set())
+    expect(events).toEqual([])
+    expect(nextWarnedNoLinked).toBe(false)
   })
 })
 
 describe('computePrEvents — new watch entry (prevSnap = null)', () => {
   it('emits pr_added_to_watch', () => {
-    const events = computePrEvents(basePrInternal(), null, new Set())
+    const { events } = computePrEvents(basePrInternal(), null, new Set())
     expect(events.some(e => e.kind === 'pr_added_to_watch')).toBe(true)
   })
 
   it('includes linked_issues in seed event when present', () => {
     const snap = basePrInternal({ linked_issues: [5, 6] })
-    const events = computePrEvents(snap, null, new Set())
+    const { events } = computePrEvents(snap, null, new Set())
     const ev = events.find(e => e.kind === 'pr_added_to_watch') as { linked_issues?: number[] } | undefined
     expect(ev?.linked_issues).toEqual([5, 6])
   })
 
   it('emits pr_has_existing_comments when review comments exist', () => {
     const snap = basePrInternal({ seen_review_comment_ids: [1, 2] })
-    const events = computePrEvents(snap, null, new Set())
+    const { events } = computePrEvents(snap, null, new Set())
     const ev = events.find(e => e.kind === 'pr_has_existing_comments') as { review_comment_count?: number } | undefined
     expect(ev?.review_comment_count).toBe(2)
   })
 
   it('emits pr_has_existing_comments when conversation comments exist', () => {
     const snap = basePrInternal({ seen_conversation_comment_ids: [3] })
-    const events = computePrEvents(snap, null, new Set())
+    const { events } = computePrEvents(snap, null, new Set())
     const ev = events.find(e => e.kind === 'pr_has_existing_comments') as { conversation_comment_count?: number } | undefined
     expect(ev?.conversation_comment_count).toBe(1)
   })
 
   it('does not emit pr_has_existing_comments when no existing comments', () => {
-    const events = computePrEvents(basePrInternal(), null, new Set())
+    const { events } = computePrEvents(basePrInternal(), null, new Set())
     expect(events.some(e => e.kind === 'pr_has_existing_comments')).toBe(false)
   })
 
   it('emits pr_has_existing_ci_state for terminal CI', () => {
     const snap = basePrInternal({ ci_state: 'SUCCESS' })
-    const events = computePrEvents(snap, null, new Set())
+    const { events } = computePrEvents(snap, null, new Set())
     expect(events.some(e => e.kind === 'pr_has_existing_ci_state')).toBe(true)
   })
 
   it('does not emit pr_has_existing_ci_state for PENDING CI', () => {
     const snap = basePrInternal({ ci_state: 'PENDING' })
-    const events = computePrEvents(snap, null, new Set())
+    const { events } = computePrEvents(snap, null, new Set())
     expect(events.some(e => e.kind === 'pr_has_existing_ci_state')).toBe(false)
   })
 })
@@ -96,7 +98,7 @@ describe('computePrEvents — normal diff (prevSnap = PrSnap)', () => {
   it('delegates to diffPr and returns change events', () => {
     const prev: PrSnap = { ...basePrInternal(), is_draft: true }
     const cur = basePrInternal({ is_draft: false })
-    const events = computePrEvents(cur, prev, new Set())
+    const { events } = computePrEvents(cur, prev, new Set())
     expect(events.some(e => e.kind === 'pr_ready_for_review')).toBe(true)
   })
 })
