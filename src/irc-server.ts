@@ -149,6 +149,7 @@ export interface CreateMcpOptions {
 // → ircClient.connect.
 export function createMcpServer(client: RoostIrcClient, config: ClientConfig, options: CreateMcpOptions = {}): { server: Server; clearDedupeCache: () => void; emitUnreadSummary: () => Promise<void> } {
   const { nick: NICK, autoJoin: AUTO_JOIN } = config
+  const mentionRegex = new RegExp(`\\b${NICK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
 
   // ---- Passive short-circuit ---------------------------------------------
   // Lost the owner race in claimOwnership(). Build a minimal MCP that errors
@@ -193,7 +194,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
+      instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events also carry mention="true" when the message body contains your nick (word-boundary match) or the message is a DM (isDirect="true") — absent when not a mention. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -241,6 +242,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       if (meta.chunkCount && meta.chunkCount > 1) metaRecord.chunkCount = String(meta.chunkCount)
     }
     if (meta.historical) metaRecord.historical = 'true'
+    if (msg.isDirect || mentionRegex.test(msg.text)) metaRecord.mention = 'true'
 
     pushNotification(msg.text, metaRecord)
     process.stderr.write(

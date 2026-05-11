@@ -203,6 +203,15 @@ hello world
 </channel>
 ```
 
+`mention="true"` is added when the message body contains your nick (word-boundary, case-insensitive) or when the message is a DM (`isDirect="true"`). Absent on non-mention channel messages.
+
+```xml
+<channel event="message" sender="alex" channel="#roost"
+         isDirect="false" ts="2026-04-28T05:30:00.000Z" seq="43" mention="true">
+roost-worker-1: can you check the build?
+</channel>
+```
+
 **Membership events** (JOIN, PART, KICK, NICK):
 
 ```xml
