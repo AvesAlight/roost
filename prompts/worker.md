@@ -24,7 +24,7 @@ PRs start as draft. When your work is complete and CI is green, signal clearly i
 ## CI failures
 
 When CI fails, triage in this order:
-- **(a) Upstream drift** — is the merge base different from where you branched? A parallel merge to main can introduce failures that have nothing to do with your change. Check `git log origin/main --oneline` against your branch point before assuming it's yours.
+- **(a) Upstream drift** — did main advance since you branched? CI tests the merge commit, so a parallel merge can introduce failures unrelated to your change. Run `git fetch && git log HEAD..origin/main --oneline` to see what CI pulled in that you don't have.
 - **(b) Environment mismatch** — does the failure reproduce locally? CI may run a different OS, toolchain version, or stricter type flags.
 - **(c) Real bug** — only after ruling out (a) and (b), assume it's in your change.
 
