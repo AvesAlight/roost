@@ -49,6 +49,8 @@ export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'regis
 // string for disconnected/reconnected/cap-missing; { nick } for registered; { code } for registration-failed
 export type SystemContent = string | { code?: number; nick?: string }
 
+export type MembershipKind = 'join' | 'leave' | 'nick'
+
 export interface JoinResult {
   ok: boolean
   members: string[]
@@ -80,6 +82,6 @@ export interface RoostIrcClient {
   isJoined(channel: string): boolean
 
   on(event: 'message',    handler: (msg: IrcMessage, meta: MessageMeta) => void): void
-  on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
+  on(event: 'membership', handler: (kind: MembershipKind, nick: string, channel: string, extras: MembershipExtras) => void): void
   on(event: 'system',     handler: (kind: SystemKind, content: SystemContent) => void): void
 }

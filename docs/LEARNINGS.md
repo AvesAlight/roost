@@ -335,11 +335,11 @@ don't fragment the logical message.
 Surfaced 2026-05 from the #244 review cycle. Adding `event="message"`
 to the wire shape so that *message* became a positive discriminator
 (alongside `event="join"`, `event="reminder"`, etc.) silently broke
-seven test predicates that filtered regular messages with `!n.meta.event`,
-plus one assertion that the attr was *un*defined. Under `bun test
---coverage` the runner wedged on the post-timeout failure instead of
-surfacing a clean fail — a single attr change cascaded into a 24-min
-CI hang.
+six test predicates that filtered regular messages with `!n.meta.event`
+plus one assertion that the attr was *un*defined — seven sites total.
+Under `bun test --coverage` the runner wedged on the post-timeout
+failure instead of surfacing a clean fail — a single attr change
+cascaded into a 24-min CI hang.
 
 **Lesson:** never encode a contract as the *absence* of an attr. The
 positive discriminator (`event === 'message'`) is the only safe form;

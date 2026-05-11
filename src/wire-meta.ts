@@ -1,15 +1,22 @@
 // Wire shape of `notifications/claude/channel` meta records emitted by the MCP.
 //
-// The wire is `Record<string, string>` over JSON-RPC. These types are the
-// internal contract for the emit side: adding a new `event` value is a
-// compile-time error at every emit site, and the union forces every variant
-// to declare which attrs apply to it. Consumers (tests, the host harness)
-// can narrow by `event` for type-safe access to variant-specific attrs.
+// Emit-side contract: every call to pushNotification picks a variant of the
+// union, so adding a new `event` value is a compile error at every emit site.
+// The union also reuses `SystemKind` / `MembershipKind` from irc-client.ts —
+// the source of truth for those literals lives there, not duplicated here.
+//
+// Consumer-side caveat: the wire is `Record<string, string>` over JSON-RPC,
+// and `test/helpers/mcp-core.ts`'s `ChannelNotification.meta` is currently
+// typed loosely as `Record<string, string>`. Consumers can narrow against
+// `WireMeta` by importing it, but the helper layer does not enforce that.
+// Tightening it is a separate followup; see #246 review thread.
 //
 // Why string values: JSON-RPC serializes everything to strings on the wire,
 // so booleans render as the literal `'true'` and numbers as decimal strings.
 // Optional flags (e.g. `buffered?: 'true'`) are present-or-absent rather than
 // `'true' | 'false'` — keeps the wire compact and matches existing consumers.
+
+import type { SystemKind, MembershipKind } from './irc-client.js'
 
 export interface WireMessageMeta {
   event: 'message'
@@ -32,7 +39,7 @@ export interface WireReminderMeta {
 }
 
 export interface WireMembershipMeta {
-  event: 'join' | 'leave' | 'nick'
+  event: MembershipKind
   sender: string
   channel: string
   isDirect: 'false'
@@ -42,7 +49,7 @@ export interface WireMembershipMeta {
 }
 
 export interface WireSystemMeta {
-  event: 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
+  event: SystemKind
   sender: string
   channel: string
   isDirect: 'false'
