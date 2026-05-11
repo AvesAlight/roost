@@ -178,9 +178,11 @@ transitions, PR comments, issue updates) into the right
 ```bash
 cd ~/Dev/myproject
 roost init                              # first-time: writes .orchestrator/config.json + prompts
+CONFIG_DIR="$(pwd)/.orchestrator"
 roost spawn myproject-watcher -m haiku \
   --channels '#myproject-leads' \
-  --prompt '/watcher'
+  --prompt "/watcher myproject myproject-lead-pm <your-nick> $CONFIG_DIR" \
+  --perm-irc --perm-target myproject-lead-pm
 ```
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
