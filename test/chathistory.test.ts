@@ -131,6 +131,7 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-hist-own2', text: 'own-live-msg' } })
     await sleep(200)
 
+    // Tests the no-echo protocol guarantee (ergo doesn't echo without echo-message cap); to cover the line 508 guard directly, echo-message would need to be negotiated.
     // Must not arrive as a live notification
     const live = mcp.notifications.filter(
       n => n.content === 'own-live-msg' && n.meta.historical !== 'true',
