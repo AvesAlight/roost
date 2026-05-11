@@ -35,6 +35,8 @@ CONFIG_DIR="$(pwd)/.orchestrator"
 roost spawn $0-watcher --model haiku --channels '#$0-leads' --prompt "/watcher $0 $0-lead-pm $2 $CONFIG_DIR" --perm-irc --perm-target $0-lead-pm
 ```
 
+The watcher starts the dispatcher daemon automatically on boot — you don't need to start it manually.
+
 The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
 
 - `watch <N>` — add N to `watched_issues` (idempotent)

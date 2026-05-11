@@ -44,7 +44,7 @@ A single message may contain multiple commands, separated by newlines, semicolon
 
 ## Behavior rules
 
-- **On boot, first action:** run `nohup bin/dispatcher --daemon --config-dir "$3" &` to ensure the dispatcher daemon is up. (Without `--daemon` the orchestrator is one-shot and exits.)
+- **On boot, first action:** run `ROOST_ROOT="$(roost root)" && nohup "$ROOST_ROOT/bin/dispatcher" --daemon --config-dir "$3" &` to ensure the dispatcher daemon is up. (Without `--daemon` the orchestrator is one-shot and exits.)
 - Read `$3/config.json` before each mutation (don't cache).
 - Pretty-print JSON on write (2-space indent, trailing newline).
 - If you don't recognize a command, ignore it silently.
