@@ -97,8 +97,6 @@ def _post(title, body, group, sound, activate, debug_on):
 	cmd = [TERMINAL_NOTIFIER, '-title', title, '-group', group, '-appIcon', WEECHAT_ICON, '-activate', activate]
 	if sound:
 		cmd += ['-sound', sound]
-	if debug_on:
-		weechat.prnt('', '[notif] cmd=%r body=%r' % (cmd, body))
 	try:
 		proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5, input=body)
 		if debug_on and proc.returncode != 0:
