@@ -1,4 +1,4 @@
-# orchestrator_poll
+# dispatcher
 
 A reference implementation of the polling pattern Roost teams use to wake
 agents on GitHub activity. Polls GitHub for changes to watched issues and PRs,
@@ -45,13 +45,13 @@ to `#<project>-issue-N` for each linked issue).
 
 ```sh
 # Seed initial state (no events emitted)
-bin/orchestrator_poll --seed
+bin/dispatcher --seed
 
 # Daemon mode (production)
-bin/orchestrator_poll --daemon
+bin/dispatcher --daemon
 
 # One-shot tick to stdout (debugging)
-bin/orchestrator_poll --dry-run
+bin/dispatcher --dry-run
 ```
 
 Daemon mode holds a persistent IRC connection, re-reads config each tick (so

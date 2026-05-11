@@ -50,7 +50,7 @@ channel events): cache reads 292M, creation 7.1M (all 1h TTL, zero 5m),
 misses 2.5M (~0.85%). No `messages_changed` or `tools_changed` fired. The
 clean cache behavior is the channel mechanism's, not fakechat-specific.
 
-Project-local dispatchers (`.orchestrator/bin/orchestrator_poll`) and the
+Project-local dispatchers (`.orchestrator/bin/dispatcher`) and the
 `tclaude` zsh port-allocation function are running infrastructure we
 keep. The dispatcher is a pure Python script (not a Claude session),
 interacting with the orchestrator via fakechat HTTP today.
