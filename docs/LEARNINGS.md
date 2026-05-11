@@ -141,7 +141,7 @@ Also added during this session:
   QUIT / NICK handlers. Returns `"#chan (N): nick1, nick2, ..."`.
 - **JOIN / LEAVE / KICK / NICK push as channel events** — agents on
   a channel now see comings and goings via
-  `<channel source="roost-irc" event="join|leave|nick" sender="..."
+  `<channel event="join|leave|nick" sender="..."
   channel="..." reason="..." newNick="...">...</channel>`
   notifications. Self-events suppressed. Smoke-tested end-to-end
   (standalone nc client + modified MCP — userlist correct,

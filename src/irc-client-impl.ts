@@ -247,6 +247,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   }
 
   // Record a message in history and dedupe set; increment unread unless historical.
+  // Empty-sender messages (server NOTICEs) are recorded to history/fingerprint but excluded from unread.
   private recordMessage(msg: IrcMessage, historical = false): void {
     this.pushHistory(msg.channel, msg)
     this.addFingerprint(msg)

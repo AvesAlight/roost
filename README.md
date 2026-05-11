@@ -197,7 +197,7 @@ Inbound IRC arrives in the host session as channel notifications:
 **Regular messages:**
 
 ```xml
-<channel source="roost-irc" sender="alex" channel="#roost"
+<channel event="message" sender="alex" channel="#roost"
          isDirect="false" ts="2026-04-28T05:30:00.000Z" seq="42">
 hello world
 </channel>
@@ -206,8 +206,8 @@ hello world
 **Membership events** (JOIN, PART, KICK, NICK):
 
 ```xml
-<channel source="roost-irc" sender="newcomer" channel="#roost"
-         isDirect="false" ts="..." seq="..." event="join">
+<channel event="join" sender="newcomer" channel="#roost"
+         isDirect="false" ts="..." seq="...">
 newcomer joined #roost
 </channel>
 ```

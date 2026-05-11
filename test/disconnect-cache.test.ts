@@ -201,7 +201,7 @@ describe('unread filter: empty-sender messages', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new RoostIrcClientImpl(config) as any
     const ts = new Date().toISOString()
-    client.recordMessage({ channel: '*', sender: '', text: 'This server is in debug mode', ts, isDirect: false })
+    client.recordMessage({ channel: '', sender: '', text: 'This server is in debug mode', ts, isDirect: true })
     expect(client.unread.size).toBe(0)
   })
 
