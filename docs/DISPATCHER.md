@@ -34,12 +34,17 @@ Fields:
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
 | `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
-| `watched_prs` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
-| `watched_issues` | Same shape as `watched_prs`. |
+| `plugins.<name>` | Per-plugin config slice. Keys list the enabled plugins (in emission order). |
+| `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
+| `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
 destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
 to `#<project>-issue-N` for each linked issue).
+
+A plugin not listed under `plugins` is not instantiated — there is no top-level
+fallback. The supported set is the first-party plugins shipped in this repo
+(`github-prs`, `github-issues`); external plugin discovery is tracked in #255.
 
 ## Running
 

@@ -12,7 +12,7 @@ export class GitHubIssuesPlugin extends GhBase {
   readonly name = 'github-issues'
 
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config, config.watched_issues)
+    return this.entryChannels(config, this.watched(config))
   }
 
   // Auto-detected channel for an issue event: the issue's own channel.
@@ -27,7 +27,7 @@ export class GitHubIssuesPlugin extends GhBase {
     const project = defaultProject(config)
     const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
-    const watched = config.watched_issues ?? []
+    const watched = this.watched(config)
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null

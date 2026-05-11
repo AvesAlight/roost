@@ -12,7 +12,7 @@ export class GitHubPrsPlugin extends GhBase {
   readonly name = 'github-prs'
 
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config, config.watched_prs)
+    return this.entryChannels(config, this.watched(config))
   }
 
   // Auto-detected channels for a PR event: linked-issue channels, project
@@ -33,7 +33,7 @@ export class GitHubPrsPlugin extends GhBase {
     const project = defaultProject(config)
     const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
-    const watched = config.watched_prs ?? []
+    const watched = this.watched(config)
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null

@@ -9,6 +9,8 @@
     "port": 6667,
     "interval_seconds": 60
   },
-  "watched_prs": [],
-  "watched_issues": []
+  "plugins": {
+    "github-prs": { "watched": [] },
+    "github-issues": { "watched": [] }
+  }
 }
