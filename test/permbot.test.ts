@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'bun:test'
+import { suppressLateRejection } from './helpers/tool.js'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as os from 'node:os'
@@ -59,7 +60,7 @@ function tmpSock(): string {
 
 /** Send a request JSON line to the permbot socket and collect the response line. */
 function socketRoundtrip(sockPath: string, req: object): Promise<object> {
-  return new Promise((resolve, reject) => {
+  return suppressLateRejection(new Promise((resolve, reject) => {
     const sock = net.createConnection(sockPath)
     let buf = ''
     sock.on('connect', () => sock.write(JSON.stringify(req) + '\n'))
@@ -72,15 +73,15 @@ function socketRoundtrip(sockPath: string, req: object): Promise<object> {
       }
     })
     sock.on('error', reject)
-  })
+  }))
 }
 
 /** Open a socket connection, send a request, and return the socket (response pending). */
 function socketSend(sockPath: string, req: object): Promise<{ sock: net.Socket; response: Promise<object> }> {
-  return new Promise((resolve, reject) => {
+  return suppressLateRejection(new Promise((resolve, reject) => {
     const sock = net.createConnection(sockPath)
     let buf = ''
-    const response = new Promise<object>((res, rej) => {
+    const response = suppressLateRejection(new Promise<object>((res, rej) => {
       sock.on('data', (d) => {
         buf += d.toString('utf8')
         if (buf.includes('\n')) {
@@ -89,13 +90,13 @@ function socketSend(sockPath: string, req: object): Promise<{ sock: net.Socket; 
         }
       })
       sock.on('error', rej)
-    })
+    }))
     sock.on('connect', () => {
       sock.write(JSON.stringify(req) + '\n')
       resolve({ sock, response })
     })
     sock.on('error', reject)
-  })
+  }))
 }
 
 const stops: Array<() => void> = []
