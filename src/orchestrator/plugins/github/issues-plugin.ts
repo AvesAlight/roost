@@ -1,6 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
-import { defaultProject, issueChannel } from '../../naming.js'
+import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { scrapeIssue } from './scraper.js'
@@ -25,6 +25,7 @@ export class GitHubIssuesPlugin extends GhBase {
     prevState: unknown
   ): Promise<PluginTickResult> {
     const project = defaultProject(config)
+    const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
     const watched = config.watched_issues ?? []
     const agentLogins = this.agentLogins(config)
@@ -47,6 +48,17 @@ export class GitHubIssuesPlugin extends GhBase {
     for (const { key, snap, events, entryChannels } of scraped) {
       curState.issues[key] = snap
       for (const event of events) {
+        if (event.kind === 'issue_added_to_watch') {
+          const routingChannels = this.resolveChannels(
+            GitHubIssuesPlugin.issueEventChannels(project, event),
+            entryChannels
+          )
+          taggedEvents.push({
+            channels: [projectChannel],
+            payload: { kind: 'oneline', text: `now watching issue ${key} — routing events to ${routingChannels.join(', ')}` },
+          })
+          continue
+        }
         if (!shouldPush(event)) continue
         taggedEvents.push({
           channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(project, event), entryChannels),

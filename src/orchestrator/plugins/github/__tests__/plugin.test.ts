@@ -88,7 +88,7 @@ describe('GitHubPrsPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('filters non-pushable events (e.g. pr_added_to_watch) before tagging', async () => {
+  it('suppresses now-watching when pr_added_to_watch has no linked issues', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
@@ -101,9 +101,88 @@ describe('GitHubPrsPlugin.runTick', () => {
       expect(result.taggedEvents).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
+
+  it('emits now-watching to project channel when pr_added_to_watch has linked issues', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
+      linked_issues: [7, 14],
+    } as OrchestratorEvent
+    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [7, 14] }), events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.taggedEvents[0]?.payload).toEqual({
+        kind: 'oneline',
+        text: 'now watching PR org/repo#25 — routing events to #proj-issue-7, #proj-issue-14',
+      })
+    } finally { spy.mockRestore() }
+  })
+
+  it('includes entry channels in now-watching routing list', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
+      linked_issues: [7],
+    } as OrchestratorEvent
+    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [7] }), events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25, channels: ['#extra'] }] }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('#proj-issue-7')
+      expect(text).toContain('#extra')
+    } finally { spy.mockRestore() }
+  })
 })
 
 describe('GitHubIssuesPlugin.runTick', () => {
+  it('emits now-watching to project channel on issue_added_to_watch', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
+    } as OrchestratorEvent
+    const spy = spyOn(scraper, 'scrapeIssue').mockResolvedValue({
+      snap: fakeIssueSnap(), events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_issues: [{ number: 50 }] }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.taggedEvents[0]?.payload).toEqual({
+        kind: 'oneline',
+        text: 'now watching issue org/repo#50 — routing events to #proj-issue-50',
+      })
+    } finally { spy.mockRestore() }
+  })
+
+  it('includes entry channels in now-watching routing list for issues', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
+    } as OrchestratorEvent
+    const spy = spyOn(scraper, 'scrapeIssue').mockResolvedValue({
+      snap: fakeIssueSnap(), events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        watched_issues: [{ number: 50, channels: ['#extra'] }],
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('#proj-issue-50')
+      expect(text).toContain('#extra')
+    } finally { spy.mockRestore() }
+  })
+
   it('routes an issue comment to its own channel unioned with entry channels', async () => {
     const issueEv: OrchestratorEvent = {
       kind: 'issue_comment',
