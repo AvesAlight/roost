@@ -1,4 +1,4 @@
-import type { OrchestratorConfig } from '../../config.js'
+import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
@@ -8,11 +8,19 @@ import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { PrSnap, PrPluginState } from './types.js'
 
+interface GitHubPrsPluginConfig {
+  watched?: WatchedEntry[]
+}
+
 export class GitHubPrsPlugin extends GhBase {
   readonly name = 'github-prs'
 
+  private watched(config: OrchestratorConfig): WatchedEntry[] {
+    return this.pluginConfig<GitHubPrsPluginConfig>(config)?.watched ?? []
+  }
+
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config, config.watched_prs)
+    return this.entryChannels(config, this.watched(config))
   }
 
   // Auto-detected channels for a PR event: linked-issue channels, project
@@ -33,7 +41,7 @@ export class GitHubPrsPlugin extends GhBase {
     const project = defaultProject(config)
     const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
-    const watched = config.watched_prs ?? []
+    const watched = this.watched(config)
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null

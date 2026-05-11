@@ -41,8 +41,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       const cfg: OrchestratorConfig = {
         project: 'proj',
         repo: 'org/repo',
-        watched_prs: [{ number: 25, channels: ['#extra'] }],
-        watched_issues: [],
+        plugins: {
+          'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] },
+          'github-issues': { watched: [] },
+        },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
@@ -61,8 +63,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       const cfg: OrchestratorConfig = {
         project: 'proj',
         repo: 'org/repo',
-        watched_prs: [{ number: 25 }],
-        watched_issues: [],
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'github-issues': { watched: [] },
+        },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, null)
       const state = result.state as { prs: Record<string, PrSnap> }
@@ -81,7 +85,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       events: [warningEv],
     })
     try {
-      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toContain('#proj-leads')
@@ -96,7 +103,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       snap: fakePrSnap(), events: [seedEv],
     })
     try {
-      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(0)
     } finally { spy.mockRestore() }
@@ -111,7 +121,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       snap: fakePrSnap({ linked_issues: [7, 14] }), events: [seedEv],
     })
     try {
-      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25 }] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
@@ -131,7 +144,10 @@ describe('GitHubPrsPlugin.runTick', () => {
       snap: fakePrSnap({ linked_issues: [7] }), events: [seedEv],
     })
     try {
-      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_prs: [{ number: 25, channels: ['#extra'] }] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] } },
+      }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
@@ -151,7 +167,10 @@ describe('GitHubIssuesPlugin.runTick', () => {
       snap: fakeIssueSnap(), events: [seedEv],
     })
     try {
-      const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', watched_issues: [{ number: 50 }] }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-issues': { watched: [{ number: 50 }] } },
+      }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
@@ -172,7 +191,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     try {
       const cfg: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
-        watched_issues: [{ number: 50, channels: ['#extra'] }],
+        plugins: { 'github-issues': { watched: [{ number: 50, channels: ['#extra'] }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
@@ -198,8 +217,10 @@ describe('GitHubIssuesPlugin.runTick', () => {
       const cfg: OrchestratorConfig = {
         project: 'proj',
         repo: 'org/repo',
-        watched_prs: [],
-        watched_issues: [{ number: 50, channels: ['#leads'] }],
+        plugins: {
+          'github-prs': { watched: [] },
+          'github-issues': { watched: [{ number: 50, channels: ['#leads'] }] },
+        },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
@@ -209,22 +230,26 @@ describe('GitHubIssuesPlugin.runTick', () => {
 })
 
 describe('desiredChannels', () => {
-  it('PrsPlugin includes #<project>-issue-N + entry channels for watched_prs only', () => {
+  it('PrsPlugin includes #<project>-issue-N + entry channels for github-prs.watched only', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
-      watched_prs: [{ number: 25, channels: ['#extra'] }],
-      watched_issues: [{ number: 14 }],
+      plugins: {
+        'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] },
+        'github-issues': { watched: [{ number: 14 }] },
+      },
     }
     expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#proj-issue-25'])
   })
 
-  it('IssuesPlugin includes #<project>-issue-N + entry channels for watched_issues only', () => {
+  it('IssuesPlugin includes #<project>-issue-N + entry channels for github-issues.watched only', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
-      watched_prs: [{ number: 25 }],
-      watched_issues: [{ number: 14, channels: ['#extra', '#more'] }],
+      plugins: {
+        'github-prs': { watched: [{ number: 25 }] },
+        'github-issues': { watched: [{ number: 14, channels: ['#extra', '#more'] }] },
+      },
     }
     expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#more', '#proj-issue-14'])
   })
@@ -232,7 +257,7 @@ describe('desiredChannels', () => {
   it('falls back to repo basename when project is unset', () => {
     const cfg: OrchestratorConfig = {
       repo: 'org/myrepo',
-      watched_issues: [{ number: 7 }],
+      plugins: { 'github-issues': { watched: [{ number: 7 }] } },
     }
     expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg)).toEqual(['#myrepo-issue-7'])
   })

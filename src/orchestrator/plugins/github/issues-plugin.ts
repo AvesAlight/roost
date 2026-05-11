@@ -1,4 +1,4 @@
-import type { OrchestratorConfig } from '../../config.js'
+import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
@@ -8,11 +8,19 @@ import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { IssueSnap, IssuePluginState } from './types.js'
 
+interface GitHubIssuesPluginConfig {
+  watched?: WatchedEntry[]
+}
+
 export class GitHubIssuesPlugin extends GhBase {
   readonly name = 'github-issues'
 
+  private watched(config: OrchestratorConfig): WatchedEntry[] {
+    return this.pluginConfig<GitHubIssuesPluginConfig>(config)?.watched ?? []
+  }
+
   desiredChannels(config: OrchestratorConfig): string[] {
-    return this.entryChannels(config, config.watched_issues)
+    return this.entryChannels(config, this.watched(config))
   }
 
   // Auto-detected channel for an issue event: the issue's own channel.
@@ -27,7 +35,7 @@ export class GitHubIssuesPlugin extends GhBase {
     const project = defaultProject(config)
     const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
-    const watched = config.watched_issues ?? []
+    const watched = this.watched(config)
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null

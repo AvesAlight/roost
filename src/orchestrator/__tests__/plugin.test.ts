@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'bun:test'
-import { BasePlugin, type PluginTickResult } from '../plugin.js'
-import { resolveRepoEntry } from '../config.js'
+import {
+  BasePlugin,
+  type PluginTickResult,
+  type TaggedEvent,
+  registerPlugin,
+  getPluginFactory,
+} from '../plugin.js'
+import { resolveRepoEntry, type OrchestratorConfig } from '../config.js'
+import { dispatchTaggedEvents } from '../dispatch.js'
+import type { RoostIrcClient } from '../../irc-client.js'
 
 class TestPlugin extends BasePlugin {
   readonly name = 'test'
@@ -48,5 +56,95 @@ describe('resolveRepoEntry', () => {
 
   it('throws when no repo available', () => {
     expect(() => resolveRepoEntry({ number: 5 })).toThrow(/missing repo/)
+  })
+})
+
+// End-to-end seam test (#215): a stub plugin defines its own event kind and
+// config slice, registers via the registry, and ticks through dispatch.
+// Proves the three seams compose — registry, plugin-owned events, plugin
+// config slice — without leaning on the GH plugins.
+
+interface StubPluginConfig {
+  rooms?: string[]
+}
+
+interface StubPluginState {
+  ticks: number
+}
+
+class StubPlugin extends BasePlugin {
+  readonly name = 'stub'
+
+  desiredChannels(config: OrchestratorConfig): string[] {
+    return this.pluginConfig<StubPluginConfig>(config)?.rooms ?? []
+  }
+
+  async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
+    const slice = this.pluginConfig<StubPluginConfig>(config) ?? {}
+    const prev = (prevState as StubPluginState | null) ?? { ticks: 0 }
+    const rooms = slice.rooms ?? []
+    const taggedEvents: TaggedEvent[] = rooms.length
+      ? [{
+          channels: this.resolveChannels(rooms, []),
+          // Plugin-owned event kind, never seen at the orchestrator level.
+          payload: { kind: 'oneline', text: `[stub_pulse] tick=${prev.ticks + 1}` },
+        }]
+      : []
+    return { state: { ticks: prev.ticks + 1 }, taggedEvents, channels: rooms }
+  }
+}
+
+describe('registry + plugin-owned events + per-plugin config (end-to-end)', () => {
+  it('builds a stub plugin from config, ticks, and dispatches to its channels', async () => {
+    registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
+
+    const factory = getPluginFactory('stub')
+    expect(factory).toBeTypeOf('function')
+    const plugin = factory!('#default-leads')
+
+    const config: OrchestratorConfig = {
+      project: 'demo',
+      plugins: { stub: { rooms: ['#demo-alpha', '#demo-beta'] } },
+    }
+
+    expect(plugin.desiredChannels(config).sort()).toEqual(['#demo-alpha', '#demo-beta'])
+
+    const result = await plugin.runTick(config, null)
+    expect((result.state as StubPluginState).ticks).toBe(1)
+    expect(result.taggedEvents).toHaveLength(1)
+    expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#demo-alpha', '#demo-beta'])
+    expect(result.taggedEvents[0]?.payload).toEqual({ kind: 'oneline', text: '[stub_pulse] tick=1' })
+
+    // Real dispatch path: prove the orchestrator pipeline doesn't care about
+    // the stub's event kind — it just writes channels × payload.
+    const sent: Array<{ target: string; text: string }> = []
+    const client = {
+      say: (target: string, text: string) => {
+        sent.push({ target, text })
+        return { chunks: 1, mode: 'single' as const }
+      },
+    } as unknown as RoostIrcClient
+    await dispatchTaggedEvents(result.taggedEvents, client)
+    expect(sent.sort((a, b) => a.target.localeCompare(b.target))).toEqual([
+      { target: '#demo-alpha', text: '[stub_pulse] tick=1' },
+      { target: '#demo-beta', text: '[stub_pulse] tick=1' },
+    ])
+  })
+
+  it('passes prevState through under the plugin name slice across ticks', async () => {
+    registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
+    const plugin = getPluginFactory('stub')!('#default-leads')
+    const config: OrchestratorConfig = { plugins: { stub: { rooms: ['#room'] } } }
+
+    const t1 = await plugin.runTick(config, null)
+    const t2 = await plugin.runTick(config, t1.state)
+    expect((t2.state as StubPluginState).ticks).toBe(2)
+    expect(t2.taggedEvents[0]?.payload).toEqual({ kind: 'oneline', text: '[stub_pulse] tick=2' })
+  })
+
+  it('built-ins register via side-effect import of registry.ts', async () => {
+    await import('../registry.js')
+    expect(getPluginFactory('github-prs')).toBeTypeOf('function')
+    expect(getPluginFactory('github-issues')).toBeTypeOf('function')
   })
 })

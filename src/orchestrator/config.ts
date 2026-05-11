@@ -23,8 +23,10 @@ export interface OrchestratorConfig {
     port?: number
     interval_seconds?: number
   }
-  watched_prs?: WatchedEntry[]
-  watched_issues?: WatchedEntry[]
+  // Per-plugin config slice, symmetric with `state.plugins.{name}` (#215).
+  // The set of enabled plugins is `Object.keys(plugins)`. Each slice is
+  // shaped by the owning plugin — typed locally via BasePlugin.pluginConfig.
+  plugins?: Record<string, unknown>
 }
 
 export interface OrchestratorState {

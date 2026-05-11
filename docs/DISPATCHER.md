@@ -34,12 +34,36 @@ Fields:
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
 | `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
-| `watched_prs` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
-| `watched_issues` | Same shape as `watched_prs`. |
+| `plugins.<name>` | Per-plugin config slice. Keys list the enabled plugins (in emission order). |
+| `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
+| `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
 destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
 to `#<project>-issue-N` for each linked issue).
+
+### Migrating from 0.x
+
+Pre-1.0 configs declared watches at the top level as `watched_prs` and
+`watched_issues`. As of #215 each plugin owns its own config slice, mirroring
+the way `state.plugins.{name}` already works. Move both lists under a
+`plugins` block keyed by plugin name:
+
+```jsonc
+// before
+{ "watched_prs": [...], "watched_issues": [...] }
+
+// after
+{
+  "plugins": {
+    "github-prs":    { "watched": [...] },
+    "github-issues": { "watched": [...] }
+  }
+}
+```
+
+This is a clean break — there is no top-level fallback. A plugin not listed
+under `plugins` is not instantiated.
 
 ## Running
 

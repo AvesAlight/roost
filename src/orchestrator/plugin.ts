@@ -1,7 +1,9 @@
-// Plugin seam (#116). A plugin owns a slice of `state.plugins[name]`,
+// Plugin seam (#116, extended in #215). A plugin owns a slice of
+// `state.plugins[name]` and the symmetric slice of `config.plugins[name]`,
 // declares which IRC channels it wants joined, and on each tick returns
-// pre-routed, pre-formatted events. The dispatcher itself is fully
-// plugin-agnostic — it iterates `TaggedEvent[]` and writes to IRC.
+// pre-routed, pre-formatted events. Event kinds are plugin-internal —
+// the dispatcher iterates `TaggedEvent[]` and writes to IRC, agnostic to
+// the source plugin's event vocabulary.
 import type { OrchestratorConfig } from './config.js'
 
 // Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
@@ -51,4 +53,32 @@ export abstract class BasePlugin implements Plugin {
     const merged = Array.from(new Set([...autoDetected, ...entryChannels]))
     return merged.length ? merged : [this.defaultChannel]
   }
+
+  // Read this plugin's config slice from `config.plugins[name]`. The shape is
+  // plugin-private; callers cast to their own typed interface.
+  protected pluginConfig<T>(config: OrchestratorConfig): T | undefined {
+    return config.plugins?.[this.name] as T | undefined
+  }
+}
+
+// ---- Registry (#215) -------------------------------------------------------
+// Config-driven instantiation: each plugin module registers a factory keyed
+// on the same name it uses for its state slice. orchestrator.ts iterates
+// `config.plugins` and instantiates via `getPluginFactory`. Side-effect
+// imports in src/orchestrator/registry.ts populate the built-in set.
+
+export type PluginFactory = (defaultChannel: string) => Plugin
+
+const REGISTRY = new Map<string, PluginFactory>()
+
+export function registerPlugin(name: string, factory: PluginFactory): void {
+  REGISTRY.set(name, factory)
+}
+
+export function getPluginFactory(name: string): PluginFactory | undefined {
+  return REGISTRY.get(name)
+}
+
+export function registeredPluginNames(): string[] {
+  return [...REGISTRY.keys()]
 }
