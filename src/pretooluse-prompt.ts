@@ -64,24 +64,35 @@ export function classifyBash(command: string): BashMissKind | null {
 
   // newline-hash: literal newline followed by optional whitespace then '#'.
   // The original bug (worker-202 27-min hang) was a heredoc with this shape.
+  // Checked against the raw command — the analyzer's trigger explicitly
+  // requires the newline to be inside a quoted arg, env value, or redirect.
   if (/\n[ \t]*#/.test(command)) return 'newline-hash'
+
+  // Command-start anchor for cd patterns: start-of-string, shell operator
+  // (with optional trailing whitespace), or newline. Excludes plain
+  // whitespace as a leading context to avoid false-positives on commit
+  // messages and other strings containing the word "cd" (`git commit -m
+  // "fix: cd issue"` would otherwise trip cd-multi-positional). Wrapper
+  // forms like `time cd /tmp && ls` are missed by this anchor — those are
+  // uncommon enough to accept the gap; commit messages are daily traffic.
+  const CD_START = '(?:^|[;&|`(]\\s*|\\n\\s*)'
 
   // process-substitution: <(...) or >(...).
   if (/[<>]\(/.test(command)) return 'process-substitution'
 
-  // multi-cd: more than one cd/pushd/popd at top level.
-  const cdMatches = command.match(/(?:^|[\s;&|`(])(?:cd|pushd|popd)(?=\s|$)/g) ?? []
+  // multi-cd: more than one cd/pushd/popd at command-start positions.
+  const cdMatches = command.match(new RegExp(`${CD_START}(?:cd|pushd|popd)(?=\\s|$)`, 'g')) ?? []
   if (cdMatches.length > 1) return 'multi-cd'
 
   // cd-multi-positional: zsh `cd OLD NEW`. Two non-flag non-operator words
   // after cd, terminated by end-of-string or a shell operator.
-  if (/(?:^|[\s;&|`(])cd\s+(?!-)[^\s&|;<>(){}]+\s+(?!-)[^\s&|;<>(){}]+(?=\s|$|[&|;<>])/.test(command)) {
+  if (new RegExp(`${CD_START}cd\\s+(?!-)[^\\s&|;<>(){}]+\\s+(?!-)[^\\s&|;<>(){}]+(?=\\s|$|[&|;<>])`).test(command)) {
     return 'cd-multi-positional'
   }
 
   // cd-compound: cd/pushd/popd followed by &&, ||, or ; — covers
   // cd-git-compound, cd-compound-write, cd-compound-redirect from the table.
-  if (/(?:^|[\s;&|`(])(?:cd|pushd|popd)\s+\S+.*?(?:&&|\|\||;)/.test(command)) return 'cd-compound'
+  if (new RegExp(`${CD_START}(?:cd|pushd|popd)\\s+\\S+.*?(?:&&|\\|\\||;)`).test(command)) return 'cd-compound'
 
   // sed-dangerous: sed with -i (in-place) or w/e/W/E command letters.
   if (/\bsed\b(?:[^|&;<>]*?-[a-zA-Z]*i\b|[^|&;<>]*?['"]\s*[weWE])/.test(command)) {

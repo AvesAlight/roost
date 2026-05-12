@@ -125,6 +125,22 @@ describe('classifyBash', () => {
     // Negative case is "no cd at all": just a plain &&.
     expect(classifyBash('ls && pwd')).toBeNull()
   })
+
+  // Real-world false-positive shapes worker traffic actually hits. Each of
+  // these was caught by an earlier loose `\s` leading-context regex; we
+  // anchor cd to command-start positions specifically to keep this traffic
+  // out of the operator's inbox.
+  it('null: git commit -m with "cd" in the message (false-positive guard)', () => {
+    expect(classifyBash('git commit -m "fix: cd issue in worker"')).toBeNull()
+  })
+
+  it('null: git commit -m with "cd /tmp && ls" in the message', () => {
+    expect(classifyBash('git commit -m "describe cd /tmp && ls trick"')).toBeNull()
+  })
+
+  it('null: echo of a string mentioning cd', () => {
+    expect(classifyBash('echo "I will cd to /tmp"')).toBeNull()
+  })
 })
 
 // ---- Hook subprocess --------------------------------------------------------
