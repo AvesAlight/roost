@@ -555,12 +555,13 @@ cmd_spawn() {
 
   # Write per-session roost-settings.json with hooks that need to be active
   # for all roost sessions. PreCompact, PostCompact, and SessionStart-compact
-  # are always present; PermissionRequest is added when --perm-irc is passed.
-  # Cleaned up implicitly when data_dir is rm -rf'd on shutdown. ROOST_DIR is
-  # cd-derived (no spaces/backslashes).
+  # are always present; PermissionRequest and PreToolUse:Bash are added when
+  # --perm-irc is passed; PreToolUse:AskUserQuestion is added when --ask-irc
+  # or --ask-target is set. Cleaned up implicitly when data_dir is rm -rf'd
+  # on shutdown. ROOST_DIR is cd-derived (no spaces/backslashes).
   local perm_sock=""
   local perm_hook_json=""
-  local ask_hook_json=""
+  local pretooluse_hook_json=""
   # Question routing is enabled by --ask-irc (channel mode) or --ask-target (DM mode).
   local ask_routing=0
   { [ -n "${ask_irc}" ] || [ -n "${ask_target}" ]; } && ask_routing=1
@@ -571,11 +572,26 @@ cmd_spawn() {
   if [ "${perm_irc}" -eq 1 ]; then
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
   fi
+  # PreToolUse may hold up to two matcher entries: Bash (--perm-irc; closes the
+  # safety-analyzer bypass from #276) and AskUserQuestion (--ask-irc / --ask-target).
+  local pretooluse_entries=()
+  if [ "${perm_irc}" -eq 1 ]; then
+    pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-pretooluse-prompt\"}]}")
+  fi
   if [ "${ask_routing}" -eq 1 ]; then
-    ask_hook_json=",\"PreToolUse\":[{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-ask-question\"}]}]"
+    pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-ask-question\"}]}")
+  fi
+  if [ "${#pretooluse_entries[@]}" -gt 0 ]; then
+    local _ptu_joined=""
+    local _ptu_sep=""
+    for _ptu_entry in "${pretooluse_entries[@]}"; do
+      _ptu_joined="${_ptu_joined}${_ptu_sep}${_ptu_entry}"
+      _ptu_sep=","
+    done
+    pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-session-start-hook\"}]}]${perm_hook_json}${ask_hook_json}}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
