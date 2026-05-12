@@ -23,7 +23,7 @@ PRs start as draft. When your work is pushed, signal clearly in the channel ("pu
 
 ## Commits
 
-Write logical, timeless commit messages. Describe what the commit does in the abstract, not its position in a review cycle. "fix: drop sender-equality guard from chathistory parser" is timeless; "address review feedback" or "fix nit" is not — that framing rots the moment the PR merges. When you batch fixes for a reviewer round, prefer one logical commit if they share a theme, or split them if they don't.
+Write logical, timeless commit messages. Describe what the commit does in the abstract, not its position in a review cycle. A commit message that names the change ("tighten X validation", "extract Y helper") will still make sense a year from now; "address review feedback" or "fix nit" stops meaning anything the moment the PR merges. When you batch fixes for a reviewer round, prefer one logical commit if they share a theme, or split them if they don't.
 
 ## Plans and followups
 
