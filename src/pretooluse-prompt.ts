@@ -34,10 +34,14 @@ const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 // without waiting nine minutes.
 const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOST_PERM_TIMEOUT_SECS'] ?? '570')))
 
-// bashMissKind labels lifted from the 2.1.139 binary (issue #276). Not part
-// of the public hook contract — drift is possible across Claude Code
-// versions. Tests in test/pretooluse-prompt.test.ts pin one example per
-// kind from the issue table so drift surfaces as a test failure.
+// bashMissKind labels lifted from the 2.1.139 binary (issue #276). These are
+// roost's *approximations* of the harness's classification — not literal
+// `decisionReason` strings. We collapse several harness kinds (e.g.
+// cd-git-compound / cd-compound-write / cd-compound-redirect → `cd-compound`)
+// and rename others (`semantics` → `newline-hash` for legibility in operator
+// summaries). Don't grep the Claude Code binary for these — they won't be
+// there. Tests pin one example per kind from the issue table so any
+// classifier drift surfaces as a test failure.
 export type BashMissKind =
   | 'newline-hash'
   | 'process-substitution'
@@ -117,7 +121,7 @@ function emit(decision: 'allow' | 'deny' | 'ask', reason = ''): never {
 
 // ---- Socket round-trip ------------------------------------------------------
 
-export async function askDaemon(summary: string): Promise<string | null> {
+async function askDaemon(summary: string): Promise<string | null> {
   const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT, kind: 'permission' }
   if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => {
@@ -177,7 +181,7 @@ if (import.meta.main) {
   const parts = reply!.trim().split(/\s+/, 2)
   const norm = (parts[0] ?? '').toLowerCase()
   const msg  = parts[1] ?? ''
-  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg)
+  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg || 'operator approved via IRC')
   if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg || 'operator denied via IRC')
   await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
   emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)

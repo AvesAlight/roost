@@ -220,6 +220,46 @@ describe('pretooluse-prompt hook subprocess', () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
   }, 10_000)
 
+  it('emits ask + falls back when operator reply is unrecognized', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+        // No PERM_HOST/PORT → fallback DM fails silently; the hook still
+        // emits ask, which is the contract under test here.
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('ask')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('unrecognized')
+  }, 10_000)
+
+  it('allow carries default reason when operator replies with bare y', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'y' })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('allow')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBe('operator approved via IRC')
+  }, 10_000)
+
   it('emits ask when permbot times out', async () => {
     const sockPath = makeSock()
     // Stub accepts connection but never responds — socket-level timeout path.

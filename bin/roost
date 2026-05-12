@@ -555,9 +555,10 @@ cmd_spawn() {
 
   # Write per-session roost-settings.json with hooks that need to be active
   # for all roost sessions. PreCompact, PostCompact, and SessionStart-compact
-  # are always present; PermissionRequest is added when --perm-irc is passed.
-  # Cleaned up implicitly when data_dir is rm -rf'd on shutdown. ROOST_DIR is
-  # cd-derived (no spaces/backslashes).
+  # are always present; PermissionRequest and PreToolUse:Bash are added when
+  # --perm-irc is passed; PreToolUse:AskUserQuestion is added when --ask-irc
+  # or --ask-target is set. Cleaned up implicitly when data_dir is rm -rf'd
+  # on shutdown. ROOST_DIR is cd-derived (no spaces/backslashes).
   local perm_sock=""
   local perm_hook_json=""
   local pretooluse_hook_json=""
