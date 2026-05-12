@@ -423,6 +423,19 @@ require_ircd() {
   fi
 }
 
+# Write a thin resolver shim to DIR/NAME. The shim re-resolves the plugin
+# root via `roost root` at exec time so Cellar-dir rotation after a
+# `brew upgrade roost` doesn't break wired hook commands.
+_write_shim() {
+  local name="$1"
+  local dest="$2/${name}"
+  # intentionally single-quoted: $() and $@ are shell syntax written to the
+  # shim file, not expanded here.
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\nexec "$(roost root)/bin/%s" "$@"\n' "${name}" > "${dest}"
+  chmod 755 "${dest}"
+}
+
 # All per-session files live under a mktemp-generated directory created at
 # spawn time (ROOST_DATA_DIR). The dir is stored in the tmux session env so
 # shutdown can find it:
@@ -569,17 +582,26 @@ cmd_spawn() {
   if [ "${perm_irc}" -eq 1 ] || [ "${ask_routing}" -eq 1 ]; then
     perm_sock="${ROOST_DATA_DIR}/permbot.sock"
   fi
+  # Write resolver shims to ROOST_DATA_DIR. Shims re-resolve the plugin root
+  # via `roost root` at exec time so Cellar-dir rotation (brew upgrade roost)
+  # doesn't invalidate hook paths baked at spawn time.
+  _write_shim roost-compact-hook "${ROOST_DATA_DIR}"
+  _write_shim roost-post-compact-hook "${ROOST_DATA_DIR}"
+  _write_shim roost-session-start-hook "${ROOST_DATA_DIR}"
   if [ "${perm_irc}" -eq 1 ]; then
-    perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-permission-prompt\"}]}]"
+    _write_shim irc-permission-prompt "${ROOST_DATA_DIR}"
+    perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-permission-prompt\"}]}]"
   fi
   # PreToolUse may hold up to two matcher entries: Bash (--perm-irc; closes the
   # safety-analyzer bypass from #276) and AskUserQuestion (--ask-irc / --ask-target).
   local pretooluse_entries=()
   if [ "${perm_irc}" -eq 1 ]; then
-    pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-pretooluse-prompt\"}]}")
+    _write_shim irc-pretooluse-prompt "${ROOST_DATA_DIR}"
+    pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-pretooluse-prompt\"}]}")
   fi
   if [ "${ask_routing}" -eq 1 ]; then
-    pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/irc-ask-question\"}]}")
+    _write_shim irc-ask-question "${ROOST_DATA_DIR}"
+    pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-ask-question\"}]}")
   fi
   if [ "${#pretooluse_entries[@]}" -gt 0 ]; then
     local _ptu_joined=""
@@ -591,7 +613,7 @@ cmd_spawn() {
     pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DIR}/bin/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
