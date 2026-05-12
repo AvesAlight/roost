@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
-import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, chmodSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
+const BIN_DIR = join(import.meta.dirname, '../bin')
 const HOOK_NAME = 'roost-compact-hook'
 
 describe('spawn shim', () => {
@@ -10,15 +11,24 @@ describe('spawn shim', () => {
   let shimPath: string
   let stubsDir: string
 
-  beforeAll(() => {
+  beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'roost-shim-test-'))
     stubsDir = join(tmpDir, 'stubs')
     mkdirSync(stubsDir, { recursive: true })
 
-    // Write a shim with the same content _write_shim produces in bin/roost
     shimPath = join(tmpDir, HOOK_NAME)
-    writeFileSync(shimPath, `#!/bin/sh\nexec "$(roost root)/bin/${HOOK_NAME}" "$@"\n`)
-    chmodSync(shimPath, 0o755)
+
+    // Write the shim via _write_shim from bin/roost so the test stays in sync
+    // with the production format — if the template changes, this test fails.
+    const proc = Bun.spawn(
+      ['bash', '-c', `source "${join(BIN_DIR, 'roost')}" && _write_shim "${HOOK_NAME}" "${tmpDir}"`],
+      { stdout: 'pipe', stderr: 'pipe' },
+    )
+    const [stderr, exitCode] = await Promise.all([
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(exitCode, `_write_shim setup failed: ${stderr}`).toBe(0)
   })
 
   afterAll(() => {

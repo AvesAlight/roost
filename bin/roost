@@ -571,7 +571,7 @@ cmd_spawn() {
   # are always present; PermissionRequest and PreToolUse:Bash are added when
   # --perm-irc is passed; PreToolUse:AskUserQuestion is added when --ask-irc
   # or --ask-target is set. Cleaned up implicitly when data_dir is rm -rf'd
-  # on shutdown. ROOST_DIR is cd-derived (no spaces/backslashes).
+  # on shutdown. ROOST_DATA_DIR is mktemp-derived (no spaces/backslashes).
   local perm_sock=""
   local perm_hook_json=""
   local pretooluse_hook_json=""
@@ -810,6 +810,7 @@ cmd_send() {
   tmux delete-buffer -b "${buf}" 2>/dev/null || true
 }
 
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 if [ "$#" -eq 0 ]; then
   usage
   exit 0
@@ -846,3 +847,4 @@ case "${cmd}" in
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
 esac
+fi
