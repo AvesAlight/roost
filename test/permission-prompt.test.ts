@@ -4,6 +4,7 @@ import * as net from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
+import { suppressLateRejection } from './helpers/tool.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
 
@@ -333,7 +334,7 @@ describe('permission-prompt hook', () => {
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
     await stub.ready
 
-    const [{ stderr }] = await Promise.all([
+    const [{ stderr, exit }] = await Promise.all([
       runHook({
         ROOST_IRC_NICK: 'worker-test',
         ROOST_PERM_SOCK: sockPath,
@@ -345,16 +346,17 @@ describe('permission-prompt hook', () => {
 
     expect(stderr).toContain('unrecognized')
     expect(stderr).toContain('deferring to terminal')
+    expect(exit).toBe(0)
   }, 10_000)
 
   it('emits ask when permbot times out', async () => {
     const sockPath = makeSock()
     // Stub accepts connection but never responds — exercises the timeout path.
     const server = net.createServer(() => {})
-    await new Promise<void>(r => server.listen(sockPath, r))
+    await suppressLateRejection(new Promise<void>(r => server.listen(sockPath, r)))
 
     try {
-      const { stderr } = await runHook({
+      const { stderr, exit } = await runHook({
         ROOST_IRC_NICK: 'worker-test',
         ROOST_PERM_SOCK: sockPath,
         ROOST_PERM_TARGET: 'operator',
@@ -363,6 +365,7 @@ describe('permission-prompt hook', () => {
       })
       expect(stderr).toContain('timed out')
       expect(stderr).toContain('deferring to terminal')
+      expect(exit).toBe(0)
     } finally {
       server.close()
       try { fs.unlinkSync(sockPath) } catch { /* ignore */ }

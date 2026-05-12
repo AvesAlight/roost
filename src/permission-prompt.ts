@@ -15,6 +15,7 @@ const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 // 570s default — just under Claude Code's 600s hook timeout. Override via
 // ROOST_PERM_TIMEOUT_SECS for tests that need to exercise the timeout path
 // without waiting nine minutes.
+// keep in sync with src/pretooluse-prompt.ts (SOCKET_SAFETY_TIMEOUT)
 const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOST_PERM_TIMEOUT_SECS'] ?? '570')))
 
 const PASSTHROUGH_PREFIXES = ['mcp__roost-irc__', 'mcp__plugin_roost_roost-irc__']
