@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import * as net from 'node:net'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { join } from 'node:path'
 
 const HOOK = join(import.meta.dirname, '../src/permission-prompt.ts')
@@ -45,14 +47,43 @@ function captureIRC(): Promise<{ port: number; lines: () => Promise<string[]> }>
   })
 }
 
-async function runHook(env: Record<string, string>): Promise<void> {
+async function runHook(env: Record<string, string>): Promise<{ stdout: string; stderr: string }> {
   const proc = Bun.spawn(['bun', HOOK], {
     env: { PATH: process.env.PATH ?? '/usr/bin:/bin', ...env },
     stdin: new TextEncoder().encode(PAYLOAD),
     stdout: 'pipe',
     stderr: 'pipe',
   })
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
   await proc.exited
+  return { stdout, stderr }
+}
+
+function makeSock(): string {
+  return path.join(os.tmpdir(), `irc-perm-hook-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
+}
+
+function startPermbotStub(sockPath: string, reply: object): { ready: Promise<void>; done: Promise<void> } {
+  let onReady!: () => void
+  const ready = new Promise<void>(r => { onReady = r })
+  let onDone!: () => void
+  const done = new Promise<void>(r => { onDone = r })
+  const server = net.createServer((sock) => {
+    let buf = ''
+    sock.on('data', (d) => {
+      buf += d.toString('utf8')
+      if (!buf.includes('\n')) return
+      sock.write(JSON.stringify(reply) + '\n')
+      sock.end()
+      server.close()
+      onDone()
+    })
+  })
+  server.listen(sockPath, () => { onReady() })
+  return { ready, done }
 }
 
 describe('irc-permission-prompt fallback DM', () => {
@@ -72,6 +103,29 @@ describe('irc-permission-prompt fallback DM', () => {
     expect(privmsgs.length).toBeGreaterThan(0)
     expect(privmsgs.some(m => m.includes('fallback'))).toBe(true)
     expect(privmsgs.some(m => m.includes('Bash'))).toBe(true)
+  }, 15_000)
+
+  it('sends fallback DM when operator reply is unrecognized', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'maybe' })
+    await stub.ready
+
+    const { port, lines } = await captureIRC()
+    const [received] = await Promise.all([
+      lines(),
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_TARGET: 'operator',
+        ROOST_PERM_HOST: '127.0.0.1',
+        ROOST_PERM_PORT: String(port),
+        ROOST_PERM_SOCK: sockPath,
+      }),
+      stub.done,
+    ])
+
+    const privmsgs = received.filter(l => l.startsWith('PRIVMSG operator :'))
+    expect(privmsgs.length).toBeGreaterThan(0)
+    expect(privmsgs.some(m => m.includes('unrecognized'))).toBe(true)
   }, 15_000)
 
   it('skips DM when ROOST_PERM_TARGET not set', async () => {

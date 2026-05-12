@@ -210,18 +210,44 @@ const PAYLOAD = JSON.stringify({
   transcript_path: '',
 })
 
-async function runHook(env: Record<string, string>): Promise<{ stdout: string; stderr: string }> {
+async function runHook(env: Record<string, string>): Promise<{ stdout: string; stderr: string; exit: number }> {
   const proc = Bun.spawn(['bun', HOOK], {
     env: { PATH: process.env.PATH ?? '/usr/bin:/bin', ...env },
     stdin: new TextEncoder().encode(PAYLOAD),
     stdout: 'pipe',
     stderr: 'pipe',
   })
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
   await proc.exited
-  return {
-    stdout: await new Response(proc.stdout).text(),
-    stderr: await new Response(proc.stderr).text(),
-  }
+  return { stdout, stderr, exit: proc.exitCode ?? 0 }
+}
+
+/** Minimal permbot socket stub: reads one JSON line, responds immediately. */
+function startPermbotStub(sockPath: string, reply: object): { ready: Promise<void>; done: Promise<void> } {
+  let onReady!: () => void
+  const ready = new Promise<void>(r => { onReady = r })
+  let onDone!: () => void
+  const done = new Promise<void>(r => { onDone = r })
+  const server = net.createServer((sock) => {
+    let buf = ''
+    sock.on('data', (d) => {
+      buf += d.toString('utf8')
+      if (!buf.includes('\n')) return
+      sock.write(JSON.stringify(reply) + '\n')
+      sock.end()
+      server.close()
+      onDone()
+    })
+  })
+  server.listen(sockPath, () => { onReady() })
+  return { ready, done }
+}
+
+function makeSock(): string {
+  return path.join(os.tmpdir(), `perm-hook-test-${process.pid}-${Math.random().toString(36).slice(2)}.sock`)
 }
 
 describe('permission-prompt hook', () => {
@@ -263,6 +289,85 @@ describe('permission-prompt hook', () => {
     const { stderr } = await runHook({ ROOST_IRC_NICK: 'worker-test' })
     expect(stderr).toContain('deferring to terminal')
   })
+
+  it('allow carries default reason when operator replies with bare y', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'y' })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { decision: { behavior: string; message?: string } } }
+    expect(out.hookSpecificOutput.decision.behavior).toBe('allow')
+    expect(out.hookSpecificOutput.decision.message).toBe('operator approved via IRC')
+  }, 10_000)
+
+  it('deny carries default reason when operator replies with bare n', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'n' })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { decision: { behavior: string; message?: string } } }
+    expect(out.hookSpecificOutput.decision.behavior).toBe('deny')
+    expect(out.hookSpecificOutput.decision.message).toBe('operator denied via IRC')
+  }, 10_000)
+
+  it('emits ask when operator reply is unrecognized', async () => {
+    const sockPath = makeSock()
+    const stub = startPermbotStub(sockPath, { reply: 'maybe later' })
+    await stub.ready
+
+    const [{ stderr }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+        // No PERM_HOST/PORT → fallback DM fails silently; contract under test is ask emission.
+      }),
+      stub.done,
+    ])
+
+    expect(stderr).toContain('unrecognized')
+    expect(stderr).toContain('deferring to terminal')
+  }, 10_000)
+
+  it('emits ask when permbot times out', async () => {
+    const sockPath = makeSock()
+    // Stub accepts connection but never responds — exercises the timeout path.
+    const server = net.createServer(() => {})
+    await new Promise<void>(r => server.listen(sockPath, r))
+
+    try {
+      const { stderr } = await runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+        ROOST_PERM_TIMEOUT_SECS: '1',
+        // No PERM_HOST/PORT → fallback DM fails silently.
+      })
+      expect(stderr).toContain('timed out')
+      expect(stderr).toContain('deferring to terminal')
+    } finally {
+      server.close()
+      try { fs.unlinkSync(sockPath) } catch { /* ignore */ }
+    }
+  }, 15_000)
 
   it('owner-gate short-circuits before any socket touch when nested (#188)', async () => {
     // Owner.session is held by sess-A; this hook run carries CLAUDE_CODE_SESSION_ID=sess-B,

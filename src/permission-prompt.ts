@@ -12,7 +12,10 @@ const PERM_HOST   = process.env['ROOST_PERM_HOST'] ?? '127.0.0.1'
 const PERM_PORT   = Number(process.env['ROOST_PERM_PORT'] ?? '6667')
 const DATA_DIR    = process.env['ROOST_DATA_DIR'] ?? ''
 const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
-const SOCKET_SAFETY_TIMEOUT = 570 // just under Claude Code's 600s hook default
+// 570s default — just under Claude Code's 600s hook timeout. Override via
+// ROOST_PERM_TIMEOUT_SECS for tests that need to exercise the timeout path
+// without waiting nine minutes.
+const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOST_PERM_TIMEOUT_SECS'] ?? '570')))
 
 const PASSTHROUGH_PREFIXES = ['mcp__roost-irc__', 'mcp__plugin_roost_roost-irc__']
 
@@ -241,8 +244,8 @@ if (import.meta.main) {
   const parts = reply!.trim().split(/\s+/, 2)
   const norm = (parts[0] ?? '').toLowerCase()
   const msg  = parts[1] ?? ''
-  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg)
-  if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg)
+  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg || 'operator approved via IRC')
+  if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg || 'operator denied via IRC')
   await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
   emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)
 }
