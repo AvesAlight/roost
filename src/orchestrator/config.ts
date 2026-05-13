@@ -22,6 +22,11 @@ export interface OrchestratorConfig {
     server?: string
     port?: number
     interval_seconds?: number
+    // Allowlist of nicks permitted to DM the dispatcher with watch/unwatch
+    // commands. When unset, defaults to `[leadPmNick(project)]` — the
+    // lead-pm that spawned this dispatcher (see naming.ts). Explicit `[]`
+    // disables remote control entirely.
+    command_senders?: string[]
   }
   // Per-plugin config slice, symmetric with `state.plugins.{name}`. The set
   // of enabled plugins is `Object.keys(plugins)`. Each slice is shaped by
