@@ -134,7 +134,6 @@ async function runDaemon(stateDir: string): Promise<void> {
 
   // DM command handler. Channel messages are ignored; DMs flow through
   // the allowlist + parser + mutateConfig pipeline in dm-handler.ts.
-  // Built once at boot — no per-message closure over the inbound `msg`.
   const dmHandlerDeps = {
     stateDir,
     plugins,
