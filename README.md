@@ -170,20 +170,22 @@ roost spawn scratch-h -c '#sandbox' -m haiku \
 ## Project dispatcher
 
 `roost init` bootstraps your project's dispatcher config and copies the
-role prompts into `.claude/commands/`. Then spawn the watcher — a haiku
-agent that supervises the poll loop and routes GitHub events (CI
-transitions, PR comments, issue updates) into the right
-`#<project>-issue-N` channels:
+role prompts into `.claude/commands/`. Then start the dispatcher — it polls
+GitHub on a tick, routes events (CI transitions, PR comments, issue updates)
+into the right `#<project>-issue-N` channels, and accepts watch/unwatch DMs
+to control which issues and PRs are tracked:
 
 ```bash
 cd ~/Dev/myproject
 roost init                              # first-time: writes .orchestrator/config.json + prompts
 CONFIG_DIR="$(pwd)/.orchestrator"
-roost spawn myproject-watcher -m haiku \
-  --channels '#myproject-leads' \
-  --prompt "/watcher myproject myproject-lead-pm <your-nick> $CONFIG_DIR" \
-  --perm-irc --perm-target myproject-lead-pm
+"$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
 ```
+
+DM the dispatcher (`<project>-dispatcher`) to manage the watch list:
+`watch <N>`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`,
+`watch list`, `help`. The dispatcher's allowlist defaults to
+`[<project>-lead-pm]`; set `irc.command_senders` in config to override.
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
 `#<project>-issue-N` channels, etc.) so multiple projects can share one ergo.

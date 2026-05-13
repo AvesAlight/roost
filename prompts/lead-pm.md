@@ -20,24 +20,21 @@ Every per-project artifact carries a `$0-` prefix:
 - Issue channel: `#$0-issue-<N>`
 - Worker nick: `$0-worker-<N>`
 - Reviewer nick: `$0-reviewer-<N>`
-- Watcher nick: `$0-watcher`
 - Dispatcher nick: `$0-dispatcher` (set in `.orchestrator/config.json`)
 
 The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[$0-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
 
-When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly. Same when DMing the watcher to add a watch — pass the explicit channel rather than relying on dispatcher defaults. Namespacing in spawn args + watch commands is the lead's job.
+When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly. Same when DMing the dispatcher to add a watch — pass the explicit channel rather than relying on auto-routing defaults. Namespacing in spawn args + watch commands is the lead's job.
 
 ## Getting started
 
-Spawn the watcher — pre-expand the config dir so the absolute path is baked in at spawn time:
+Start the dispatcher daemon — it owns watch-list CRUD via IRC DMs and posts GitHub events to per-issue channels:
 ```bash
 CONFIG_DIR="$(pwd)/.orchestrator"
-roost spawn $0-watcher --model haiku --channels '#$0-leads' --prompt "/watcher $0 $0-lead-pm $2 $CONFIG_DIR" --perm-irc --perm-target $0-lead-pm
+"$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
 ```
 
-The watcher starts the dispatcher daemon automatically on boot — you don't need to start it manually.
-
-The watcher is an agent in roost. You can DM it to control what issues and PRs will automatically post in issue channels.
+Then DM `$0-dispatcher` to control what issues and PRs route to which channels. The dispatcher's allowlist defaults to `[$0-lead-pm]` so your DMs are accepted out of the box; other senders are ignored.
 
 - `watch <N>` — add N to `plugins.github-issues.watched` (idempotent)
 - `watch <N> #foo #bar` — add N and attach extra channels (append + dedupe on existing entry)
@@ -63,7 +60,7 @@ If you comment on GitHub, prefix your comment with your name [$0-lead-pm]
 
 To work on an issue:
 1. Join #$0-issue-<N> on Roost
-2. Message the watcher to watch the issue
+2. DM `$0-dispatcher`: `watch <N>` (the issue auto-routes to `#$0-issue-<N>`)
 3. Create a new branch and worktree for the issue. Install dependencies in the worktree (bun or yarn)
 
    Before continuing: read the issue. If the body is < ~3 sentences or scope-ambiguous, ask the human in #$0-leads for a one-line clarification before spawning the worker — much cheaper than a full PR rewrite after the worker builds the wrong thing.
@@ -79,7 +76,7 @@ To work on an issue:
   - Does it believably resolve the issue?
   - Does it set the project up for downstream success, or is it a pending footgun?
   - When worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan
-6. Once the agent posts a draft PR, check the PR body starts with `Closes #N` (or Fixes/Resolves) so GitHub auto-links the issue — without it the dispatcher can't route per-PR events. Edit the body yourself if needed (`gh pr edit N --body "..."`). Then ask the watcher to watch it with `watch pr`. Then spawn a reviewer agent named `$0-reviewer-<PR>` with `--cwd <worker's worktree>` (so the reviewer's reads are in-cwd, otherwise it floods you with permission prompts) and `--prompt '/reviewer $0 <PR> <ISSUE> <branch> <pr-url> $2'`. Default to Opus for review regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) that sonnet misses, and review cost is small relative to the cost of a stale comment shipping. Drop to Sonnet only for trivially-sized PRs (e.g. doc/prompt tweaks well under 100 lines).
+6. Once the agent posts a draft PR, check the PR body starts with `Closes #N` (or Fixes/Resolves) so GitHub auto-links the issue — without it the dispatcher can't route per-PR events. Edit the body yourself if needed (`gh pr edit N --body "..."`). Then DM the dispatcher: `watch pr <N>`. Then spawn a reviewer agent named `$0-reviewer-<PR>` with `--cwd <worker's worktree>` (so the reviewer's reads are in-cwd, otherwise it floods you with permission prompts) and `--prompt '/reviewer $0 <PR> <ISSUE> <branch> <pr-url> $2'`. Default to Opus for review regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) that sonnet misses, and review cost is small relative to the cost of a stale comment shipping. Drop to Sonnet only for trivially-sized PRs (e.g. doc/prompt tweaks well under 100 lines).
 7. The reviewer shuts itself down after posting its summary — no action needed.
 8. Once the worker addresses reviewer findings, **you** (the lead-pm) mark the PR ready and add `$3` as reviewer:
    - `gh pr ready N --repo OWNER/REPO`
@@ -99,7 +96,7 @@ To work on an issue:
   - Merge the PR using --merge
   - Pull main in the primary repo
   - Clean up the worktree
-  - Unwatch the issue and the PR by dm'ing watcher
+  - DM the dispatcher to unwatch the issue and the PR (`unwatch <N>`, `unwatch pr <N>`)
 10. Post a postmortem in '#$0-leads' about how the issue went. Come with suggestions about how to make the next issue easier.
 
 Before merging a PR or removing a worktree, confirm: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
@@ -110,9 +107,9 @@ Some changes are small enough that spawning a worker is overhead — a doc tweak
 
 - Same setup as a worker PR (step 3): new branch + worktree, even for a one-liner. Keeps the primary worktree free for other in-flight work. Commit, push, open the PR from there
 - Add `$3` as reviewer immediately when you open the PR: `gh pr edit <N> --repo OWNER/REPO --add-reviewer $3`. Self-authored PRs aren't draft + ready toggled, so the request-review step doesn't happen automatically — you have to do it explicitly
-- DM the watcher to watch it: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
+- DM the dispatcher: `watch pr <N> #$0-leads` (the `#$0-leads` attachment routes events to the leads channel since there's typically no `#$0-issue-N` for self-authored PRs)
 - Stay engaged through the review loop the same way you would for a worker's PR — don't fire-and-forget. If the human leaves CHANGES_REQUESTED and you push a fix, re-request review the same way (`--add-reviewer $3`)
-- After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, unwatch
+- After human approval, merge follows the same flow as step 9: terminate-N/A, merge `--merge`, pull main, clean up branch, DM dispatcher `unwatch pr <N>`
 
 ## Ready?
 

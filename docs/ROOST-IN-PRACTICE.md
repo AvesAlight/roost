@@ -38,9 +38,9 @@ sits in `#leads-<project>` continuously and joins each issue
 channel while it's active.
 
 For the first issue, lead-pm opens a channel called `#issue-42`,
-DMs a small bookkeeping agent called **watcher** to subscribe to
-the issue (so GitHub events for it route to that channel), creates
-an isolated git worktree, and spawns a worker into it.
+DMs the dispatcher (`watch 42`) to subscribe to the issue (so
+GitHub events for it route to that channel), creates an isolated
+git worktree, and spawns a worker into it.
 
 **worker-42** reads the issue, posts an implementation plan in
 `#issue-42`, and waits. lead-pm reads the plan and pushes back —
@@ -57,8 +57,9 @@ diff cold, posts findings to GitHub, and exits. Its playbook is
 flips the PR ready and tags you as the human reviewer.
 
 You approve. lead-pm merges, terminates the worker, parts the
-channel, cleans up the worktree, DMs the watcher to unsubscribe,
-and posts a one-paragraph postmortem in `#leads-<project>` — what
+channel, cleans up the worktree, DMs the dispatcher to unsubscribe
+(`unwatch 42`, `unwatch pr 73`), and posts a one-paragraph
+postmortem in `#leads-<project>` — what
 went well, what was painful, what to fix next time. Then it picks
 the next pickable issue off the DAG and the cycle repeats.
 
@@ -102,7 +103,6 @@ already reading. There's no second pathway for "human-to-agent" —
 you're just another nick on the IRC server.
 
 The slash-command prompts (`prompts/lead-pm.md`,
-`prompts/worker.md`, `prompts/reviewer.md`, `prompts/watcher.md`)
-are the operational source of truth — they're what the agents
-actually run, and they're the right starting point for standing up
-your own project on Roost.
+`prompts/worker.md`, `prompts/reviewer.md`) are the operational
+source of truth — they're what the agents actually run, and they're
+the right starting point for standing up your own project on Roost.

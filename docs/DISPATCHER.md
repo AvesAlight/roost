@@ -74,7 +74,7 @@ State files in `.orchestrator/`:
 
 | File | Purpose |
 |---|---|
-| `config.json` | Tracked in git. Hand-edited or mutated by a watcher agent. |
+| `config.json` | Tracked in git. Hand-edited or mutated via DMs to the dispatcher (`watch <N>`, `unwatch <N>`, `watch pr <N>`, etc.). |
 | `config.example.json` | Tracked. Template for forks. |
 | `state.json` | Last seen GH state per watched entry. Re-seedable. |
 | `last-tick.txt` | Heartbeat timestamp. Use for healthchecks. |
