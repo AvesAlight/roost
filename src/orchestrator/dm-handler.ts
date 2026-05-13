@@ -40,7 +40,11 @@ const HELP_TEXT = [
   '  unwatch pr <N>              — stop watching PR N',
   '  watch list                  — show current watch lists',
   '  help                        — this message',
+  'separate multiple commands per DM with newline, semicolon, or comma.',
+  'any parse error aborts the batch — nothing is applied.',
 ].join('\n')
+
+const CHANNEL_RE = /^#[^\s,#]+$/
 
 // ---- Parser ----------------------------------------------------------------
 
@@ -64,7 +68,12 @@ export function parseCommand(line: string): Command {
   if (verb === 'help') return { kind: 'help' }
 
   if (verb === 'watch') {
-    if (tokens[1]?.toLowerCase() === 'list') return { kind: 'list' }
+    if (tokens[1]?.toLowerCase() === 'list') {
+      if (tokens.length > 2) {
+        return { kind: 'unknown', raw: line, error: `watch list takes no arguments; got "${tokens.slice(2).join(' ')}"` }
+      }
+      return { kind: 'list' }
+    }
     return parseWatchOrUnwatch(line, 'watch', tokens.slice(1))
   }
 
@@ -101,8 +110,8 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
   }
 
   for (const c of channels) {
-    if (!c.startsWith('#')) {
-      return { kind: 'unknown', raw, error: `channels must start with #: got "${c}"` }
+    if (!CHANNEL_RE.test(c)) {
+      return { kind: 'unknown', raw, error: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
     }
   }
   return { kind: 'watch', plugin, number, channels }
@@ -153,10 +162,9 @@ export function applyCommand(config: OrchestratorConfig, cmd: Command): string {
     const existing = new Set(entry.channels ?? [])
     const added: string[] = []
     for (const c of cmd.channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
+    if (!added.length) return `${label} #${cmd.number} channels unchanged`
     entry.channels = [...existing]
-    return added.length
-      ? `${label} #${cmd.number} + ${added.join(' ')}`
-      : `${label} #${cmd.number} channels unchanged`
+    return `${label} #${cmd.number} + ${added.join(' ')}`
   }
 
   // unwatch
@@ -189,16 +197,19 @@ export function formatList(config: OrchestratorConfig): string {
 
 // ---- Allowlist -------------------------------------------------------------
 
-// Resolves command_senders. Unset → `[<project>-lead-pm]` by convention
-// (the lead-pm that spawned this dispatcher). Explicit `[]` means nobody
-// is allowed — the dispatcher silently drops everything except its own
-// process-internal mutations (none today).
-export function resolveAllowlist(config: OrchestratorConfig): string[] {
+// Resolves command_senders. Unset → `[leadPmNick(project)]` (see
+// naming.ts:leadPmNick — the single source of truth for the convention).
+// Explicit `[]` means nobody is allowed; everyone gets rejected silently
+// past the initial DM reply. If project is unresolvable, falls back to
+// `[]` and logs the cause so an operator chasing a "not authorized"
+// reply can find the root cause in daemon.log.
+export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string) => void): string[] {
   const explicit = config.irc?.command_senders
   if (explicit !== undefined) return explicit
   try {
     return [leadPmNick(defaultProject(config))]
-  } catch {
+  } catch (e) {
+    log?.(`dm-handler: cannot resolve default allowlist (no project/repo in config): ${e}`)
     return []
   }
 }
@@ -213,23 +224,28 @@ export interface InboundDm {
 // Top-level DM entry. Never throws — write/load failures are caught and
 // posted to the project channel via deps.postProjectError so the operator
 // notices a broken config.
+//
+// Read commands (help, list) and any-unknown batches short-circuit before
+// mutateConfig so we don't acquire the writer queue for a pure read or a
+// parse-failed message. Writes flow through mutateConfig as one atomic
+// commit per DM — a multi-cmd message is one fsync, one reply.
 export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> {
   const senderLower = dm.sender.toLowerCase()
   const body = dm.text.trim()
   if (!body) return
 
-  // Load the latest config to resolve the allowlist — config is hot-reloaded
-  // every tick, so operators editing command_senders take effect immediately.
-  let allowlist: string[]
+  // Single loadConfig per DM. Used for allowlist + (if pure-read) for the
+  // formatList payload. Writes re-load inside mutateConfig for freshness.
+  let snapshot: OrchestratorConfig
   try {
-    allowlist = resolveAllowlist(await loadConfig(deps.stateDir))
+    snapshot = await loadConfig(deps.stateDir)
   } catch (e) {
     deps.log(`dm-handler: config load failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config load: ${e}`)
     return
   }
 
-  const allowed = new Set(allowlist.map(n => n.toLowerCase()))
+  const allowed = new Set(resolveAllowlist(snapshot, deps.log).map(n => n.toLowerCase()))
   if (!allowed.has(senderLower)) {
     deps.log(`dm-handler: rejecting ${dm.sender} (not in allowlist)`)
     deps.dm(dm.sender, 'not authorized; configure irc.command_senders')
@@ -239,9 +255,28 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   const cmds = parseCommands(body)
   if (cmds.length === 0) return
 
+  // If any command failed to parse, report all parse errors and apply
+  // nothing — a typo in one half of a multi-cmd DM shouldn't silently
+  // commit the other half.
+  const unknowns = cmds.filter((c): c is Extract<Command, { kind: 'unknown' }> => c.kind === 'unknown')
+  if (unknowns.length) {
+    for (const u of unknowns) deps.log(`dm-handler: ${dm.sender} parse: ${u.error}`)
+    deps.dm(dm.sender, unknowns.map(u => `error: ${u.error}`).join('\n'))
+    return
+  }
+
+  // Pure-read commands (help, list, or any mix of the two) don't need
+  // the writer queue. Format directly from the snapshot — no fsync.
+  if (cmds.every(c => c.kind === 'help' || c.kind === 'list')) {
+    const replies = cmds.map(c => applyCommand(snapshot, c))
+    for (const c of cmds) deps.log(`dm-handler: ${dm.sender} cmd=${c.kind}`)
+    deps.dm(dm.sender, replies.join('\n'))
+    return
+  }
+
+  // Write path. mutateConfig re-loads inside the mutex for freshness.
   const replies: string[] = []
   try {
-    // Single mutateConfig call so a multi-command DM is one atomic write.
     await mutateConfig(deps.stateDir, (config) => {
       for (const cmd of cmds) replies.push(applyCommand(config, cmd))
     })
@@ -253,11 +288,8 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   }
 
   for (const cmd of cmds) {
-    const summary = cmd.kind === 'unknown'
-      ? `parse: ${cmd.error}`
-      : `cmd=${cmd.kind}${'plugin' in cmd ? ` plugin=${cmd.plugin}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
+    const summary = `cmd=${cmd.kind}${'plugin' in cmd ? ` plugin=${cmd.plugin}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
     deps.log(`dm-handler: ${dm.sender} ${summary}`)
   }
-
   deps.dm(dm.sender, replies.join('\n'))
 }

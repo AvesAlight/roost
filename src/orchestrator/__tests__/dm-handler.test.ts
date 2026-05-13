@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -77,7 +77,23 @@ describe('parseCommand', () => {
   it('rejects bareword channel arguments', () => {
     const cmd = parseCommand('watch 5 foo') as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
-    expect(cmd.error).toMatch(/channels must start with #/)
+    expect(cmd.error).toMatch(/channels must match/)
+  })
+
+  it('rejects malformed channel arguments', () => {
+    // Bare `#`, double-`#`, embedded space, embedded `,` all fail at parse
+    // rather than later at the IRC server.
+    for (const bad of ['#', '##foo']) {
+      const cmd = parseCommand(`watch 5 ${bad}`) as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/channels must match/)
+    }
+  })
+
+  it('rejects trailing tokens after `watch list`', () => {
+    const cmd = parseCommand('watch list foo') as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toMatch(/watch list takes no arguments/)
   })
 
   it('rejects non-integer numbers', () => {
@@ -159,8 +175,26 @@ describe('applyCommand', () => {
 
   it('emits help text and list text for those commands', () => {
     const config: OrchestratorConfig = {}
-    expect(applyCommand(config, { kind: 'help' })).toMatch(/commands \(DM only\)/)
+    const help = applyCommand(config, { kind: 'help' })
+    expect(help).toMatch(/commands \(DM only\)/)
+    // HELP_TEXT mentions the multi-cmd separator grammar.
+    expect(help).toMatch(/newline, semicolon, or comma/)
+    // And that any parse error aborts the batch.
+    expect(help).toMatch(/aborts the batch/)
     expect(applyCommand(config, { kind: 'list' })).toMatch(/issues \(0\)/)
+  })
+
+  it('no-op channel add does not dirty entry.channels', () => {
+    // Adding only existing channels reports "unchanged" and leaves the
+    // entry's array reference alone (saves a redundant allocation).
+    const before = ['#a', '#b']
+    const config: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [{ number: 5, channels: before }] } },
+    }
+    const out = applyCommand(config, { kind: 'watch', plugin: 'github-issues', number: 5, channels: ['#a', '#b'] })
+    expect(out).toMatch(/channels unchanged/)
+    const after = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0].channels
+    expect(after).toBe(before)
   })
 })
 
@@ -186,7 +220,7 @@ describe('formatList', () => {
 })
 
 describe('resolveAllowlist', () => {
-  it('defaults to [<project>-lead-pm] when unset', () => {
+  it('defaults to [leadPmNick(project)] when unset', () => {
     expect(resolveAllowlist({ project: 'roost' })).toEqual(['roost-lead-pm'])
   })
 
@@ -197,6 +231,13 @@ describe('resolveAllowlist', () => {
 
   it('returns [] when no project/repo to derive a default from', () => {
     expect(resolveAllowlist({})).toEqual([])
+  })
+
+  it('logs the cause when project is unresolvable', () => {
+    const logs: string[] = []
+    const out = resolveAllowlist({}, line => logs.push(line))
+    expect(out).toEqual([])
+    expect(logs.some(l => l.includes('cannot resolve default allowlist'))).toBe(true)
   })
 })
 
@@ -267,9 +308,31 @@ describe('handleDm', () => {
     const { deps, irc } = makeDeps(dir)
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5 foo' })
     expect(irc.dms).toHaveLength(1)
-    expect(irc.dms[0].text).toMatch(/error: channels must start with #/)
+    expect(irc.dms[0].text).toMatch(/error: channels must match/)
     // Config untouched
     expect((await loadConfig(dir)).plugins?.['github-issues']).toBeUndefined()
+  })
+
+  it('any unknown in a batch aborts the whole batch — no partial application', async () => {
+    // `watch 5 foo` fails to parse (bareword channel); `watch 6` would
+    // succeed in isolation. The whole batch is rejected and no entry is
+    // written.
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const { deps, irc } = makeDeps(dir)
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5 foo; watch 6' })
+    expect(irc.dms).toHaveLength(1)
+    expect(irc.dms[0].text).toMatch(/error: channels must match/)
+    expect((await loadConfig(dir)).plugins?.['github-issues']).toBeUndefined()
+  })
+
+  it('reports all parse errors when multiple commands fail', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const { deps, irc } = makeDeps(dir)
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list foo; watch 5 bar' })
+    expect(irc.dms).toHaveLength(1)
+    const reply = irc.dms[0].text
+    expect(reply).toMatch(/watch list takes no arguments/)
+    expect(reply).toMatch(/channels must match/)
   })
 
   it('watch list replies with the formatted lists', async () => {
@@ -298,12 +361,29 @@ describe('handleDm', () => {
     expect(irc.errors).toEqual([])
   })
 
-  it('config write error surfaces to project channel + DM, no throw', async () => {
-    // Point at a non-existent dir to force loadConfig to fail
+  it('config load error surfaces to project channel, no throw', async () => {
+    // Point at a non-existent dir to force loadConfig to fail.
     const bogusDir = join(dir, 'does', 'not', 'exist')
     const { deps, irc } = makeDeps(bogusDir)
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
     expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config load'))).toBe(true)
+  })
+
+  it('config write error surfaces to project channel + DM, no throw', async () => {
+    // Seed a valid config, then revoke write permission on the dir so
+    // loadConfig succeeds (the file is readable) but writeConfig fails
+    // when it tries to create the .tmp sibling. Restored in afterEach
+    // via the chmod 0o700 below so rm -rf can clean up.
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    await chmod(dir, 0o555)
+    try {
+      const { deps, irc } = makeDeps(dir)
+      await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+      expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config write'))).toBe(true)
+      expect(irc.dms.some(d => d.text.startsWith('error: failed to update config'))).toBe(true)
+    } finally {
+      await chmod(dir, 0o700)
+    }
   })
 
   it('explicit empty allowlist blocks everyone (including lead-pm)', async () => {
