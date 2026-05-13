@@ -81,6 +81,48 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
   }
 }
 
+// Raw atomic write. Use mutateConfig for any read-modify-write — it
+// serializes concurrent callers in-process.
+export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
+  await mkdir(stateDir, { recursive: true })
+  // tmp must share a filesystem with config.json so rename is atomic;
+  // os.tmpdir() can be a different mount on macOS.
+  const tmp = join(stateDir, `.config.${process.pid}.${Date.now()}.tmp`)
+  try {
+    await Bun.write(tmp, sortedJson(config))
+    await rename(tmp, join(stateDir, 'config.json'))
+  } catch (e) {
+    try { await unlink(tmp) } catch { /* ignore */ }
+    throw e
+  }
+}
+
+// In-process promise queue — serializes concurrent DM handlers (and any
+// future mutators) within the dispatcher process. writeState has no
+// equivalent because only the poll loop writes state; config is
+// multi-writer once DM handlers land.
+// Single-process writer assumption: if a second process writes config
+// concurrently, last-writer-wins. Operator hand-edits while the
+// dispatcher runs are on the operator.
+let configMutex: Promise<void> = Promise.resolve()
+
+export async function mutateConfig(
+  stateDir: string,
+  fn: (config: OrchestratorConfig) => void | Promise<void>
+): Promise<void> {
+  const prev = configMutex
+  let release!: () => void
+  configMutex = new Promise(r => { release = r })
+  try {
+    await prev.catch(() => {})
+    const config = await loadConfig(stateDir)
+    await fn(config)
+    await writeConfig(stateDir, config)
+  } finally {
+    release()
+  }
+}
+
 export async function writeHeartbeat(stateDir: string): Promise<void> {
   await mkdir(stateDir, { recursive: true })
   await Bun.write(join(stateDir, 'last-tick.txt'), new Date().toISOString() + '\n')
