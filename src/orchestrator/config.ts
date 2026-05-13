@@ -1,4 +1,4 @@
-import { mkdir, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
@@ -78,6 +78,59 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
   } catch (e) {
     try { await unlink(tmp) } catch { /* ignore */ }
     throw e
+  }
+}
+
+export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
+  await mkdir(stateDir, { recursive: true })
+  const tmp = join(stateDir, `.config.${process.pid}.${Date.now()}.tmp`)
+  try {
+    await Bun.write(tmp, sortedJson(config))
+    await rename(tmp, join(stateDir, 'config.json'))
+  } catch (e) {
+    try { await unlink(tmp) } catch { /* ignore */ }
+    throw e
+  }
+}
+
+async function acquireConfigLock(stateDir: string): Promise<() => Promise<void>> {
+  const lockPath = join(stateDir, 'config.lock')
+  const deadline = Date.now() + 5000
+  while (true) {
+    try {
+      const fh = await open(lockPath, 'wx')
+      await fh.writeFile(`${process.pid}\n`)
+      await fh.close()
+      return async () => { try { await unlink(lockPath) } catch { /* ignore */ } }
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      // Stale lock check: if PID is dead, clear and retry immediately.
+      try {
+        const content = await readFile(lockPath, 'utf8')
+        const pid = parseInt(content.trim(), 10)
+        if (pid && !isNaN(pid)) {
+          let alive = true
+          try { process.kill(pid, 0) } catch { alive = false }
+          if (!alive) { await unlink(lockPath); continue }
+        }
+      } catch { /* unreadable — fall through to retry */ }
+      if (Date.now() >= deadline) throw new Error(`config lock timed out: ${lockPath}`)
+      await new Promise(r => setTimeout(r, 20))
+    }
+  }
+}
+
+export async function mutateConfig(
+  stateDir: string,
+  fn: (config: OrchestratorConfig) => void | Promise<void>
+): Promise<void> {
+  const release = await acquireConfigLock(stateDir)
+  try {
+    const config = await loadConfig(stateDir)
+    await fn(config)
+    await writeConfig(stateDir, config)
+  } finally {
+    await release()
   }
 }
 
