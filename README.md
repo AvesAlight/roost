@@ -183,9 +183,9 @@ CONFIG_DIR="$(pwd)/.orchestrator"
 ```
 
 DM the dispatcher (`<project>-dispatcher`) to manage the watch list:
-`watch <N>`, `unwatch <N>`, `watch pr <N>`, `watch list`, `help`. The
-dispatcher's allowlist defaults to `[<project>-lead-pm]`; set
-`irc.command_senders` in config to override.
+`watch <N>`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`,
+`watch list`, `help`. The dispatcher's allowlist defaults to
+`[<project>-lead-pm]`; set `irc.command_senders` in config to override.
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
 `#<project>-issue-N` channels, etc.) so multiple projects can share one ergo.
