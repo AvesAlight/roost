@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,7 +64,6 @@ describe('mutateConfig', () => {
       c.project = tag
     })
     await Promise.all([tagged('a'), tagged('b')])
-    // Whoever ran first must fully complete before the other starts
     const aStart = order.indexOf('a-start')
     const aEnd = order.indexOf('a-end')
     const bStart = order.indexOf('b-start')
@@ -74,22 +73,14 @@ describe('mutateConfig', () => {
     expect(firstEnd).toBeLessThan(secondStart)
   })
 
-  it('rolls back on fn error: config unchanged, lock released', async () => {
+  it('does not write on fn error and the queue advances for next caller', async () => {
     await expect(
       mutateConfig(dir, () => { throw new Error('boom') })
     ).rejects.toThrow('boom')
     const config = await loadConfig(dir)
     expect(config.project).toBe('initial')
-    // Lock released: subsequent mutate succeeds
+    // Queue not poisoned: next mutate succeeds
     await mutateConfig(dir, (c) => { c.project = 'after-error' })
     expect((await loadConfig(dir)).project).toBe('after-error')
-  })
-
-  it('clears a stale lock from a dead PID', async () => {
-    // Use a PID well above the kernel max (4194304 on Linux, 99999 on macOS)
-    await writeFile(join(dir, 'config.lock'), '99999999\n')
-    await mutateConfig(dir, (c) => { c.project = 'after-stale' })
-    expect((await loadConfig(dir)).project).toBe('after-stale')
-    expect(readdirSync(dir).includes('config.lock')).toBe(false)
   })
 })

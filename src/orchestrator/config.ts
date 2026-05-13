@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
+import { mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
@@ -82,9 +82,11 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
 }
 
 // Raw atomic write. Use mutateConfig for any read-modify-write — it
-// serializes concurrent callers via the advisory lock.
+// serializes concurrent callers in-process.
 export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
   await mkdir(stateDir, { recursive: true })
+  // tmp must share a filesystem with config.json so rename is atomic;
+  // os.tmpdir() can be a different mount on macOS.
   const tmp = join(stateDir, `.config.${process.pid}.${Date.now()}.tmp`)
   try {
     await Bun.write(tmp, sortedJson(config))
@@ -95,54 +97,29 @@ export async function writeConfig(stateDir: string, config: OrchestratorConfig):
   }
 }
 
-// File-based lock rather than an in-memory mutex because cross-process writers
-// (operator scripts, future second dispatcher) need the same guarantee.
-async function acquireConfigLock(stateDir: string): Promise<() => Promise<void>> {
-  const lockPath = join(stateDir, 'config.lock')
-  const deadline = Date.now() + 5000
-  let holderPid: number | undefined
-  while (true) {
-    try {
-      const fh = await open(lockPath, 'wx')
-      try {
-        await fh.writeFile(`${process.pid}\n`)
-      } finally {
-        await fh.close()
-      }
-      return async () => { try { await unlink(lockPath) } catch { /* ignore */ } }
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-      // Stale lock check: if PID is dead, clear and retry immediately.
-      try {
-        const content = await readFile(lockPath, 'utf8')
-        const parsed = parseInt(content.trim(), 10)
-        holderPid = parsed > 0 ? parsed : undefined
-        if (holderPid) {
-          let alive = true
-          try { process.kill(holderPid, 0) } catch { alive = false }
-          if (!alive) { await unlink(lockPath); continue }
-        }
-      } catch { /* unreadable — fall through to retry */ }
-      if (Date.now() >= deadline) throw new Error(`config lock timed out (held by pid ${holderPid ?? '?'}): ${lockPath}`)
-      await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * 11)))
-    }
-  }
-}
+// In-process promise queue — serializes concurrent DM handlers (and any
+// future mutators) within the dispatcher process. writeState has no
+// equivalent because only the poll loop writes state; config is
+// multi-writer once DM handlers land.
+// Single-process writer assumption: if a second process writes config
+// concurrently, last-writer-wins. Operator hand-edits while the
+// dispatcher runs are on the operator.
+let configMutex: Promise<void> = Promise.resolve()
 
-// Serializes concurrent DM handlers (and any other future mutators) via an
-// advisory file lock. writeState has no equivalent because only the poll loop
-// writes state; config is multi-writer once DM handlers land.
 export async function mutateConfig(
   stateDir: string,
   fn: (config: OrchestratorConfig) => void | Promise<void>
 ): Promise<void> {
-  const release = await acquireConfigLock(stateDir)
+  const prev = configMutex
+  let release!: () => void
+  configMutex = new Promise(r => { release = r })
   try {
+    await prev.catch(() => {})
     const config = await loadConfig(stateDir)
     await fn(config)
     await writeConfig(stateDir, config)
   } finally {
-    await release()
+    release()
   }
 }
 
