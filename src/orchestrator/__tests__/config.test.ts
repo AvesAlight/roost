@@ -86,7 +86,7 @@ describe('mutateConfig', () => {
   })
 
   it('clears a stale lock from a dead PID', async () => {
-    // PID 99999999 almost certainly doesn't exist
+    // Use a PID well above the kernel max (4194304 on Linux, 99999 on macOS)
     await writeFile(join(dir, 'config.lock'), '99999999\n')
     await mutateConfig(dir, (c) => { c.project = 'after-stale' })
     expect((await loadConfig(dir)).project).toBe('after-stale')

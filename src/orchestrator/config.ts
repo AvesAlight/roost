@@ -81,6 +81,8 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
   }
 }
 
+// Raw atomic write. Use mutateConfig for any read-modify-write — it
+// serializes concurrent callers via the advisory lock.
 export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
   await mkdir(stateDir, { recursive: true })
   const tmp = join(stateDir, `.config.${process.pid}.${Date.now()}.tmp`)
@@ -93,33 +95,43 @@ export async function writeConfig(stateDir: string, config: OrchestratorConfig):
   }
 }
 
+// File-based lock rather than an in-memory mutex because cross-process writers
+// (operator scripts, future second dispatcher) need the same guarantee.
 async function acquireConfigLock(stateDir: string): Promise<() => Promise<void>> {
   const lockPath = join(stateDir, 'config.lock')
   const deadline = Date.now() + 5000
+  let holderPid: number | undefined
   while (true) {
     try {
       const fh = await open(lockPath, 'wx')
-      await fh.writeFile(`${process.pid}\n`)
-      await fh.close()
+      try {
+        await fh.writeFile(`${process.pid}\n`)
+      } finally {
+        await fh.close()
+      }
       return async () => { try { await unlink(lockPath) } catch { /* ignore */ } }
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
       // Stale lock check: if PID is dead, clear and retry immediately.
       try {
         const content = await readFile(lockPath, 'utf8')
-        const pid = parseInt(content.trim(), 10)
-        if (pid && !isNaN(pid)) {
+        const parsed = parseInt(content.trim(), 10)
+        holderPid = parsed > 0 ? parsed : undefined
+        if (holderPid) {
           let alive = true
-          try { process.kill(pid, 0) } catch { alive = false }
+          try { process.kill(holderPid, 0) } catch { alive = false }
           if (!alive) { await unlink(lockPath); continue }
         }
       } catch { /* unreadable — fall through to retry */ }
-      if (Date.now() >= deadline) throw new Error(`config lock timed out: ${lockPath}`)
-      await new Promise(r => setTimeout(r, 20))
+      if (Date.now() >= deadline) throw new Error(`config lock timed out (held by pid ${holderPid ?? '?'}): ${lockPath}`)
+      await new Promise(r => setTimeout(r, 15 + Math.floor(Math.random() * 11)))
     }
   }
 }
 
+// Serializes concurrent DM handlers (and any other future mutators) via an
+// advisory file lock. writeState has no equivalent because only the poll loop
+// writes state; config is multi-writer once DM handlers land.
 export async function mutateConfig(
   stateDir: string,
   fn: (config: OrchestratorConfig) => void | Promise<void>
