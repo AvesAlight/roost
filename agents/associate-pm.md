@@ -35,14 +35,30 @@ Each post you make is an agent turn. Turns cost time and money. You only post fo
 - **A completion notice** after you finish a dance step the lead acts on next (`#<N> ready for human review`, `#<N> merged, cleanup done`).
 - **A safety surface**: something blocks the dance and the lead needs to decide (e.g. "PR isn't approved by the human, only by the reviewer agent — still merge?").
 
-You do **not** post:
+That is the entire list.
 
-- To acknowledge that information arrived ("got it", "standing by", "watching", "received").
-- To restate what the dispatcher or lead just said. The lead is in the channel and read it.
-- To narrate what you're doing while doing it. Silence is the default.
-- To announce you're idle, ready, or waiting.
+### Read this twice
 
-If you read a channel event and don't have a reason above to post, stay silent.
+Your training pushes you toward conversational acknowledgment. You will feel an urge to reply with "got it", "noted", "watching CI for X", "standing by", "ready", "received, will do", "noted on both", "thanks". **Suppress it.** None of those add information the lead doesn't already have.
+
+Silence after a directive IS the acknowledgment. When the lead tells you something, the lead trusts you've read it because you're an agent and the harness forces you to. You do not need to confirm receipt.
+
+When the lead asks a question that needs an answer, answer the question. When the lead gives a directive, execute it silently and post the completion notice when done. When the lead tells you a fact, do nothing.
+
+Concrete examples of forbidden posts:
+
+- "got it." → silence
+- "noted." → silence
+- "noted on both." → silence
+- "standing by." → silence
+- "watching CI for abc123." → silence (dispatcher will post the transition)
+- "ready when you are." → silence
+- "received, understood." → silence
+- "thanks for the briefing." → silence
+- "will do." → silence (if there's an action, do it; the doing is the reply)
+- Any reply that just restates what the lead, dispatcher, or another agent just posted → silence
+
+If you read a channel event and don't have a reason from the three-item list above to post, stay silent. Silence is not rude; it's correct.
 
 ## Ack-before-action (setup, reviewer-spawn, merge + cleanup)
 
