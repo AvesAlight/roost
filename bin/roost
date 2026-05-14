@@ -118,8 +118,10 @@ Options:
                              --agent to claude, which loads the matching
                              definition from agents/<NAME>.md (locks model
                              and tool allowlist via the agent frontmatter).
-                             When set, --model is informational only — the
-                             agent file model field wins.
+                             Mutually exclusive with --model: if both are
+                             passed spawn errors out, since the agent's
+                             frontmatter wins on model and the --model
+                             value would be silently ignored.
   --mcp-config PATH          Explicit mcp-config path. Not needed when the
                              roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
@@ -452,7 +454,8 @@ _write_shim() {
 cmd_spawn() {
   local nick=""
   local channels="#roost"
-  local model="opus"
+  local model=""
+  local model_explicit=0
   local session_name=""
   local agent=""
   local mcp_config=""
@@ -477,7 +480,7 @@ cmd_spawn() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -c|--channels)    channels="$2"; shift 2 ;;
-      -m|--model)       model="$2"; shift 2 ;;
+      -m|--model)       model="$2"; model_explicit=1; shift 2 ;;
       -s|--session)     session_name="$2"; shift 2 ;;
       --agent)          agent="$2"; shift 2 ;;
       --mcp-config)     mcp_config="$2"; shift 2 ;;
@@ -501,6 +504,13 @@ cmd_spawn() {
     esac
   done
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
+  if [ "${model_explicit}" -eq 1 ] && [ -n "${agent}" ]; then
+    echo "error: --model and --agent are mutually exclusive — the agent's frontmatter wins on model, so --model would be silently ignored" >&2
+    exit 1
+  fi
+  if [ -z "${model}" ] && [ -z "${agent}" ]; then
+    model="opus"
+  fi
   local prompt_sources=0
   [ -n "${prompt_file}" ]     && prompt_sources=$((prompt_sources + 1))
   [ -n "${prompt_text}" ]     && prompt_sources=$((prompt_sources + 1))
@@ -666,7 +676,9 @@ cmd_spawn() {
   # OR brew cellar — ROOST_DIR walks symlinks). Without it, --dangerously-
   # load-development-channels server:plugin:roost:roost-irc has nothing to
   # find unless the plugin's been installed into claude's registry.
-  local inner_cmd="claude --model ${model} --permission-mode ${permission_mode}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  local model_flag=""
+  [ -n "${model}" ] && model_flag=" --model ${model}"
+  local inner_cmd="claude${model_flag} --permission-mode ${permission_mode}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016

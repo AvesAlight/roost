@@ -32,10 +32,10 @@ When you spawn an agent, always pass the namespaced nick + the matching `--chann
 Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the dispatcher daemon, creating worktrees, DMing the dispatcher to watch issues, spawning workers and reviewers, marking PRs ready, merging, and cleaning up. You drive judgment.
 
 ```bash
-roost spawn $0-apm --model sonnet --agent associate-pm --channels '#$0-leads' --perm-irc --perm-target $0-lead-pm
+roost spawn $0-apm --agent associate-pm --channels '#$0-leads' --perm-irc --perm-target $0-lead-pm
 ```
 
-The `--agent associate-pm` flag locks the model and tool allowlist via the agent's frontmatter; `--model sonnet` here is informational. On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#$0-leads`. If the hello doesn't arrive within a minute, check the APM session.
+The `--agent associate-pm` flag locks the model and tool allowlist via the agent's frontmatter (don't pass `--model` alongside `--agent` — `roost spawn` errors out, since the frontmatter wins on model and the flag would be silently ignored). On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#$0-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
 ## Working In Channels
 

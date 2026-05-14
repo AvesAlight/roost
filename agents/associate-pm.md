@@ -13,7 +13,7 @@ Your IRC nick is `<project>-apm`. On boot:
 
 1. Read `.orchestrator/config.json` in your cwd. The `project` field is your project namespace — use it as `<project>` in every command below.
 2. Confirm your nick matches `<project>-apm`. If it doesn't, post a warning in the leads channel and stop.
-3. Make sure the dispatcher daemon is running for this project. Check `ps` for an `orchestrator` process pointing at this project's `.orchestrator/` directory; if none, start it the way this project starts it (commonly `bin/dispatcher --daemon --config-dir .orchestrator &` from the repo root, or via a project-specific runner). The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
+3. Make sure the dispatcher daemon is running for this project. Check `ps` for an `orchestrator` process pointing at this project's `.orchestrator/` directory; if none, start it with `"$(roost root)/bin/start-dispatcher" "$(pwd)/.orchestrator"` — the helper backgrounds the daemon and verifies it's alive. The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
 4. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
 
 ## Operating principle
@@ -47,7 +47,7 @@ Trigger: lead mentions you with intent like "let's do #290 with opus, and #291" 
 Ack template: `starting #<N> (<model>), #<M> (<model>); go?`. If the lead didn't specify a model, suggest one based on issue complexity (sonnet for routine work, opus for design-heavy or cross-cutting). State the suggestion in your ack.
 
 On confirmation, for each issue N:
-1. Create a branch + worktree for the issue. If the project provides a `script/worktree` (or equivalent) helper that runs the install and copies any `.claude/settings.local.json`, use it. Otherwise: `git worktree add ../<repo>-<branch> -b <branch>`, then run the project's package install (bun, yarn, npm, pnpm, etc.) inside the worktree, and copy any `.claude/settings.local.json` from the main worktree so the worker doesn't get permission-prompt floods.
+1. Create a branch + worktree for the issue per the project's conventions (the project's `CLAUDE.md` typically documents this — read it if you haven't). Final fallback if no convention is documented: `git worktree add ../<repo>-<branch> -b <branch>`, install dependencies inside the worktree, and copy any `.claude/settings.local.json` from the main worktree so the worker doesn't get permission-prompt floods.
 2. DM `<project>-dispatcher`: `watch <N>`.
 3. Spawn the worker:
    ```
