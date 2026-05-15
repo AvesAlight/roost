@@ -7,6 +7,7 @@ import {
   workerNick,
   reviewerNick,
   leadPmNick,
+  apmNick,
   watcherNick,
   dispatcherNick,
 } from '../naming.js'
@@ -46,6 +47,7 @@ describe('name helpers', () => {
     expect(workerNick('roost', 196)).toBe('roost-worker-196')
     expect(reviewerNick('roost', 200)).toBe('roost-reviewer-200')
     expect(leadPmNick('roost')).toBe('roost-lead-pm')
+    expect(apmNick('roost')).toBe('roost-apm')
     expect(watcherNick('roost')).toBe('roost-watcher')
     expect(dispatcherNick('roost')).toBe('roost-dispatcher')
   })

@@ -15,7 +15,7 @@
 // project channel.
 
 import { loadConfig, mutateConfig, type OrchestratorConfig } from './config.js'
-import { defaultProject, leadPmNick } from './naming.js'
+import { apmNick, defaultProject, leadPmNick } from './naming.js'
 import type { Plugin } from './plugin.js'
 
 export type Command =
@@ -126,8 +126,10 @@ export function parseCommands(text: string): Command[] {
 
 // ---- Allowlist -------------------------------------------------------------
 
-// Resolves command_senders. Unset → `[leadPmNick(project)]` (see
-// naming.ts:leadPmNick — the single source of truth for the convention).
+// Resolves command_senders. Unset → `[leadPmNick(project), apmNick(project)]`
+// (see naming.ts — single source of truth for the convention). Both lead and
+// APM are documented team members that need DM access; trusting both by
+// default avoids respawning a lead just to flip an unwatch.
 // Explicit `[]` means nobody is allowed. If project is unresolvable, falls
 // back to `[]` and logs the cause so an operator chasing a "not authorized"
 // reply can find the root cause in daemon.log.
@@ -135,7 +137,8 @@ export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string
   const explicit = config.irc?.command_senders
   if (explicit !== undefined) return explicit
   try {
-    return [leadPmNick(defaultProject(config))]
+    const project = defaultProject(config)
+    return [leadPmNick(project), apmNick(project)]
   } catch (e) {
     log?.(`dm-handler: cannot resolve default allowlist (no project/repo in config): ${e}`)
     return []

@@ -142,8 +142,8 @@ describe('parseCommands', () => {
 // ---- Allowlist -------------------------------------------------------------
 
 describe('resolveAllowlist', () => {
-  it('defaults to [leadPmNick(project)] when unset', () => {
-    expect(resolveAllowlist({ project: 'roost' })).toEqual(['roost-lead-pm'])
+  it('defaults to [leadPmNick(project), apmNick(project)] when unset', () => {
+    expect(resolveAllowlist({ project: 'roost' })).toEqual(['roost-lead-pm', 'roost-apm'])
   })
 
   it('returns the explicit list when set (including empty)', () => {
@@ -228,6 +228,16 @@ describe('handleDm — routing', () => {
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toBe('issues: watched 5')
+    expect(issues.handled).toHaveLength(1)
+  })
+
+  it('allows the default apm nick when command_senders is unset', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
+    await handleDm(deps, { sender: 'roost-apm', text: 'unwatch 5' })
+    expect(irc.dms).toHaveLength(1)
+    expect(irc.dms[0].text).toBe('issues: unwatched 5')
     expect(issues.handled).toHaveLength(1)
   })
 
@@ -329,11 +339,15 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toBe('issues: watched 7')
   })
 
-  it('explicit empty allowlist blocks everyone (including lead-pm)', async () => {
+  it('explicit empty allowlist blocks everyone (including lead-pm and apm)', async () => {
     await writeConfig(dir, { project: 'roost', irc: { command_senders: [] }, plugins: {} })
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
-    expect(irc.dms).toEqual([{ nick: 'roost-lead-pm', text: 'not authorized; configure irc.command_senders' }])
+    await handleDm(deps, { sender: 'roost-apm', text: 'watch 5' })
+    expect(irc.dms).toEqual([
+      { nick: 'roost-lead-pm', text: 'not authorized; configure irc.command_senders' },
+      { nick: 'roost-apm', text: 'not authorized; configure irc.command_senders' },
+    ])
   })
 
   it('config load error surfaces to project channel, no throw', async () => {
