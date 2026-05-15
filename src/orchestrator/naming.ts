@@ -57,6 +57,10 @@ export function leadPmNick(project: string): string {
   return `${project}-lead-pm`
 }
 
+export function apmNick(project: string): string {
+  return `${project}-apm`
+}
+
 export function watcherNick(project: string): string {
   return `${project}-watcher`
 }
