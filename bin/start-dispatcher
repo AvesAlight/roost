@@ -47,7 +47,7 @@ read_pid() {
 # so a recycled PID owned by an unrelated process doesn't fool us.
 pid_file_is_live() {
   local pid
-  pid="$(read_pid)" || return 1
+  pid="$(read_pid)"
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   # `ps -p PID -o args=` works on darwin and linux. Grep for our config-dir.

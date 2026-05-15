@@ -128,9 +128,11 @@ wait "$unrelated_pid" 2>/dev/null || true
 kill_descendants "$TDIR/dispatcher.pid"
 rm -rf "$TDIR"
 
-# -- Test 5: concurrent-start race ----------------------------------------
+# -- Test 5: concurrent-start serialization -------------------------------
 # Two parallel start-dispatcher calls — exactly one daemon survives, both
-# exit 0, PID file points at the survivor.
+# exit 0, PID file points at the survivor. Exercises the mkdir lock and
+# wait_for_winner path; the daemon-side exclusive PID claim is covered by
+# the unit tests in dispatcher-pid.test.ts.
 
 TDIR="$(mktemp -d /tmp/start-dispatcher-test-XXXXXXXX)"
 # Inject a small delay before the daemon writes its PID file, widening the
@@ -151,9 +153,9 @@ done
 if [ "$rc_a" -eq 0 ] && [ "$rc_b" -eq 0 ] \
     && [ -n "$pid_in_file" ] && kill -0 "$pid_in_file" 2>/dev/null \
     && [ "$live_count" -eq 1 ]; then
-  ok "concurrent-start race: both exit 0, exactly one daemon survives"
+  ok "concurrent-start serialization: both exit 0, exactly one daemon survives"
 else
-  fail "concurrent-start race" "rc_a=$rc_a rc_b=$rc_b pid_in_file=$pid_in_file live_count=$live_count"
+  fail "concurrent-start serialization" "rc_a=$rc_a rc_b=$rc_b pid_in_file=$pid_in_file live_count=$live_count"
   echo "--- out1 ---"; cat "$TDIR/out1.log"
   echo "--- out2 ---"; cat "$TDIR/out2.log"
 fi

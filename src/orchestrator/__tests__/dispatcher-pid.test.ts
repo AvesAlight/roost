@@ -122,16 +122,14 @@ describe('readDispatcherPid', () => {
     expect(await readDispatcherPid(dir)).toBeNull()
   })
 
-  it('returns the info when the daemon is our own process (round-trip)', async () => {
-    // writeDispatcherPid records our own argv, which includes the test
-    // runner path. That cmdline won't include `dir`, so we forge one that
-    // does — covering the happy-path read.
+  it('ignores the recorded cmdline field and trusts only ps', async () => {
+    // Forging the JSON cmdline shouldn't fool readDispatcherPid — the ps
+    // cross-check uses the kernel's view, not anything in the file. The
+    // test runner's real `ps args=` does not contain `dir`, so this is null.
     await writeFile(
       join(dir, DISPATCHER_PID_FILE),
       JSON.stringify({ pid: process.pid, started_at_ms: 1, cmdline: `bun --foo ${dir}` })
     )
-    // The forged cmdline isn't what ps will report for the test runner, so
-    // this should still return null — verifying the ps cross-check is real.
     expect(await readDispatcherPid(dir)).toBeNull()
   })
 })

@@ -111,8 +111,9 @@ async function runDaemon(stateDir: string): Promise<void> {
     logWriter.flush()
   }
 
-  // Claim the PID file exclusively — defense-in-depth against accidental
-  // double-starts that bypass bin/start-dispatcher's mkdir lock.
+  // The in-daemon claim is the source of truth for "this dispatcher owns
+  // this stateDir" — exclusive-create on the PID file. bin/start-dispatcher
+  // has its own mkdir lock that serves as the cheap front-door check.
   const pidInfo = await writeDispatcherPid(stateDir)
   log(`orchestrator[daemon]: pid ${pidInfo.pid} written to ${stateDir}/dispatcher.pid\n`)
 
@@ -202,6 +203,7 @@ async function runDaemon(stateDir: string): Promise<void> {
 
     // Sync IRC membership against the plugin's reported desired set + project channel.
     const desired = new Set<string>([projectChannel, ...result.channels])
+    let joinedSnapshot: string[] | null = null
     try {
       const currentlyJoined = (await client.whoisChannels()) ?? []
       for (const ch of currentlyJoined) {
@@ -210,15 +212,19 @@ async function runDaemon(stateDir: string): Promise<void> {
       for (const ch of desired) {
         if (!client.isJoined(ch)) await client.join(ch)
       }
+      // Reconcile succeeded — `desired` is what we should be in. Avoid a
+      // second whoisChannels round-trip just to snapshot.
+      joinedSnapshot = [...desired].sort()
     } catch (e) {
       log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
     }
 
     // Snapshot of channels we believe we're joined to, for operator
     // readiness checks. Freshness is "last successful tick", not "now".
+    // On reconcile failure, re-query so the snapshot reflects reality.
     try {
-      const joined = (await client.whoisChannels()) ?? []
-      await writeJoinedChannels(stateDir, joined.sort())
+      const joined = joinedSnapshot ?? ((await client.whoisChannels()) ?? []).sort()
+      await writeJoinedChannels(stateDir, joined)
     } catch (e) {
       log(`orchestrator[daemon]: joined-channels snapshot failed: ${e}\n`)
     }

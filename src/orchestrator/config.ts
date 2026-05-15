@@ -137,8 +137,11 @@ export async function writeHeartbeat(stateDir: string): Promise<void> {
   await Bun.write(join(stateDir, 'last-tick.txt'), new Date().toISOString() + '\n')
 }
 
-// Dispatcher PID file. JSON `{pid, started_at_ms, cmdline}`. Frozen format —
-// `bin/start-dispatcher` and #302 (shutdown helper) both parse this.
+// Dispatcher PID file. JSON `{pid, started_at_ms, cmdline}`. Only `pid` is
+// contractual today — `bin/start-dispatcher` reads it for the front-door
+// liveness check. `started_at_ms` and `cmdline` are written for operator
+// inspection and as the substrate for future readers (e.g. #302 shutdown
+// helper) — extend with care once a consumer lands.
 export const DISPATCHER_PID_FILE = 'dispatcher.pid'
 
 export interface DispatcherPidInfo {
@@ -159,8 +162,14 @@ async function readPsArgs(pid: number): Promise<string> {
   }
 }
 
+// signal-0 distinguishes "no such process" (ESRCH) from "process exists but
+// you can't signal it" (EPERM, e.g. daemon owned by a different uid). Both
+// kill -0 failures look identical in shell, but in TS we can keep the
+// safer answer: EPERM means alive, treat as not-ours-but-still-running.
 function isAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true } catch { return false }
+  try { process.kill(pid, 0); return true } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 // Returns the live dispatcher's PID info if the PID file exists, the PID is
@@ -188,6 +197,9 @@ export async function readDispatcherPid(stateDir: string): Promise<DispatcherPid
 // Write the PID file exclusively (O_EXCL via `wx`). Caller (the daemon) has
 // already verified no live dispatcher owns the stateDir. If the file exists
 // but is stale (held by no live owner), clean it up and retry once.
+//
+// Uses node:fs/promises rather than Bun.write because the latter has no
+// exclusive-create flag — `wx` is the load-bearing primitive here.
 export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPidInfo> {
   await mkdir(stateDir, { recursive: true })
   const path = join(stateDir, DISPATCHER_PID_FILE)
