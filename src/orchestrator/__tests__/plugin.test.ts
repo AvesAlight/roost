@@ -100,7 +100,7 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
 
     const factory = getPluginFactory('stub')
     expect(factory).toBeTypeOf('function')
-    const plugin = factory!('#default-leads')
+    const plugin = factory!('#default-leads', () => {})
 
     const config: OrchestratorConfig = {
       project: 'demo',
@@ -133,7 +133,7 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
 
   it('passes prevState through under the plugin name slice across ticks', async () => {
     registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
-    const plugin = getPluginFactory('stub')!('#default-leads')
+    const plugin = getPluginFactory('stub')!('#default-leads', () => {})
     const config: OrchestratorConfig = { plugins: { stub: { rooms: ['#room'] } } }
 
     const t1 = await plugin.runTick(config, null)
@@ -154,12 +154,12 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
   // guard against that drift.
   it('couples class name to registry key for the stub plugin', () => {
     registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
-    expect(getPluginFactory('stub')!('#x').name).toBe('stub')
+    expect(getPluginFactory('stub')!('#x', () => {}).name).toBe('stub')
   })
 
   it('couples class name to registry key for both built-ins', async () => {
     await import('../registry.js')
-    expect(getPluginFactory('github-prs')!('#x').name).toBe('github-prs')
-    expect(getPluginFactory('github-issues')!('#x').name).toBe('github-issues')
+    expect(getPluginFactory('github-prs')!('#x', () => {}).name).toBe('github-prs')
+    expect(getPluginFactory('github-issues')!('#x', () => {}).name).toBe('github-issues')
   })
 })

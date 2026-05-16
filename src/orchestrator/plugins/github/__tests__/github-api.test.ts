@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, retryGh, setRetryLogger } from '../github-api.js'
+import { GhError, spawnGh, setRetryLogger } from '../github-api.js'
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -23,11 +23,11 @@ function harness(): Harness & {
   }
 }
 
-describe('retryGh', () => {
+describe('spawnGh (retry-aware)', () => {
   it('returns on first attempt without retrying', async () => {
     const h = harness()
     let calls = 0
-    const out = await retryGh(['api', '/x'], {
+    const out = await spawnGh(['api', '/x'], {
       sleep: h.sleep,
       log: h.log,
       random: () => 0,
@@ -42,7 +42,7 @@ describe('retryGh', () => {
   it('retries on transient 5xx then succeeds', async () => {
     const h = harness()
     let calls = 0
-    const out = await retryGh(['api', '/x'], {
+    const out = await spawnGh(['api', '/x'], {
       sleep: h.sleep,
       log: h.log,
       baseMs: 100,
@@ -67,7 +67,7 @@ describe('retryGh', () => {
     let calls = 0
     let caught: unknown = null
     try {
-      await retryGh(['api', '/x'], {
+      await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
         baseMs: 100,
@@ -92,7 +92,7 @@ describe('retryGh', () => {
     let calls = 0
     let caught: unknown = null
     try {
-      await retryGh(['api', '/x'], {
+      await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
         exec: async () => { calls++; throw mkErr('gh: HTTP 404: Not Found') },
@@ -111,7 +111,7 @@ describe('retryGh', () => {
     const stderr = 'gh: HTTP 422: Validation Failed\nfield X may not be null'
     let caught: unknown = null
     try {
-      await retryGh(['api', '/x'], {
+      await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
         exec: async () => { calls++; throw mkErr(stderr) },
@@ -143,7 +143,7 @@ describe('retryGh', () => {
       const h = harness()
       let calls = 0
       try {
-        await retryGh(['api', '/x'], {
+        await spawnGh(['api', '/x'], {
           sleep: h.sleep,
           log: h.log,
           baseMs: 1,
@@ -159,7 +159,7 @@ describe('retryGh', () => {
   it('applies jitter via injected random', async () => {
     const h = harness()
     try {
-      await retryGh(['api', '/x'], {
+      await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
         baseMs: 100,
@@ -178,7 +178,7 @@ describe('retryGh', () => {
     setRetryLogger((msg) => { captured.push(msg) })
     try {
       let calls = 0
-      const out = await retryGh(['api', '/x'], {
+      const out = await spawnGh(['api', '/x'], {
         // No `log` injected — falls through to currentDefaultLog.
         sleep: async () => { /* no real wait */ },
         baseMs: 1,
@@ -202,7 +202,7 @@ describe('retryGh', () => {
     let calls = 0
     let caught: unknown = null
     try {
-      await retryGh(['api', '/x'], {
+      await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
         exec: async () => { calls++; throw new Error('bun.spawn died') },

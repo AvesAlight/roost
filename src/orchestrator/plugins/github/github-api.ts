@@ -1,6 +1,6 @@
 // Transient stderr classifier — patterns we'll retry on. Anything else
 // (404/401/422/etc.) throws on the first attempt. 422 is logged verbatim
-// in retryGh so a 422-as-race can be spotted in dispatcher logs.
+// in spawnGh so a 422-as-race can be spotted in dispatcher logs.
 const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
   { re: /HTTP 5\d\d/i, label: 'http-5xx' },
   { re: /HTTP 429/i, label: 'http-429-rate-limit' },
@@ -34,7 +34,10 @@ export class GhError extends Error {
   }
 }
 
-async function spawnGh(args: string[]): Promise<unknown> {
+// Single gh attempt — runs the subprocess and parses output. Throws GhError
+// on non-zero exit. Default implementation of SpawnDeps.exec; tests inject
+// a fake to avoid spawning a real gh.
+async function runGhOnce(args: string[]): Promise<unknown> {
   const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
   const [out, errOut] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -56,7 +59,7 @@ async function spawnGh(args: string[]): Promise<unknown> {
   }
 }
 
-export interface RetryDeps {
+export interface SpawnDeps {
   // Each option is injectable so tests can pin behavior (no real sleeps, no
   // real gh, deterministic jitter).
   sleep?: (ms: number) => Promise<void>
@@ -65,7 +68,7 @@ export interface RetryDeps {
   baseMs?: number            // first backoff window; default 1000
   jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
   random?: () => number      // 0..1; default Math.random
-  exec?: (args: string[]) => Promise<unknown>  // default spawnGh
+  exec?: (args: string[]) => Promise<unknown>  // default runGhOnce
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -78,27 +81,33 @@ export function setRetryLogger(fn: (msg: string) => void): void {
   currentDefaultLog = fn
 }
 
-export async function retryGh(args: string[], deps: RetryDeps = {}): Promise<unknown> {
+// The single gh entrypoint — every gh call goes through here, so retry is
+// the contract for every caller. ghApi/ghGraphql below are thin shape
+// helpers; both delegate to spawnGh so retry can't be bypassed by a future
+// caller.
+export async function spawnGh(args: string[], deps: SpawnDeps = {}): Promise<unknown> {
   const sleep = deps.sleep ?? defaultSleep
   const log = deps.log ?? currentDefaultLog
   const totalAttempts = deps.attempts ?? 3
   const baseMs = deps.baseMs ?? 1000
   const jitterFraction = deps.jitterFraction ?? 0.5
   const random = deps.random ?? Math.random
-  const exec = deps.exec ?? spawnGh
+  const exec = deps.exec ?? runGhOnce
 
   const cmd = `gh ${args.join(' ')}`
   for (let i = 0; i < totalAttempts; i++) {
     try {
       return await exec(args)
     } catch (e) {
+      // Non-GhError surfaces an upstream contract problem (missing gh binary,
+      // bun spawn crash, etc.) — bypass retry.
       if (!(e instanceof GhError)) throw e
       if (HTTP_422.test(e.stderr)) {
         log(`gh-retry: ${cmd} HTTP 422 (non-transient) — stderr verbatim:\n${e.stderr}\n`)
-        throw new GhError(e.message, e.stderr, i + 1)
+        throw e
       }
       const matched = classifyTransient(e.stderr)
-      if (!matched) throw new GhError(e.message, e.stderr, i + 1)
+      if (!matched) throw e
       const attemptNum = i + 1
       if (attemptNum >= totalAttempts) {
         log(`gh-retry: ${cmd} exhausted ${totalAttempts} attempts (matched=${matched}) — stderr verbatim:\n${e.stderr}\n`)
@@ -109,15 +118,15 @@ export async function retryGh(args: string[], deps: RetryDeps = {}): Promise<unk
       await sleep(backoff)
     }
   }
-  // Unreachable.
-  throw new GhError(`retryGh: loop exited without result for ${cmd}`)
+  // Unreachable — the loop always returns or throws.
+  throw new GhError(`spawnGh: loop exited without result for ${cmd}`)
 }
 
 async function ghApi(endpoint: string, paginate = false): Promise<unknown> {
   const args = ['api']
   if (paginate) args.push('--paginate')
   args.push(endpoint)
-  return retryGh(args)
+  return spawnGh(args)
 }
 
 // Centralized so a future gh call can't slip past the retry wrapper.
@@ -126,7 +135,7 @@ async function ghGraphql(query: string, vars: Record<string, string | number>): 
   for (const [k, v] of Object.entries(vars)) {
     args.push('-F', `${k}=${v}`)
   }
-  return retryGh(args)
+  return spawnGh(args)
 }
 
 export interface GhLabel {
