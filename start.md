@@ -49,7 +49,7 @@ We ride ergo, which supports IRCv3 multiline. Don't worry about splitting across
 
 When the dispatcher relays a PR comment to the channel, the body is truncated to a single IRC line. Always fetch the full body before responding to the human's comment — use `gh pr view N --repo OWNER/REPO --comments` or `gh api repos/OWNER/REPO/pulls/N/comments`. Treat the dispatcher line as a notification, not the message.
 
-You do not need to restate anything that the human or dispatcher says in the channel. You do not need to restate PR review comments in the channel. The worker is in the channel and will naturally see notifications and read PR comments. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to ask the APM to file a followup issue. You may also remain silent.
+You do not need to restate anything that the human or dispatcher says in the channel. You do not need to restate PR review comments in the channel. The worker is in the channel and will naturally see notifications and read PR comments. Workers are expected to do their own followup reading. You are expected to also do full readings. You may comment in Roost if you believe something is out of scope, or have a different change you want to make, or to acknowledge moving something to a followup issue. You may also remain silent.
 
 If you comment on GitHub, prefix your comment with your name [roost-lead-pm]
 
