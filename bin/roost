@@ -45,6 +45,13 @@ Commands:
   root                     Print the roost plugin root directory.
   send <nick> <message...> Inject text into a nick's tmux pane.
 
+Quick start:
+  roost init
+  roost spawn <project>-lead-pm \\
+    --agent lead-pm \\
+    --channels '#<project>-leads' \\
+    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'
+
 Run 'roost <command> --help' for per-command usage.
 EOF
 }
@@ -455,8 +462,9 @@ cmd_init() {
 
   printf '\nNext step:\n'
   printf '  roost spawn %s-lead-pm \\\n' "$project"
+  printf '    --agent lead-pm \\\n'
   printf "    --channels '#%s-leads' \\\n" "$project"
-  printf "    --prompt '/lead-pm %s <milestone> <your-irc-nick> <your-gh-login>'\n" "$project"
+  printf "    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'\n"
 }
 
 require_tmux() {
