@@ -155,8 +155,8 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
     // Assistant turn: model + usage block.
     if (row.type === 'assistant' && row.message?.usage && row.message.model) {
       // Dedup multi-part API responses: same requestId → same usage block.
-      // Rows lacking a requestId (older transcripts, synthetic rows) fall
-      // through and count as today.
+      // Rows lacking a requestId (older transcripts, synthetic rows) are
+      // not deduped — each row counts independently.
       if (row.requestId) {
         if (seenRequestIds.has(row.requestId)) continue
         seenRequestIds.add(row.requestId)
