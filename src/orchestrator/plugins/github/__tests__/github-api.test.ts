@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, retryGh } from '../github-api.js'
+import { GhError, retryGh, setRetryLogger } from '../github-api.js'
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -170,6 +170,31 @@ describe('retryGh', () => {
     } catch { /* exhausted */ }
     // i=0: 100 * 1 * 1.5 = 150; i=1: 100 * 2 * 1.5 = 300
     expect(h.sleeps).toEqual([150, 300])
+  })
+
+  it('setRetryLogger swaps the default log sink for callers that omit deps.log', async () => {
+    const captured: string[] = []
+    const original = (msg: string) => { process.stderr.write(msg) }
+    setRetryLogger((msg) => { captured.push(msg) })
+    try {
+      let calls = 0
+      const out = await retryGh(['api', '/x'], {
+        // No `log` injected — falls through to currentDefaultLog.
+        sleep: async () => { /* no real wait */ },
+        baseMs: 1,
+        random: () => 0,
+        exec: async () => {
+          calls++
+          if (calls === 1) throw mkErr('HTTP 502')
+          return { ok: true }
+        },
+      })
+      expect(out).toEqual({ ok: true })
+      expect(captured.length).toBe(1)
+      expect(captured[0]).toContain('matched=http-5xx')
+    } finally {
+      setRetryLogger(original)
+    }
   })
 
   it('rethrows non-GhError immediately without classifying', async () => {

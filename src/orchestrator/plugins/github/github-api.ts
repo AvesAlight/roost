@@ -69,14 +69,18 @@ export interface RetryDeps {
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
-// Retry diagnostics go to stderr — the daemon launcher redirects stderr to
-// dispatcher-boot.log via nohup, so operators chasing a noisy classifier can
-// find the trail there.
-const defaultLog = (msg: string) => { process.stderr.write(msg) }
+// Retry diagnostics default to stderr. The daemon overrides this via
+// setRetryLogger() to fan out to daemon.log too; one-shot modes (--dispatch-irc,
+// plain CLI) keep the stderr-only default so output lands on the operator's tty.
+let currentDefaultLog: (msg: string) => void = (msg) => { process.stderr.write(msg) }
+
+export function setRetryLogger(fn: (msg: string) => void): void {
+  currentDefaultLog = fn
+}
 
 export async function retryGh(args: string[], deps: RetryDeps = {}): Promise<unknown> {
   const sleep = deps.sleep ?? defaultSleep
-  const log = deps.log ?? defaultLog
+  const log = deps.log ?? currentDefaultLog
   const totalAttempts = deps.attempts ?? 3
   const baseMs = deps.baseMs ?? 1000
   const jitterFraction = deps.jitterFraction ?? 0.5
@@ -113,6 +117,15 @@ async function ghApi(endpoint: string, paginate = false): Promise<unknown> {
   const args = ['api']
   if (paginate) args.push('--paginate')
   args.push(endpoint)
+  return retryGh(args)
+}
+
+// Centralized so a future gh call can't slip past the retry wrapper.
+async function ghGraphql(query: string, vars: Record<string, string | number>): Promise<unknown> {
+  const args: string[] = ['api', 'graphql', '-f', `query=${query}`]
+  for (const [k, v] of Object.entries(vars)) {
+    args.push('-F', `${k}=${v}`)
+  }
   return retryGh(args)
 }
 
@@ -260,13 +273,7 @@ export async function fetchPrLinkedIssues(repo: string, number: number): Promise
     'pullRequest(number:$number){' +
     'closingIssuesReferences(first:25){nodes{number}}}}}'
   )
-  const result = await retryGh([
-    'api', 'graphql',
-    '-f', `query=${query}`,
-    '-F', `owner=${owner}`,
-    '-F', `name=${name}`,
-    '-F', `number=${number}`,
-  ])
+  const result = await ghGraphql(query, { owner, name, number })
   if (!result) return []
   const r = result as Record<string, unknown>
   const nodes = (

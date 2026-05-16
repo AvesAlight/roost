@@ -23,6 +23,7 @@ import { getPluginFactory, registeredPluginNames, type Plugin, type TaggedEvent 
 import './orchestrator/registry.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dm-handler.js'
+import { setRetryLogger } from './orchestrator/plugins/github/github-api.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
 // ---- Path setup ------------------------------------------------------------
@@ -110,6 +111,9 @@ async function runDaemon(stateDir: string): Promise<void> {
     logWriter.write(msg)
     logWriter.flush()
   }
+  // Route gh retry diagnostics through the daemon log so operators grepping
+  // daemon.log for noisy classifier patterns can see the trail.
+  setRetryLogger(log)
 
   // The in-daemon claim is the source of truth for "this dispatcher owns
   // this stateDir" — exclusive-create on the PID file. bin/start-dispatcher
