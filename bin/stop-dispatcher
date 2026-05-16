@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# stop-dispatcher <config-dir>
+#
+# Gracefully stops the roost dispatcher daemon for the given config directory.
+# Idempotent — exits 0 if no live dispatcher is found.
+#
+# Sends SIGTERM and waits up to STOP_TIMEOUT seconds (default: 30) for the
+# process to exit. The daemon finishes its current tick then exits cleanly.
+# Does NOT send SIGKILL — if the daemon hangs, inspect and kill manually.
+#
+# Operator-driven; the APM does not stop the dispatcher automatically at
+# milestone end (it sends `unwatch` DMs but leaves the daemon running).
+#
+# Exits 0 on success (stopped or already stopped). Exits 1 on timeout with
+# a diagnostic on stderr prefixed "stop-dispatcher: FAIL: <reason>".
+#
+# PID file format (frozen — same as bin/start-dispatcher):
+# JSON `{"pid": N, "started_at_ms": M, "cmdline": "..."}`.
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "stop-dispatcher: usage: stop-dispatcher <config-dir>" >&2
+  exit 1
+fi
+
+CONFIG_DIR="$1"
+PID_FILE="$CONFIG_DIR/dispatcher.pid"
+STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
+
+# Pull pid out of the JSON without depending on jq. Portable across BSD sed
+# (darwin) and GNU sed (linux).
+read_pid() {
+  [ -f "$PID_FILE" ] || return 1
+  sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$PID_FILE" | head -1
+}
+
+# Returns 0 if the PID file points at a live dispatcher for *this* config-dir.
+# Mirrors the same two-stage check as bin/start-dispatcher: PID alive AND
+# cmdline references our config-dir (PID-recycle defense).
+pid_file_is_live() {
+  local pid
+  pid="$(read_pid)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  ps -p "$pid" -o args= 2>/dev/null | grep -Fq -- "$CONFIG_DIR" || return 1
+  return 0
+}
+
+if [ ! -f "$PID_FILE" ]; then
+  echo "dispatcher not running (no PID file)"
+  exit 0
+fi
+
+PID="$(read_pid)"
+
+if [ -z "$PID" ]; then
+  echo "dispatcher not running (PID file unreadable or empty)"
+  rm -f "$PID_FILE"
+  exit 0
+fi
+
+if ! pid_file_is_live; then
+  echo "dispatcher not running (stale PID file, pid=$PID)"
+  rm -f "$PID_FILE"
+  exit 0
+fi
+
+echo "stopping dispatcher (pid $PID)..."
+kill -TERM "$PID"
+
+elapsed=0
+while [ "$elapsed" -lt "$STOP_TIMEOUT" ]; do
+  sleep 1
+  elapsed=$((elapsed + 1))
+  if ! kill -0 "$PID" 2>/dev/null; then
+    rm -f "$PID_FILE"
+    echo "dispatcher stopped (pid $PID, ${elapsed}s)"
+    exit 0
+  fi
+done
+
+cat >&2 <<EOF
+stop-dispatcher: FAIL: dispatcher (pid $PID) did not exit within ${STOP_TIMEOUT}s.
+  Check:   ps -p $PID -o args=
+  Kill:    kill -9 $PID
+  Retry with longer timeout: STOP_TIMEOUT=60 $(command -v realpath >/dev/null && realpath "$0" || echo "$0") $CONFIG_DIR
+EOF
+exit 1
