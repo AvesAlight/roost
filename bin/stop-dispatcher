@@ -25,27 +25,12 @@ if [ "$#" -lt 1 ]; then
 fi
 
 CONFIG_DIR="$1"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$CONFIG_DIR/dispatcher.pid"
 STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 
-# Pull pid out of the JSON without depending on jq. Portable across BSD sed
-# (darwin) and GNU sed (linux).
-read_pid() {
-  [ -f "$PID_FILE" ] || return 1
-  sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$PID_FILE" | head -1
-}
-
-# Returns 0 if the PID file points at a live dispatcher for *this* config-dir.
-# Mirrors the same two-stage check as bin/start-dispatcher: PID alive AND
-# cmdline references our config-dir (PID-recycle defense).
-pid_file_is_live() {
-  local pid
-  pid="$(read_pid)"
-  [ -n "$pid" ] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o args= 2>/dev/null | grep -Fq -- "$CONFIG_DIR" || return 1
-  return 0
-}
+# shellcheck disable=SC1091
+source "$DIR/_dispatcher-pid-lib.sh"
 
 if [ ! -f "$PID_FILE" ]; then
   echo "dispatcher not running (no PID file)"
