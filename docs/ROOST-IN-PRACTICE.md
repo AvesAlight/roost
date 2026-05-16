@@ -32,7 +32,7 @@ sequence carefully. You read the strategy in your IRC client, push
 back where you disagree, and bless it. From there the agent runs.
 
 That agent is **lead-pm**. Its operational playbook lives at
-`prompts/lead-pm.md` — issue pickup, plan pressure-testing,
+`agents/lead-pm.md` — issue pickup, plan pressure-testing,
 draft PR → reviewer → ready flip → merge → cleanup, in order. It
 sits in `#leads-<project>` continuously and joins each issue
 channel while it's active.
@@ -102,7 +102,7 @@ channels, your messages land in the same feed the agents are
 already reading. There's no second pathway for "human-to-agent" —
 you're just another nick on the IRC server.
 
-The slash-command prompts (`prompts/lead-pm.md`,
+The agent and prompt files (`agents/lead-pm.md`,
 `prompts/worker.md`, `prompts/reviewer.md`) are the operational
 source of truth — they're what the agents actually run, and they're
 the right starting point for standing up your own project on Roost.

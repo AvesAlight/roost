@@ -39,8 +39,9 @@ Bootstrap your project, then kick off lead-pm:
 cd ~/Dev/myproject
 roost init                          # writes .orchestrator/config.json + copies role prompts
 roost spawn myproject-lead-pm \
+  --agent lead-pm \
   --channels '#myproject-leads' \
-  --prompt '/lead-pm myproject <milestone> <your-nick> <your-gh-login>'
+  --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 ```
 
 See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
