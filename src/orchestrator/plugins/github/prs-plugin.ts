@@ -48,7 +48,7 @@ export class GitHubPrsPlugin extends GhBase {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
       const prevPr: PrSnap | null | undefined = prev === null ? undefined : (prev.prs[key] ?? null)
-      const { snap, events } = await scrapePr(repo, number, prevPr, agentLogins)
+      const { snap, events } = await scrapePr(this.log, repo, number, prevPr, agentLogins)
       return { key, snap, events, entryChannels }
     }))
 

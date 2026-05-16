@@ -11,7 +11,7 @@ import type { Command } from '../../dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel } from '../../naming.js'
-import { BasePlugin } from '../../plugin.js'
+import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 
 interface GhPluginConfig {
   watched?: WatchedEntry[]
@@ -25,6 +25,13 @@ export abstract class GhBase extends BasePlugin {
   // Singular noun used in reply lines (e.g. "issue", "pr"). Plural is the
   // plugin name slice.
   protected abstract readonly label: string
+
+  // Diagnostic sink supplied by the plugin factory (see registry.ts). The
+  // default is stderr-only for tests that instantiate plugins directly; the
+  // real dispatcher always passes its own combined sink.
+  constructor(defaultChannel: string, protected readonly log: PluginLogger = defaultPluginLogger) {
+    super(defaultChannel)
+  }
 
   protected agentLogins(config: OrchestratorConfig): Set<string> {
     return new Set(config.agent_logins ?? [])

@@ -1,4 +1,5 @@
 import type { PrSnap, IssueSnap } from './types.js'
+import type { PluginLogger } from '../../plugin.js'
 import {
   fetchPr,
   fetchPrReviewComments,
@@ -45,22 +46,23 @@ function indexById<T extends { id?: number }>(items: T[]): Record<number, T> {
 }
 
 export async function snapshotPr(
+  log: PluginLogger,
   repo: string,
   number: number,
   prevSnap?: PrSnap | null
 ): Promise<PrSnapInternal> {
-  const view = await fetchPr(repo, number)
+  const view = await fetchPr(log, repo, number)
   const [reviewComments, convComments, reviews] = await Promise.all([
-    fetchPrReviewComments(repo, number),
-    fetchPrConversationComments(repo, number),
-    fetchPrReviews(repo, number),
+    fetchPrReviewComments(log, repo, number),
+    fetchPrConversationComments(log, repo, number),
+    fetchPrReviews(log, repo, number),
   ])
 
   const curHead = view.head_oid
   const linkedIssues =
     prevSnap && prevSnap.head_oid === curHead
       ? prevSnap.linked_issues ?? []
-      : await fetchPrLinkedIssues(repo, number)
+      : await fetchPrLinkedIssues(log, repo, number)
 
   return {
     repo,
@@ -84,10 +86,10 @@ export async function snapshotPr(
   }
 }
 
-export async function snapshotIssue(repo: string, number: number): Promise<IssueSnapInternal> {
+export async function snapshotIssue(log: PluginLogger, repo: string, number: number): Promise<IssueSnapInternal> {
   const [issue, comments] = await Promise.all([
-    fetchIssue(repo, number),
-    fetchIssueComments(repo, number),
+    fetchIssue(log, repo, number),
+    fetchIssueComments(log, repo, number),
   ])
   return {
     repo,

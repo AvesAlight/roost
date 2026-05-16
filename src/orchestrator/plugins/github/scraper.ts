@@ -6,6 +6,7 @@
 //   null      → entity is new to the watch list; emit seed/backlog events
 //   PrSnap    → normal tick; diff against prev and emit change events
 import type { PrSnap, IssueSnap } from './types.js'
+import type { PluginLogger } from '../../plugin.js'
 import { snapshotPr, snapshotIssue, stripInternals } from './snapshot.js'
 import type { PrSnapInternal, IssueSnapInternal } from './snapshot.js'
 import { diffPr, diffIssue } from './diff.js'
@@ -63,12 +64,13 @@ export function computeIssueEvents(
 }
 
 export async function scrapePr(
+  log: PluginLogger,
   repo: string,
   number: number,
   prevSnap: PrSnap | null | undefined,
   agentLogins: Set<string>
 ): Promise<ScrapeResult<PrSnap>> {
-  const snap = await snapshotPr(repo, number, prevSnap ?? undefined)
+  const snap = await snapshotPr(log, repo, number, prevSnap ?? undefined)
   const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, agentLogins)
   const stripped = stripInternals(snap) as PrSnap
   stripped.warned_no_linked = nextWarnedNoLinked
@@ -76,11 +78,12 @@ export async function scrapePr(
 }
 
 export async function scrapeIssue(
+  log: PluginLogger,
   repo: string,
   number: number,
   prevIssue: IssueSnap | null | undefined,
   agentLogins: Set<string>
 ): Promise<ScrapeResult<IssueSnap>> {
-  const snap = await snapshotIssue(repo, number)
+  const snap = await snapshotIssue(log, repo, number)
   return { snap: stripInternals(snap) as IssueSnap, events: computeIssueEvents(snap, prevIssue, agentLogins) }
 }

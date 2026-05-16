@@ -41,7 +41,7 @@ export class GitHubIssuesPlugin extends GhBase {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
       const prevIssue: IssueSnap | null | undefined = prev === null ? undefined : (prev.issues[key] ?? null)
-      const { snap, events } = await scrapeIssue(repo, number, prevIssue, agentLogins)
+      const { snap, events } = await scrapeIssue(this.log, repo, number, prevIssue, agentLogins)
       return { key, snap, events, entryChannels }
     }))
 

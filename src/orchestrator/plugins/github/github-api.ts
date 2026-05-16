@@ -1,3 +1,5 @@
+import { defaultPluginLogger, type PluginLogger } from '../../plugin.js'
+
 // Transient stderr classifier — patterns we'll retry on. Anything else
 // (404/401/422/etc.) throws on the first attempt. 422 is logged verbatim
 // in spawnGh so a 422-as-race can be spotted in dispatcher logs.
@@ -72,22 +74,16 @@ export interface SpawnDeps {
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
-// Retry diagnostics default to stderr. The daemon overrides this via
-// setRetryLogger() to fan out to daemon.log too; one-shot modes (--dispatch-irc,
-// plain CLI) keep the stderr-only default so output lands on the operator's tty.
-let currentDefaultLog: (msg: string) => void = (msg) => { process.stderr.write(msg) }
-
-export function setRetryLogger(fn: (msg: string) => void): void {
-  currentDefaultLog = fn
-}
 
 // The single gh entrypoint — every gh call goes through here, so retry is
 // the contract for every caller. ghApi/ghGraphql below are thin shape
 // helpers; both delegate to spawnGh so retry can't be bypassed by a future
-// caller.
+// caller. The `deps.log` fallback to defaultPluginLogger is a test affordance
+// (stderr only) — every production caller threads its plugin's logger down
+// from the factory, so this default should never fire in the daemon.
 export async function spawnGh(args: string[], deps: SpawnDeps = {}): Promise<unknown> {
   const sleep = deps.sleep ?? defaultSleep
-  const log = deps.log ?? currentDefaultLog
+  const log = deps.log ?? defaultPluginLogger
   const totalAttempts = deps.attempts ?? 3
   const baseMs = deps.baseMs ?? 1000
   const jitterFraction = deps.jitterFraction ?? 0.5
@@ -122,20 +118,20 @@ export async function spawnGh(args: string[], deps: SpawnDeps = {}): Promise<unk
   throw new GhError(`spawnGh: loop exited without result for ${cmd}`)
 }
 
-async function ghApi(endpoint: string, paginate = false): Promise<unknown> {
+async function ghApi(log: PluginLogger, endpoint: string, paginate = false): Promise<unknown> {
   const args = ['api']
   if (paginate) args.push('--paginate')
   args.push(endpoint)
-  return spawnGh(args)
+  return spawnGh(args, { log })
 }
 
 // Centralized so a future gh call can't slip past the retry wrapper.
-async function ghGraphql(query: string, vars: Record<string, string | number>): Promise<unknown> {
+async function ghGraphql(log: PluginLogger, query: string, vars: Record<string, string | number>): Promise<unknown> {
   const args: string[] = ['api', 'graphql', '-f', `query=${query}`]
   for (const [k, v] of Object.entries(vars)) {
     args.push('-F', `${k}=${v}`)
   }
-  return spawnGh(args)
+  return spawnGh(args, { log })
 }
 
 export interface GhLabel {
@@ -231,21 +227,21 @@ export function labelNames(labels: GhLabel[] | null | undefined): string[] {
     .sort()
 }
 
-export async function fetchPr(repo: string, number: number): Promise<FetchedPr> {
-  const pr = (await ghApi(`repos/${repo}/pulls/${number}`) ?? {}) as GhPr
+export async function fetchPr(log: PluginLogger, repo: string, number: number): Promise<FetchedPr> {
+  const pr = (await ghApi(log, `repos/${repo}/pulls/${number}`) ?? {}) as GhPr
   const head = pr.head ?? {}
   const sha = head.sha
 
   let runs: GhCheckRun[] = []
   let statuses: GhStatus[] = []
   if (sha) {
-    const checkResp = await ghApi(`repos/${repo}/commits/${sha}/check-runs?per_page=100`, true)
+    const checkResp = await ghApi(log, `repos/${repo}/commits/${sha}/check-runs?per_page=100`, true)
     if (checkResp && typeof checkResp === 'object' && !Array.isArray(checkResp)) {
       runs = ((checkResp as Record<string, unknown>).check_runs ?? []) as GhCheckRun[]
     } else if (Array.isArray(checkResp)) {
       runs = checkResp as GhCheckRun[]
     }
-    const combined = (await ghApi(`repos/${repo}/commits/${sha}/status`) ?? {}) as Record<string, unknown>
+    const combined = (await ghApi(log, `repos/${repo}/commits/${sha}/status`) ?? {}) as Record<string, unknown>
     statuses = (combined.statuses ?? []) as GhStatus[]
   }
 
@@ -262,19 +258,19 @@ export async function fetchPr(repo: string, number: number): Promise<FetchedPr> 
   }
 }
 
-export async function fetchPrReviewComments(repo: string, number: number): Promise<GhComment[]> {
-  return (await ghApi(`repos/${repo}/pulls/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
+export async function fetchPrReviewComments(log: PluginLogger, repo: string, number: number): Promise<GhComment[]> {
+  return (await ghApi(log, `repos/${repo}/pulls/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
 }
 
-export async function fetchPrConversationComments(repo: string, number: number): Promise<GhComment[]> {
-  return (await ghApi(`repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
+export async function fetchPrConversationComments(log: PluginLogger, repo: string, number: number): Promise<GhComment[]> {
+  return (await ghApi(log, `repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
 }
 
-export async function fetchPrReviews(repo: string, number: number): Promise<GhReview[]> {
-  return (await ghApi(`repos/${repo}/pulls/${number}/reviews?per_page=100`, true) ?? []) as GhReview[]
+export async function fetchPrReviews(log: PluginLogger, repo: string, number: number): Promise<GhReview[]> {
+  return (await ghApi(log, `repos/${repo}/pulls/${number}/reviews?per_page=100`, true) ?? []) as GhReview[]
 }
 
-export async function fetchPrLinkedIssues(repo: string, number: number): Promise<number[]> {
+export async function fetchPrLinkedIssues(log: PluginLogger, repo: string, number: number): Promise<number[]> {
   const [owner, name] = repo.split('/', 2)
   const query = (
     'query($owner:String!,$name:String!,$number:Int!){' +
@@ -282,7 +278,7 @@ export async function fetchPrLinkedIssues(repo: string, number: number): Promise
     'pullRequest(number:$number){' +
     'closingIssuesReferences(first:25){nodes{number}}}}}'
   )
-  const result = await ghGraphql(query, { owner, name, number })
+  const result = await ghGraphql(log, query, { owner, name, number })
   if (!result) return []
   const r = result as Record<string, unknown>
   const nodes = (
@@ -295,10 +291,10 @@ export async function fetchPrLinkedIssues(repo: string, number: number): Promise
     .sort((a, b) => a - b)
 }
 
-export async function fetchIssue(repo: string, number: number): Promise<GhIssue> {
-  return (await ghApi(`repos/${repo}/issues/${number}`) ?? {}) as GhIssue
+export async function fetchIssue(log: PluginLogger, repo: string, number: number): Promise<GhIssue> {
+  return (await ghApi(log, `repos/${repo}/issues/${number}`) ?? {}) as GhIssue
 }
 
-export async function fetchIssueComments(repo: string, number: number): Promise<GhComment[]> {
-  return (await ghApi(`repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
+export async function fetchIssueComments(log: PluginLogger, repo: string, number: number): Promise<GhComment[]> {
+  return (await ghApi(log, `repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
 }
