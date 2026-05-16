@@ -70,10 +70,11 @@ function emptyReport(): NickReport {
 }
 
 function addToModel(report: NickReport, model: string, u: UsageCounts): void {
-  const cur = report.byModel.get(model) ?? { input: 0, output: 0, cache_creation: 0, cache_read: 0 }
+  const cur = report.byModel.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
   cur.input += u.input
   cur.output += u.output
-  cur.cache_creation += u.cache_creation
+  cur.cache_creation_5m += u.cache_creation_5m
+  cur.cache_creation_1h += u.cache_creation_1h
   cur.cache_read += u.cache_read
   report.byModel.set(model, cur)
 }
@@ -128,6 +129,12 @@ interface AnyRow {
       output_tokens?: number
       cache_creation_input_tokens?: number
       cache_read_input_tokens?: number
+      // Nested per-TTL breakdown when prompt caching is on. The aggregate
+      // `cache_creation_input_tokens` equals the sum of these two.
+      cache_creation?: {
+        ephemeral_5m_input_tokens?: number
+        ephemeral_1h_input_tokens?: number
+      }
     }
   }
 }
@@ -151,15 +158,30 @@ function scanFile(text: string, report: NickReport, sinceTs?: string): boolean {
     // Assistant turn: model + usage block.
     if (row.type === 'assistant' && row.message?.usage && row.message.model) {
       const u = row.message.usage
+      // Cache-write breakdown: prefer the nested per-TTL fields when
+      // present (every modern transcript has them). Fall back to lumping
+      // the aggregate into the 5m bucket — that's the common case under
+      // default `cache_control` and avoids overcharging at 1h rates.
+      const nested = u.cache_creation
+      let cache5m: number
+      let cache1h: number
+      if (nested && (typeof nested.ephemeral_5m_input_tokens === 'number' || typeof nested.ephemeral_1h_input_tokens === 'number')) {
+        cache5m = nested.ephemeral_5m_input_tokens ?? 0
+        cache1h = nested.ephemeral_1h_input_tokens ?? 0
+      } else {
+        cache5m = u.cache_creation_input_tokens ?? 0
+        cache1h = 0
+      }
       const tokens: UsageCounts = {
         input: u.input_tokens ?? 0,
         output: u.output_tokens ?? 0,
-        cache_creation: u.cache_creation_input_tokens ?? 0,
+        cache_creation_5m: cache5m,
+        cache_creation_1h: cache1h,
         cache_read: u.cache_read_input_tokens ?? 0,
       }
       // A purely-empty usage row contributes nothing — skip so an idle
       // session doesn't get tagged as "contributed".
-      if (tokens.input || tokens.output || tokens.cache_creation || tokens.cache_read) {
+      if (tokens.input || tokens.output || tokens.cache_creation_5m || tokens.cache_creation_1h || tokens.cache_read) {
         addToModel(report, row.message.model, tokens)
         if (costFor(row.message.model, tokens) === null) {
           report.unknownModels.add(row.message.model)
@@ -270,9 +292,10 @@ function formatNick(nick: string, r: NickReport): string {
       if (c === null) totalCost = null
       else totalCost += c
     }
+    const cacheW = u.cache_creation_5m + u.cache_creation_1h
     perModel.push({
       model,
-      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation)} cache_w  (${fmtDollars(c)})`,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(cacheW)} cache_w  (${fmtDollars(c)})`,
     })
   }
   let wallMs = 0

@@ -108,17 +108,21 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
 1. Ack in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` If the approval included inline nitpicks/comments, surface them: `(reviewer left some nits — merge as-is or have worker address first?)`.
 2. On confirmation:
    - Merge: `gh pr merge <N> --repo <owner>/<repo> --merge`.
-   - **Before shutting down the worker**, gather the token-cost report — the worker session has to be readable on disk while we sum its usage:
+   - **Before shutting down the worker**, gather the token-cost report — the worker session has to be readable on disk while we sum its usage. Capture the output once and reuse it for both the IRC post and the issue comment:
      ```
-     "$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <I> \
-       <project>-worker-<I> <project>-reviewer-<I> <project>-lead-pm <project>-apm
+     cost_block=$("$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <I> \
+       <project>-worker-<I> <project>-reviewer-<I> <project>-lead-pm <project>-apm 2>&1)
      ```
-     The tool emits one block per nick (a `$cost · api / wall` head line plus a `<model>: …` sub-line per model used). Post the whole stdout verbatim to `#<project>-leads` under a header like:
+     The tool emits one block per nick (a `$cost · api / wall` head line plus a `<model>: …` sub-line per model used). Post `$cost_block` verbatim to `#<project>-leads` under a header like:
      ```
      token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
      (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
      ```
-     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under the cost block — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
+     Then also post the same `$cost_block` as a comment on the closed issue for durable history beyond the ephemeral `#leads` channel:
+     ```
+     gh issue comment <I> --repo <owner>/<repo> --body "$(printf 'token cost (estimate):\n\n```\n%s\n```' "$cost_block")"
+     ```
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).

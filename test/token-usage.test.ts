@@ -10,6 +10,12 @@ interface Turn {
   model: string
   input?: number
   output?: number
+  // Cache write 5m / 1h. If only `cache_w` is set, the helper writes only
+  // the aggregate `cache_creation_input_tokens` and OMITS the nested
+  // `cache_creation` block — exercises the fallback path that lumps the
+  // aggregate into the 5m bucket.
+  cache_w_5m?: number
+  cache_w_1h?: number
   cache_w?: number
   cache_r?: number
   // Optional API duration row that follows this turn.
@@ -35,19 +41,25 @@ async function writeSessionFile(
     },
   }))
   for (const t of turns) {
+    const usage: Record<string, unknown> = {
+      input_tokens: t.input ?? 0,
+      output_tokens: t.output ?? 0,
+      cache_read_input_tokens: t.cache_r ?? 0,
+    }
+    if (typeof t.cache_w_5m === 'number' || typeof t.cache_w_1h === 'number') {
+      usage.cache_creation_input_tokens = (t.cache_w_5m ?? 0) + (t.cache_w_1h ?? 0)
+      usage.cache_creation = {
+        ephemeral_5m_input_tokens: t.cache_w_5m ?? 0,
+        ephemeral_1h_input_tokens: t.cache_w_1h ?? 0,
+      }
+    } else {
+      // Aggregate-only path: legacy / fallback shape.
+      usage.cache_creation_input_tokens = t.cache_w ?? 0
+    }
     lines.push(JSON.stringify({
       type: 'assistant',
       timestamp: t.ts,
-      message: {
-        role: 'assistant',
-        model: t.model,
-        usage: {
-          input_tokens: t.input ?? 0,
-          output_tokens: t.output ?? 0,
-          cache_creation_input_tokens: t.cache_w ?? 0,
-          cache_read_input_tokens: t.cache_r ?? 0,
-        },
-      },
+      message: { role: 'assistant', model: t.model, usage },
     }))
     if (typeof t.apiDurationMs === 'number') {
       lines.push(JSON.stringify({
@@ -122,7 +134,9 @@ describe('token-usage', () => {
       const sonnet = r.byModel.get('claude-sonnet-4-6')!
       expect(opus.input).toBe(11)
       expect(opus.output).toBe(7)
-      expect(opus.cache_creation).toBe(100)
+      // Aggregate `cache_w: 100` with no nested → lumps into the 5m bucket.
+      expect(opus.cache_creation_5m).toBe(100)
+      expect(opus.cache_creation_1h).toBe(0)
       expect(opus.cache_read).toBe(204)
       expect(sonnet.input).toBe(20)
       expect(sonnet.output).toBe(7)
@@ -131,6 +145,18 @@ describe('token-usage', () => {
       expect(r.wallFirst).toBe('2026-05-16T10:00:00Z')
       expect(r.wallLast).toBe('2026-05-16T11:00:00Z')
       expect(r.files).toHaveLength(2)
+    })
+
+    it('reads nested cache_creation 5m/1h breakdown when present', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1000, cache_w_1h: 500 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      expect(opus.cache_creation_5m).toBe(1000)
+      expect(opus.cache_creation_1h).toBe(500)
     })
 
     it('returns empty report when nick is unknown', async () => {
@@ -260,12 +286,12 @@ describe('token-usage', () => {
       ])
       const rep = await capture(() => main(['report', stateDir, '319', 'roost-worker-319']))
       expect(rep.result).toBe(0)
-      // Opus 1M in × $15 + 100k out × $75 = $15 + $7.50 = $22.50
-      // Sonnet 500k in × $3 + 50k out × $15 = $1.50 + $0.75 = $2.25
-      // Total $24.75
-      expect(rep.out).toContain('roost-worker-319: $24.75')
+      // Opus 4.7 1M in × $5 + 100k out × $25 = $5 + $2.50 = $7.50
+      // Sonnet 4.6 500k in × $3 + 50k out × $15 = $1.50 + $0.75 = $2.25
+      // Total $9.75
+      expect(rep.out).toContain('roost-worker-319: $9.75')
       expect(rep.out).toContain('opus-4-7:')
-      expect(rep.out).toContain('($22.50)')
+      expect(rep.out).toContain('($7.50)')
       expect(rep.out).toContain('sonnet-4-6:')
       expect(rep.out).toContain('($2.25)')
       // Wall: 10:00 → 10:30 = 30m. API: 60+30 = 90s = 1m30s.
@@ -284,7 +310,8 @@ describe('token-usage', () => {
       expect(rep.out).toContain('roost-x: $?')
       // Per-model lines: opus has $; mystery has $?.
       expect(rep.out).toMatch(/mystery-9-0:.*\$\?/)
-      expect(rep.out).toMatch(/opus-4-7:.*\$0\.05/) // 1000×15 + 500×75 = 15000+37500 = 52500 / 1M = $0.0525 → $0.05
+      // Opus 4.7: 1000 × $5 + 500 × $25 = 5000 + 12500 = 17500 / 1M = $0.0175 → $0.02
+      expect(rep.out).toMatch(/opus-4-7:.*\$0\.02/)
       expect(rep.err).toContain('no pricing for model(s): claude-mystery-9-0')
       expect(rep.err).toContain('add to src/pricing.ts')
     })
