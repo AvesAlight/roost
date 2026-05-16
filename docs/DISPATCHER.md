@@ -103,6 +103,18 @@ or agent can check three things, in order from cheapest to most informative:
    successful tick" — during a brief IRC blip it may lag reality by one
    interval.
 
+### Stopping
+
+At milestone end, the APM only sends `unwatch` DMs — the daemon keeps running so it's ready for the next issue without a cold start. Don't call `stop-dispatcher` as part of normal teardown.
+
+Use `stop-dispatcher` when you need to actually stop the daemon — incidents, upgrades, decommission:
+
+```sh
+bin/stop-dispatcher <config-dir>
+```
+
+Sends SIGTERM and waits up to 30s (override with `STOP_TIMEOUT=<seconds>`). Idempotent — exits 0 if no live dispatcher is found.
+
 ## Events dispatched
 
 | Event | Fires when |

@@ -139,7 +139,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
-   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>`.
+   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>`. The daemon keeps running — `stop-dispatcher` is not part of cleanup.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
 
 ### Follow-up dance
@@ -175,6 +175,7 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 - No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable token-cost comment per the merge + cleanup dance. Nothing else.
 - No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own.
 - No spawning unrelated agents. Worker and reviewer only, per the dances above.
+- No `stop-dispatcher` calls. Milestone teardown is `unwatch` DMs only; the daemon stays up for the next issue. Stopping it is operator-driven (incidents, upgrades, decommission).
 
 ## Naming convention
 
