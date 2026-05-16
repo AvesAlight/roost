@@ -26,9 +26,6 @@ export abstract class GhBase extends BasePlugin {
   // plugin name slice.
   protected abstract readonly label: string
 
-  // Diagnostic sink supplied by the plugin factory (see registry.ts). The
-  // default is stderr-only for tests that instantiate plugins directly; the
-  // real dispatcher always passes its own combined sink.
   constructor(defaultChannel: string, protected readonly log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
   }

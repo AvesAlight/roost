@@ -91,9 +91,6 @@ function buildPlugins(config: OrchestratorConfig, defaultChannel: string, log: P
   })
 }
 
-// One-shot modes (--dispatch-irc, plain CLI) log plugin diagnostics straight
-// to stderr — they don't own a daemon.log to fan out to. The daemon supplies
-// its own combined stderr+file sink in runDaemon().
 function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
   const chans = new Set<string>([projectChannel])
   for (const plugin of plugins) {

@@ -88,9 +88,8 @@ export abstract class BasePlugin implements Plugin {
 // this), letting core stay plugin-agnostic.
 export type PluginLogger = (msg: string) => void
 
-// Stderr-only fallback. Used by tests and as a last-resort default for
-// helpers that prefer a parameter to a thrown-on-missing-log error; the
-// real dispatcher modes always supply their own sink via the factory.
+// Stderr-only fallback for direct-construction test paths. The real
+// dispatcher modes always supply their own sink via the plugin factory.
 export const defaultPluginLogger: PluginLogger = (msg) => { process.stderr.write(msg) }
 
 export type PluginFactory = (defaultChannel: string, log: PluginLogger) => Plugin

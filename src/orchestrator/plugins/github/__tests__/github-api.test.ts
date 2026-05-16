@@ -172,25 +172,6 @@ describe('spawnGh (retry-aware)', () => {
     expect(h.sleeps).toEqual([150, 300])
   })
 
-  it('uses deps.log when caller supplies one — the prod path through the plugin factory', async () => {
-    const captured: string[] = []
-    let calls = 0
-    const out = await spawnGh(['api', '/x'], {
-      log: (msg) => { captured.push(msg) },
-      sleep: async () => { /* no real wait */ },
-      baseMs: 1,
-      random: () => 0,
-      exec: async () => {
-        calls++
-        if (calls === 1) throw mkErr('HTTP 502')
-        return { ok: true }
-      },
-    })
-    expect(out).toEqual({ ok: true })
-    expect(captured.length).toBe(1)
-    expect(captured[0]).toContain('matched=http-5xx')
-  })
-
   it('rethrows non-GhError immediately without classifying', async () => {
     const h = harness()
     let calls = 0

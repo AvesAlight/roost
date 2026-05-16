@@ -1,4 +1,4 @@
-import { defaultPluginLogger, type PluginLogger } from '../../plugin.js'
+import type { PluginLogger } from '../../plugin.js'
 
 // Transient stderr classifier — patterns we'll retry on. Anything else
 // (404/401/422/etc.) throws on the first attempt. 422 is logged verbatim
@@ -62,10 +62,12 @@ async function runGhOnce(args: string[]): Promise<unknown> {
 }
 
 export interface SpawnDeps {
+  // log is required so every gh call has a real sink — no module-globalish
+  // default. Plugins thread their factory-supplied logger down through here.
+  log: PluginLogger
   // Each option is injectable so tests can pin behavior (no real sleeps, no
   // real gh, deterministic jitter).
   sleep?: (ms: number) => Promise<void>
-  log?: (msg: string) => void
   attempts?: number          // total tries including the first; default 3
   baseMs?: number            // first backoff window; default 1000
   jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
@@ -78,12 +80,10 @@ const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 // The single gh entrypoint — every gh call goes through here, so retry is
 // the contract for every caller. ghApi/ghGraphql below are thin shape
 // helpers; both delegate to spawnGh so retry can't be bypassed by a future
-// caller. The `deps.log` fallback to defaultPluginLogger is a test affordance
-// (stderr only) — every production caller threads its plugin's logger down
-// from the factory, so this default should never fire in the daemon.
-export async function spawnGh(args: string[], deps: SpawnDeps = {}): Promise<unknown> {
+// caller.
+export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown> {
   const sleep = deps.sleep ?? defaultSleep
-  const log = deps.log ?? defaultPluginLogger
+  const log = deps.log
   const totalAttempts = deps.attempts ?? 3
   const baseMs = deps.baseMs ?? 1000
   const jitterFraction = deps.jitterFraction ?? 0.5
