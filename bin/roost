@@ -597,6 +597,16 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  if [ -n "${agent}" ]; then
+    local _agent_cwd="${cwd}/.claude/agents/${agent}.md"
+    local _agent_home="${HOME}/.claude/agents/${agent}.md"
+    if [ ! -f "${_agent_cwd}" ] && [ ! -f "${_agent_home}" ]; then
+      echo "error: agent '${agent}' not found; searched:" >&2
+      printf '  %s\n' "${_agent_cwd}" >&2
+      printf '  %s\n' "${_agent_home}" >&2
+      exit 1
+    fi
+  fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
