@@ -19,7 +19,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { getPluginFactory, registeredPluginNames, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
+import { getPluginFactory, registeredPluginNames, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dm-handler.js'
@@ -79,7 +79,7 @@ async function runOneTick(
 // Instantiate plugins from `config.plugins` via the registry. Order follows
 // `Object.keys` insertion order in the config JSON, so emission order is
 // predictable from the operator's POV.
-function buildPlugins(config: OrchestratorConfig, defaultChannel: string): Plugin[] {
+function buildPlugins(config: OrchestratorConfig, defaultChannel: string, log: PluginLogger): Plugin[] {
   const names = Object.keys(config.plugins ?? {})
   return names.map(name => {
     const factory = getPluginFactory(name)
@@ -87,9 +87,13 @@ function buildPlugins(config: OrchestratorConfig, defaultChannel: string): Plugi
       const available = registeredPluginNames().sort().join(', ') || '(none)'
       throw new Error(`unknown plugin in config: ${name}. available: ${available}`)
     }
-    return factory(defaultChannel)
+    return factory(defaultChannel, log)
   })
 }
+
+// One-shot modes (--dispatch-irc, plain CLI) log plugin diagnostics straight
+// to stderr — they don't own a daemon.log to fan out to.
+const stderrLog: PluginLogger = (msg) => { process.stderr.write(msg) }
 
 function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
   const chans = new Set<string>([projectChannel])
@@ -126,7 +130,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const port = ircCfg.port ?? 6667
   const interval = Math.max(5, ircCfg.interval_seconds ?? 60) * 1000
 
-  const plugins = buildPlugins(config, projectChannel)
+  const plugins = buildPlugins(config, projectChannel, log)
   const initialChannels = bootChannels(plugins, config, projectChannel)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
@@ -261,7 +265,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
 
-  const plugins = buildPlugins(config, projectChannel)
+  const plugins = buildPlugins(config, projectChannel, stderrLog)
   const channels = bootChannels(plugins, config, projectChannel)
 
   const client = new RoostIrcClientImpl({
@@ -318,7 +322,7 @@ async function main(): Promise<void> {
     // One-shot: fetch + diff, print events JSON
     const config = await loadConfig(stateDir)
     const projectChannel = resolveProjectChannel(config)
-    const plugins = buildPlugins(config, projectChannel)
+    const plugins = buildPlugins(config, projectChannel, stderrLog)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,

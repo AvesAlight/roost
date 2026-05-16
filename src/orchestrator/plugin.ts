@@ -83,7 +83,12 @@ export abstract class BasePlugin implements Plugin {
 // `config.plugins` and instantiates via `getPluginFactory`. Side-effect
 // imports in src/orchestrator/registry.ts populate the built-in set.
 
-export type PluginFactory = (defaultChannel: string) => Plugin
+// Diagnostic log sink passed to every plugin factory. Plugins use it for
+// boot-time wiring (e.g., the github plugin pipes its retry trace through
+// this), letting core stay plugin-agnostic.
+export type PluginLogger = (msg: string) => void
+
+export type PluginFactory = (defaultChannel: string, log: PluginLogger) => Plugin
 
 const REGISTRY = new Map<string, PluginFactory>()
 

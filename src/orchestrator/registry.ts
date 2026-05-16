@@ -4,6 +4,16 @@
 import { registerPlugin } from './plugin.js'
 import { GitHubPrsPlugin } from './plugins/github/prs-plugin.js'
 import { GitHubIssuesPlugin } from './plugins/github/issues-plugin.js'
+import { setRetryLogger } from './plugins/github/github-api.js'
 
-registerPlugin('github-prs', (defaultChannel) => new GitHubPrsPlugin(defaultChannel))
-registerPlugin('github-issues', (defaultChannel) => new GitHubIssuesPlugin(defaultChannel))
+// Both github factories share the same retry-log sink — last writer wins,
+// but since they receive the same `log` from buildPlugins it's a no-op
+// re-set.
+registerPlugin('github-prs', (defaultChannel, log) => {
+  setRetryLogger(log)
+  return new GitHubPrsPlugin(defaultChannel)
+})
+registerPlugin('github-issues', (defaultChannel, log) => {
+  setRetryLogger(log)
+  return new GitHubIssuesPlugin(defaultChannel)
+})
