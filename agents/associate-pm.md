@@ -113,7 +113,12 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      "$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <I> \
        <project>-worker-<I> <project>-reviewer-<I> <project>-lead-pm <project>-apm
      ```
-     Post the four output lines verbatim to `#<project>-leads` under a `token cost for #<I>:` header so the lead can quote them in the post-mortem. If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args.
+     Post the four output lines verbatim to `#<project>-leads` under a header like:
+     ```
+     token cost for #<I>:
+     (worker/reviewer lines are the full per-issue total; lead-pm/apm lines are the diff over this issue's window — not strictly attributable when issues overlap, so don't sum the four lines and call it a per-issue total)
+     ```
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool prints a stderr warning about "negative diff" / "snapshot drift", relay it under the cost block — it means the snapshot baseline drifted (transcript pruned, snapshot edited) and the diff isn't trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).

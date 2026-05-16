@@ -30,6 +30,7 @@
 import { readdir, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { mcpConnectionLine } from './mcp-banner.js'
 
 interface Usage {
   input: number
@@ -59,12 +60,17 @@ function add(a: Usage, b: Usage): Usage {
 }
 
 function sub(a: Usage, b: Usage): Usage {
+  // No clamp: cumulative usage only grows, so a negative diff means the
+  // baseline drifted (transcript file deleted, snapshot manually edited,
+  // session moved). We render the negative number and the caller is
+  // expected to stderr-warn so the drift surfaces in the post-mortem
+  // rather than getting silently zeroed.
   return {
-    input: Math.max(0, a.input - b.input),
-    output: Math.max(0, a.output - b.output),
-    cache_creation: Math.max(0, a.cache_creation - b.cache_creation),
-    cache_read: Math.max(0, a.cache_read - b.cache_read),
-    sessions: Math.max(0, a.sessions - b.sessions),
+    input: a.input - b.input,
+    output: a.output - b.output,
+    cache_creation: a.cache_creation - b.cache_creation,
+    cache_read: a.cache_read - b.cache_read,
+    sessions: a.sessions - b.sessions,
   }
 }
 
@@ -94,11 +100,13 @@ async function listSessionFiles(projectsRoot: string): Promise<string[]> {
   return files
 }
 
-// Match the MCP banner exactly. JSONL stores the instructions string with
-// JSON-escaped quotes around the nick, so the substring we look for is:
-//   You are connected to IRC as nick \"<nick>\"
+// JSONL stores MCP instructions inside a JSON-encoded string, so the inner
+// quotes around the nick are backslash-escaped. JSON.stringify produces the
+// exact file-form substring (and adds outer quotes we strip off) — no need
+// to write the escape by hand here.
 function markerFor(nick: string): string {
-  return `You are connected to IRC as nick \\"${nick}\\"`
+  const encoded = JSON.stringify(mcpConnectionLine(nick))
+  return encoded.slice(1, -1)
 }
 
 // Sum usage across all assistant turns in one JSONL file. Each assistant
@@ -108,7 +116,7 @@ function markerFor(nick: string): string {
 // that's the honest report — we don't try to deduplicate cache hits across
 // turns within a session.
 function sumUsageInJson(text: string): Usage {
-  let total: Usage = { ...ZERO, sessions: 1 }
+  let total: Usage = { ...ZERO }
   // Cheap line-by-line; each JSONL row is one JSON object.
   for (const line of text.split('\n')) {
     if (!line || !line.includes('"usage"')) continue
@@ -128,7 +136,7 @@ function sumUsageInJson(text: string): Usage {
       sessions: 0,
     })
   }
-  return total
+  return { ...total, sessions: 1 }
 }
 
 export interface CollectResult {
@@ -185,9 +193,8 @@ function fmt(n: number): string {
   return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M'
 }
 
-function formatLine(nick: string, u: Usage, kind: 'total' | 'diff'): string {
-  const tag = kind === 'diff' ? '' : ''
-  return `${nick}: in=${fmt(u.input)} out=${fmt(u.output)} cache_w=${fmt(u.cache_creation)} cache_r=${fmt(u.cache_read)} sessions=${u.sessions}${tag}`
+function formatLine(nick: string, u: Usage): string {
+  return `${nick}: in=${fmt(u.input)} out=${fmt(u.output)} cache_w=${fmt(u.cache_creation)} cache_r=${fmt(u.cache_read)} sessions=${u.sessions}`
 }
 
 function usage(stream: NodeJS.WriteStream): void {
@@ -253,7 +260,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     await writeSnapshots(stateDir, snaps)
     for (const r of results) {
-      process.stdout.write(`snapshot ${issue} ${formatLine(r.nick, r.usage, 'total')}\n`)
+      process.stdout.write(`snapshot ${issue} ${formatLine(r.nick, r.usage)}\n`)
     }
     return 0
   }
@@ -272,9 +279,19 @@ export async function main(argv: string[]): Promise<number> {
         sessions: base.sessions,
       }
       const diff = sub(r.usage, baseUsage)
-      process.stdout.write(formatLine(r.nick, diff, 'diff') + '\n')
+      // Cumulative usage only grows. A negative component means the
+      // baseline drifted (transcript pruned, snapshot hand-edited,
+      // session relocated). Render anyway, but warn so the lead sees it.
+      const negative = diff.input < 0 || diff.output < 0
+        || diff.cache_creation < 0 || diff.cache_read < 0 || diff.sessions < 0
+      if (negative) {
+        process.stderr.write(
+          `roost-token-usage: warning: negative diff for ${r.nick} (snapshot drift suspected — transcript pruned or snapshot edited?)\n`,
+        )
+      }
+      process.stdout.write(formatLine(r.nick, diff) + '\n')
     } else {
-      process.stdout.write(formatLine(r.nick, r.usage, 'total') + '\n')
+      process.stdout.write(formatLine(r.nick, r.usage) + '\n')
     }
   }
   return 0

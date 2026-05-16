@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { collectForNick, main } from '../src/token-usage.js'
+import { mcpConnectionLine } from '../src/mcp-banner.js'
 
 // Build a one-session JSONL containing the MCP banner for `nick` plus the
 // given assistant turns (each contributing one usage block). Returns the
@@ -17,14 +18,15 @@ async function writeSessionFile(
   // Permission-mode row (mirrors real transcripts; no usage).
   lines.push(JSON.stringify({ type: 'permission-mode', permissionMode: 'auto' }))
   // MCP attachment row carrying the marker `roost-token-usage` greps for.
-  // Note: when serialized by JSON.stringify, the inner quotes become \".
+  // Use the centralized banner helper so a wording change there breaks the
+  // marker-matching round-trip rather than silently passing.
   lines.push(JSON.stringify({
     type: 'user',
     message: {
       role: 'user',
       content: [{
         type: 'text',
-        text: `roost IRC MCP. You are connected to IRC as nick "${nick}". (test stub)`,
+        text: `roost IRC MCP. ${mcpConnectionLine(nick)}. (test stub)`,
       }],
     },
   }))
@@ -262,6 +264,89 @@ describe('token-usage', () => {
         ;(process.stderr as unknown as { write: typeof orig }).write = orig
       }
       expect(errs.join('')).toContain('numeric')
+    })
+
+    it('snapshot for a second issue preserves the first issue entry', async () => {
+      const dir = join(projects, '-stuff')
+      await mkdir(dir, { recursive: true })
+      await writeSessionFile(dir, 'sa.jsonl', 'roost-lead-pm', [{ input: 100, output: 50 }])
+      await writeSessionFile(dir, 'sb.jsonl', 'roost-apm', [{ input: 10, output: 5 }])
+
+      await main(['snapshot', stateDir, '319', 'roost-lead-pm', 'roost-apm'])
+      await main(['snapshot', stateDir, '320', 'roost-lead-pm'])
+
+      const snap = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { input: number }>>
+      expect(snap['319']?.['roost-lead-pm']?.input).toBe(100)
+      expect(snap['319']?.['roost-apm']?.input).toBe(10)
+      expect(snap['320']?.['roost-lead-pm']?.input).toBe(100)
+      // 320 didn't pass roost-apm — earlier entry should not have leaked.
+      expect(snap['320']?.['roost-apm']).toBeUndefined()
+    })
+
+    it('one report invocation handles multiple nicks and prints one line per', async () => {
+      const dir = join(projects, '-stuff')
+      await mkdir(dir, { recursive: true })
+      await writeSessionFile(dir, 'sw.jsonl', 'roost-worker-42', [{ input: 100, output: 10 }])
+      await writeSessionFile(dir, 'sr.jsonl', 'roost-reviewer-42', [{ input: 50, output: 5 }])
+      await writeSessionFile(dir, 'sl.jsonl', 'roost-lead-pm', [{ input: 1000, output: 500 }])
+      await writeSessionFile(dir, 'sa.jsonl', 'roost-apm', [{ input: 200, output: 100 }])
+
+      // Snapshot only the long-lived agents at "setup" time.
+      await main(['snapshot', stateDir, '42', 'roost-lead-pm', 'roost-apm'])
+
+      const lines: string[] = []
+      const orig = process.stdout.write.bind(process.stdout)
+      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+        lines.push(s)
+        return true
+      }
+      try {
+        const code = await main([
+          'report', stateDir, '42',
+          'roost-worker-42', 'roost-reviewer-42', 'roost-lead-pm', 'roost-apm',
+        ])
+        expect(code).toBe(0)
+      } finally {
+        ;(process.stdout as unknown as { write: typeof orig }).write = orig
+      }
+      const out = lines.join('')
+      const printed = out.trim().split('\n')
+      expect(printed).toHaveLength(4)
+      // Workers/reviewers report cumulative (no snapshot); lead/apm diff to zero.
+      expect(printed[0]).toContain('roost-worker-42: in=100 out=10')
+      expect(printed[0]).toContain('sessions=1')
+      expect(printed[1]).toContain('roost-reviewer-42: in=50 out=5')
+      expect(printed[2]).toBe('roost-lead-pm: in=0 out=0 cache_w=0 cache_r=0 sessions=0')
+      expect(printed[3]).toBe('roost-apm: in=0 out=0 cache_w=0 cache_r=0 sessions=0')
+    })
+
+    it('negative diff (snapshot drift) renders raw and stderr-warns', async () => {
+      const dir = join(projects, '-stuff')
+      await mkdir(dir, { recursive: true })
+      const path = await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [{ input: 100, output: 50 }])
+      await main(['snapshot', stateDir, '42', 'roost-lead-pm'])
+
+      // Simulate drift: rewrite the session so cumulative dropped below the snapshot.
+      await rm(path)
+      await writeSessionFile(dir, 's.jsonl', 'roost-lead-pm', [{ input: 30, output: 10 }])
+
+      const outLines: string[] = []
+      const errLines: string[] = []
+      const origOut = process.stdout.write.bind(process.stdout)
+      const origErr = process.stderr.write.bind(process.stderr)
+      ;(process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { outLines.push(s); return true }
+      ;(process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => { errLines.push(s); return true }
+      try {
+        const code = await main(['report', stateDir, '42', 'roost-lead-pm'])
+        expect(code).toBe(0)
+      } finally {
+        ;(process.stdout as unknown as { write: typeof origOut }).write = origOut
+        ;(process.stderr as unknown as { write: typeof origErr }).write = origErr
+      }
+      // No Math.max clamp — the raw negative renders.
+      expect(outLines.join('')).toContain('in=-70')
+      expect(errLines.join('')).toContain('negative diff')
+      expect(errLines.join('')).toContain('roost-lead-pm')
     })
   })
 })
