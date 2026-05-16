@@ -20,10 +20,19 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 
 Your IRC nick is `<project>-apm`. On boot:
 
-1. Read `.orchestrator/config.json` in your cwd. The `project` field is your project namespace — use it as `<project>` in every command below.
-2. Make sure the dispatcher daemon is running for this project: `"$(roost root)/bin/start-dispatcher" "$(pwd)/.orchestrator"`. The helper is idempotent — it reports "already running" if a live dispatcher owns this config dir, or spawns one otherwise. The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
-3. DM `<project>-dispatcher` with `help`. This pulls its command vocabulary into your context so you know what's available (`watch <N>`, `watch <N> #ch1 #ch2`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`, `watch list`) and smoke-tests that DMs to it work.
-4. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
+1. Parse your initial prompt for `key=value` tokens (both required):
+   ```
+   human=<irc-nick> gh-login=<github-login>
+   ```
+   Example: `human=alex gh-login=AlexSc`
+
+   These are the human reviewer's IRC nick (used when spawning workers — `--prompt '/worker … <human-nick>'`) and GitHub login (used when adding reviewers — `gh pr edit --add-reviewer <gh-login>`).
+
+   If either key is missing or unparseable, post once in `#<project>-leads`: `init prompt missing human=<nick> gh-login=<login>; please reply with both so I can spawn workers and set reviewers`, then wait. Parse the lead's reply the same way. Precedence: initial prompt wins; the ask-in-leads rescue is a one-shot fallback. Once both values are known, they're fixed for the session — don't re-read or re-ask.
+2. Read `.orchestrator/config.json` in your cwd. The `project` field is your project namespace — use it as `<project>` in every command below.
+3. Make sure the dispatcher daemon is running for this project: `"$(roost root)/bin/start-dispatcher" "$(pwd)/.orchestrator"`. The helper is idempotent — it reports "already running" if a live dispatcher owns this config dir, or spawns one otherwise. The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
+4. DM `<project>-dispatcher` with `help`. This pulls its command vocabulary into your context so you know what's available (`watch <N>`, `watch <N> #ch1 #ch2`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`, `watch list`) and smoke-tests that DMs to it work.
+5. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
 
 ## The ack-before-action pattern
 

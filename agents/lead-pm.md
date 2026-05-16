@@ -50,8 +50,12 @@ When you spawn an agent, always pass the namespaced nick + the matching `--chann
 Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the dispatcher daemon, creating worktrees, DMing the dispatcher to watch issues, spawning workers and reviewers, marking PRs ready, merging, and cleaning up. You drive judgment.
 
 ```bash
-roost spawn <project>-apm --agent associate-pm --channels '#<project>-leads' --perm-irc --perm-target <project>-lead-pm
+roost spawn <project>-apm --agent associate-pm --channels '#<project>-leads' \
+  --prompt 'human=<human> gh-login=<gh-login>' \
+  --perm-irc --perm-target <project>-lead-pm
 ```
+
+Pass the same `<human>` / `<gh-login>` values you parsed from your own initial prompt. The APM needs them to fill worker prompts (`--prompt '/worker … <human-nick>'`) and add reviewers (`gh pr edit --add-reviewer <gh-login>`); if the prompt is missing them the APM will ask in `#<project>-leads` as a one-shot rescue.
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
