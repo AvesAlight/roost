@@ -195,6 +195,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         tools: {},
         experimental: { 'claude/channel': {} },
       },
+      // The `You are connected to IRC as nick "<nick>"` fragment below is the
+      // marker bin/roost-token-usage greps for to map a session JSONL to its
+      // roost nick. If you change the wording, update that tool too.
       instructions: `roost IRC MCP. You are connected to IRC as nick "${NICK}". This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses always include a [#channel: N members] line after the body — current member count from the local cache, not a live query. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )

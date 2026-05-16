@@ -22,6 +22,8 @@ coverage/
 .orchestrator/joined-channels.txt
 .orchestrator/dispatcher-boot.log
 .orchestrator/.dispatcher.start.lock/
+.orchestrator/token-snapshots.json
+.orchestrator/.token-snapshots.*.tmp
 
 # Python bytecode cache
 __pycache__/

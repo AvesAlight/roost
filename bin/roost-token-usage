@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# roost-token-usage — thin shim into src/token-usage.ts.
+#
+# Subcommands:
+#   snapshot <stateDir> <issue> <nick>...   record cumulative tokens for nicks
+#   report   <stateDir> <issue> <nick>...   print one-line per-nick summaries
+#                                           (diff vs snapshot when one exists)
+#
+# See `src/token-usage.ts` for the full contract. Walks symlinks so the shim
+# resolves to the real plugin tree when called from a brew install.
+
+set -uo pipefail
+
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do
+  _dir="$( cd -P "$( dirname "$_src" )" && pwd )"
+  _src="$( readlink "$_src" )"
+  case "$_src" in /*) ;; *) _src="$_dir/$_src" ;; esac
+done
+DIR="$( cd -P "$( dirname "$_src" )" && pwd )"
+unset _src _dir
+
+exec bun run "$DIR/../src/token-usage.ts" "$@"
