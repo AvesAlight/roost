@@ -31,7 +31,7 @@ Write logical, timeless commit messages. Describe what the commit does in the ab
 
 ## Plans and followups
 
-Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. Default to taking on more work in-PR. If a follow-up really is the right call, raise it in #$0-issue-$1 — lead-pm decides, the APM files. Don't defer scope to a followup when you can do it now, and don't open issues yourself.
+Lead-pm will pressure-test your plan before approving. Have answers ready: why this approach, what alternatives were ruled out, what the edge cases are. Default to taking on more work in-PR — when in doubt, do it now. Only raise a follow-up candidate in #$0-issue-$1 when the scope is genuinely too large for the current PR (substantial new code, dependent unmerged work, a separate concern, or out-of-milestone); even then, lead-pm decides and the APM files. Don't open issues yourself.
 
 ## Scheduling
 
