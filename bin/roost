@@ -600,6 +600,9 @@ cmd_spawn() {
   if [ -n "${agent}" ]; then
     local _agent_cwd="${cwd}/.claude/agents/${agent}.md"
     local _agent_home="${HOME}/.claude/agents/${agent}.md"
+    # claude resolves --agent from <cwd>/.claude/agents/ and ~/.claude/agents/ only.
+    # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
+    # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
     if [ ! -f "${_agent_cwd}" ] && [ ! -f "${_agent_home}" ]; then
       echo "error: agent '${agent}' not found; searched:" >&2
       printf '  %s\n' "${_agent_cwd}" >&2

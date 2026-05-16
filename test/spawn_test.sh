@@ -25,9 +25,7 @@ teardown() {
 # -- Test 1: missing agent exits non-zero with clear message ------------------
 
 setup
-err="$("${ROOST_BIN}" spawn testnick --agent definitelynotanagent --cwd "$TDIR" 2>&1 || true)"
-exit_code=0
-"${ROOST_BIN}" spawn testnick --agent definitelynotanagent --cwd "$TDIR" >/dev/null 2>&1 || exit_code=$?
+err="$("${ROOST_BIN}" spawn testnick --agent definitelynotanagent --cwd "$TDIR" 2>&1)"; exit_code=$?
 if [ "$exit_code" -ne 0 ] \
     && echo "$err" | grep -q "agent 'definitelynotanagent' not found" \
     && echo "$err" | grep -q ".claude/agents/definitelynotanagent.md"; then
@@ -38,22 +36,24 @@ fi
 teardown
 
 # -- Test 2: agent in cwd path passes validation ------------------------------
+# Assertion: the "not found" error does NOT appear. The script may still fail
+# on missing tmux/ircd — this test only verifies agent validation doesn't trigger.
 
 setup
 mkdir -p "$TDIR/.claude/agents"
 printf -- '---\ndescription: test agent\n---\nYou are a test agent.\n' > "$TDIR/.claude/agents/myagent.md"
 err="$("${ROOST_BIN}" spawn testnick --agent myagent --cwd "$TDIR" 2>&1 || true)"
 if ! echo "$err" | grep -q "agent 'myagent' not found"; then
-  ok "cwd agent found: passes agent validation"
+  ok "cwd agent found: agent validation passes"
 else
-  fail "cwd agent found: passes agent validation" "err=$err"
+  fail "cwd agent found: agent validation passes" "err=$err"
 fi
 teardown
 
 # -- Test 3: both searched paths appear in error output -----------------------
 
 setup
-err="$("${ROOST_BIN}" spawn testnick --agent missing --cwd "$TDIR" 2>&1 || true)"
+err="$("${ROOST_BIN}" spawn testnick --agent missing --cwd "$TDIR" 2>&1)"; exit_code=$?
 cwd_path="$TDIR/.claude/agents/missing.md"
 home_path="$HOME/.claude/agents/missing.md"
 if echo "$err" | grep -qF "$cwd_path" && echo "$err" | grep -qF "$home_path"; then
@@ -71,6 +71,22 @@ if ! echo "$err" | grep -q "agent.*not found"; then
   ok "no --agent: validation not triggered"
 else
   fail "no --agent: validation not triggered" "err=$err"
+fi
+teardown
+
+# -- Test 5: agent in home path passes validation -----------------------------
+# Override HOME to a temp dir so we can plant an agent file there without
+# touching the real ~/.claude/agents/.
+
+setup
+fake_home="$TDIR/fakehome"
+mkdir -p "$fake_home/.claude/agents"
+printf -- '---\ndescription: home agent\n---\nYou are a home agent.\n' > "$fake_home/.claude/agents/homeagent.md"
+err="$(HOME="$fake_home" "${ROOST_BIN}" spawn testnick --agent homeagent --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$err" | grep -q "agent 'homeagent' not found"; then
+  ok "home agent found: agent validation passes"
+else
+  fail "home agent found: agent validation passes" "err=$err"
 fi
 teardown
 
