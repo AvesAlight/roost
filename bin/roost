@@ -597,6 +597,29 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  if [ -n "${agent}" ]; then
+    # claude searches .claude/agents/ recursively by filename.
+    # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
+    # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
+    local _agent_found=0
+    local _search_root
+    local _found_path=""
+    for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
+      if [ -d "${_search_root}" ]; then
+        _found_path="$(find "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
+        if [ -n "${_found_path}" ]; then
+          _agent_found=1
+          break
+        fi
+      fi
+    done
+    if [ "${_agent_found}" -eq 0 ]; then
+      echo "error: agent '${agent}' not found; searched:" >&2
+      printf '  %s/.claude/agents/**/%s.md\n' "${cwd}" "${agent}" >&2
+      printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
+      exit 1
+    fi
+  fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
