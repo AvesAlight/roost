@@ -251,11 +251,24 @@ cd "$TDIR"
 if roost_init >/dev/null 2>&1 \
     && [ -f "${TDIR}/.claude/commands/worker.md" ] \
     && [ -f "${TDIR}/.claude/commands/reviewer.md" ] \
-    && [ -f "${TDIR}/.claude/commands/watcher.md" ] \
-    && [ -f "${TDIR}/.claude/agents/lead-pm.md" ]; then
+    && [ -f "${TDIR}/.claude/commands/watcher.md" ]; then
   ok "prompts: fresh copy to .claude/commands/"
 else
   fail "prompts: fresh copy to .claude/commands/"
+fi
+cd - >/dev/null
+teardown
+
+# --- agents: fresh copy ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+if roost_init >/dev/null 2>&1 \
+    && [ -f "${TDIR}/.claude/agents/lead-pm.md" ] \
+    && [ -f "${TDIR}/.claude/agents/associate-pm.md" ]; then
+  ok "agents: fresh copy to .claude/agents/"
+else
+  fail "agents: fresh copy to .claude/agents/"
 fi
 cd - >/dev/null
 teardown
@@ -318,6 +331,51 @@ if [ ! -d "${TDIR}/.claude/commands" ] \
   ok "prompts: --no-prompts skips copy"
 else
   fail "prompts: --no-prompts skips copy"
+fi
+cd - >/dev/null
+teardown
+
+# --- agents: existing file not overwritten without --force-agents ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .claude/agents
+echo 'custom content' > .claude/agents/lead-pm.md
+roost_init >/dev/null 2>&1
+if grep -q 'custom content' "${TDIR}/.claude/agents/lead-pm.md"; then
+  ok "agents: existing file not overwritten without --force-agents"
+else
+  fail "agents: existing file not overwritten without --force-agents"
+fi
+cd - >/dev/null
+teardown
+
+# --- agents: --force-agents overwrites existing ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .claude/agents
+echo 'custom content' > .claude/agents/lead-pm.md
+roost_init --force-agents >/dev/null 2>&1
+if ! grep -q 'custom content' "${TDIR}/.claude/agents/lead-pm.md" \
+    && grep -q 'name' "${TDIR}/.claude/agents/lead-pm.md"; then
+  ok "agents: --force-agents overwrites existing"
+else
+  fail "agents: --force-agents overwrites existing"
+fi
+cd - >/dev/null
+teardown
+
+# --- agents: --no-agents skips copy ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+roost_init --no-agents >/dev/null 2>&1
+if [ ! -d "${TDIR}/.claude/agents" ] \
+    || [ ! -f "${TDIR}/.claude/agents/lead-pm.md" ]; then
+  ok "agents: --no-agents skips copy"
+else
+  fail "agents: --no-agents skips copy"
 fi
 cd - >/dev/null
 teardown

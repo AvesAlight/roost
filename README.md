@@ -44,8 +44,6 @@ roost spawn myproject-lead-pm \
   --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 ```
 
-Don't pass `--model` alongside `--agent` — the agent's frontmatter wins on model and the flag errors out.
-
 See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 ## Prerequisites
