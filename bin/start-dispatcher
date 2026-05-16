@@ -16,8 +16,10 @@
 # Exits 0 on success (started or already running). Exits 1 on failure with a
 # diagnostic on stderr prefixed "start-dispatcher: FAIL: <reason>".
 #
-# PID file format (frozen — bin/start-dispatcher and the #302 shutdown
-# helper both depend on it): JSON `{"pid": N, "started_at_ms": M, "cmdline": "..."}`.
+# To stop the daemon: bin/stop-dispatcher <config-dir>  (idempotent; symmetric counterpart)
+#
+# PID file format (frozen — bin/start-dispatcher and bin/stop-dispatcher both
+# depend on it): JSON `{"pid": N, "started_at_ms": M, "cmdline": "..."}`.
 
 set -euo pipefail
 
