@@ -1,7 +1,36 @@
+// Transient stderr classifier — patterns we'll retry on. Anything else
+// (404/401/422/etc.) throws on the first attempt. 422 is logged verbatim
+// in retryGh so a 422-as-race can be spotted in dispatcher logs.
+const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
+  { re: /HTTP 5\d\d/i, label: 'http-5xx' },
+  { re: /HTTP 429/i, label: 'http-429-rate-limit' },
+  { re: /\btimed out\b/i, label: 'timeout' },
+  { re: /\bcontext deadline exceeded\b/i, label: 'timeout' },
+  { re: /\bi\/o timeout\b/i, label: 'timeout' },
+  { re: /\bconnection refused\b/i, label: 'connection-refused' },
+  { re: /\bconnection reset\b/i, label: 'connection-reset' },
+  { re: /\bno such host\b/i, label: 'dns' },
+  { re: /\bnetwork is unreachable\b/i, label: 'network-unreachable' },
+  { re: /\bEOF\b/, label: 'eof' },
+]
+
+const HTTP_422 = /HTTP 422/i
+
+function classifyTransient(stderr: string): string | null {
+  for (const { re, label } of TRANSIENT_PATTERNS) {
+    if (re.test(stderr)) return label
+  }
+  return null
+}
+
 export class GhError extends Error {
-  constructor(msg: string) {
+  readonly stderr: string
+  readonly attempts: number
+  constructor(msg: string, stderr = '', attempts = 1) {
     super(msg)
     this.name = 'GhError'
+    this.stderr = stderr
+    this.attempts = attempts
   }
 }
 
@@ -14,7 +43,8 @@ async function spawnGh(args: string[]): Promise<unknown> {
   const exitCode = await proc.exited
   if (exitCode !== 0) {
     throw new GhError(
-      `gh failed (exit ${exitCode}): gh ${args.join(' ')}\n${errOut.trim()}`
+      `gh failed (exit ${exitCode}): gh ${args.join(' ')}\n${errOut.trim()}`,
+      errOut
     )
   }
   const trimmed = out.trim()
@@ -26,11 +56,64 @@ async function spawnGh(args: string[]): Promise<unknown> {
   }
 }
 
+export interface RetryDeps {
+  // Each option is injectable so tests can pin behavior (no real sleeps, no
+  // real gh, deterministic jitter).
+  sleep?: (ms: number) => Promise<void>
+  log?: (msg: string) => void
+  attempts?: number          // total tries including the first; default 3
+  baseMs?: number            // first backoff window; default 1000
+  jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
+  random?: () => number      // 0..1; default Math.random
+  exec?: (args: string[]) => Promise<unknown>  // default spawnGh
+}
+
+const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+// Retry diagnostics go to stderr — the daemon launcher redirects stderr to
+// dispatcher-boot.log via nohup, so operators chasing a noisy classifier can
+// find the trail there.
+const defaultLog = (msg: string) => { process.stderr.write(msg) }
+
+export async function retryGh(args: string[], deps: RetryDeps = {}): Promise<unknown> {
+  const sleep = deps.sleep ?? defaultSleep
+  const log = deps.log ?? defaultLog
+  const totalAttempts = deps.attempts ?? 3
+  const baseMs = deps.baseMs ?? 1000
+  const jitterFraction = deps.jitterFraction ?? 0.5
+  const random = deps.random ?? Math.random
+  const exec = deps.exec ?? spawnGh
+
+  const cmd = `gh ${args.join(' ')}`
+  for (let i = 0; i < totalAttempts; i++) {
+    try {
+      return await exec(args)
+    } catch (e) {
+      if (!(e instanceof GhError)) throw e
+      if (HTTP_422.test(e.stderr)) {
+        log(`gh-retry: ${cmd} HTTP 422 (non-transient) — stderr verbatim:\n${e.stderr}\n`)
+        throw new GhError(e.message, e.stderr, i + 1)
+      }
+      const matched = classifyTransient(e.stderr)
+      if (!matched) throw new GhError(e.message, e.stderr, i + 1)
+      const attemptNum = i + 1
+      if (attemptNum >= totalAttempts) {
+        log(`gh-retry: ${cmd} exhausted ${totalAttempts} attempts (matched=${matched}) — stderr verbatim:\n${e.stderr}\n`)
+        throw new GhError(`${e.message}\n(after ${totalAttempts} retries)`, e.stderr, totalAttempts)
+      }
+      const backoff = Math.round(baseMs * Math.pow(2, i) * (1 + random() * jitterFraction))
+      log(`gh-retry: ${cmd} attempt ${attemptNum}/${totalAttempts} matched=${matched}, backoff ${backoff}ms before next try\n`)
+      await sleep(backoff)
+    }
+  }
+  // Unreachable.
+  throw new GhError(`retryGh: loop exited without result for ${cmd}`)
+}
+
 async function ghApi(endpoint: string, paginate = false): Promise<unknown> {
   const args = ['api']
   if (paginate) args.push('--paginate')
   args.push(endpoint)
-  return spawnGh(args)
+  return retryGh(args)
 }
 
 export interface GhLabel {
@@ -177,7 +260,7 @@ export async function fetchPrLinkedIssues(repo: string, number: number): Promise
     'pullRequest(number:$number){' +
     'closingIssuesReferences(first:25){nodes{number}}}}}'
   )
-  const result = await spawnGh([
+  const result = await retryGh([
     'api', 'graphql',
     '-f', `query=${query}`,
     '-F', `owner=${owner}`,
