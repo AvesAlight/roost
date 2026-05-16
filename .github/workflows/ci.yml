@@ -53,5 +53,8 @@ jobs:
       - name: Shell tests — start-dispatcher
         run: bash test/start-dispatcher_test.sh
 
+      - name: Shell tests — stop-dispatcher
+        run: bash test/stop-dispatcher_test.sh
+
       - name: Shell tests — spawn
         run: bash test/spawn_test.sh
