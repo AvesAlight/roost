@@ -106,6 +106,9 @@ interface AnyRow {
   subtype?: string
   timestamp?: string
   durationMs?: number
+  requestId?: string
+  uuid?: string
+  isSidechain?: boolean
   message?: {
     model?: string
     usage?: {
@@ -124,9 +127,18 @@ interface AnyRow {
 }
 
 // Walk one JSONL file, accumulate into `report`. Only rows with
-// `timestamp > sinceTs` (when sinceTs is set) contribute. Returns whether
-// the file contributed at all (used as the session-counter signal).
-function scanFile(text: string, report: NickReport, sinceTs?: string): boolean {
+// `timestamp > sinceTs` (when sinceTs is set) contribute. `seenRequestIds`
+// is shared across files so the same API call (one requestId) is only
+// counted once — Claude Code writes one assistant row per content block
+// of a multi-part response (text + tool_use + tool_use…) and each row
+// repeats the parent API call's `usage` block verbatim. Forked or resumed
+// transcripts also share requestIds across files. Sidechain (subagent)
+// rows are skipped: in current Claude Code their transcripts live in
+// `PROJECT/SESSION/subagents/agent-*.jsonl` and never carry the MCP
+// banner, so today this is defensive — older or future shapes that inline
+// sidechain rows are filtered here. Returns whether the file contributed
+// at all (used as the session-counter signal).
+function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string): boolean {
   let contributed = false
   for (const line of text.split('\n')) {
     if (!line) continue
@@ -138,9 +150,17 @@ function scanFile(text: string, report: NickReport, sinceTs?: string): boolean {
     }
     const ts = row.timestamp
     if (sinceTs && (!ts || ts <= sinceTs)) continue
+    if (row.isSidechain) continue
 
     // Assistant turn: model + usage block.
     if (row.type === 'assistant' && row.message?.usage && row.message.model) {
+      // Dedup multi-part API responses: same requestId → same usage block.
+      // Rows lacking a requestId (older transcripts, synthetic rows) fall
+      // through and count as today.
+      if (row.requestId) {
+        if (seenRequestIds.has(row.requestId)) continue
+        seenRequestIds.add(row.requestId)
+      }
       const u = row.message.usage
       // Cache-write breakdown: prefer the nested per-TTL fields when
       // present (every modern transcript has them). Fall back to lumping
@@ -178,7 +198,13 @@ function scanFile(text: string, report: NickReport, sinceTs?: string): boolean {
 
     // System turn_duration row: one per assistant API call, carries the
     // model's wall time for that call. Use these for API-time total.
+    // Dedup by uuid so forked/resumed transcripts don't re-add the same
+    // turn; within a single file these uuids are already unique.
     if (row.type === 'system' && row.subtype === 'turn_duration' && typeof row.durationMs === 'number') {
+      if (row.uuid) {
+        if (seenTurnUuids.has(row.uuid)) continue
+        seenTurnUuids.add(row.uuid)
+      }
       report.apiDurationMs += row.durationMs
       if (ts) trackTs(report, ts)
       contributed = true
@@ -196,6 +222,10 @@ export async function collectForNick(
   const marker = markerFor(nick)
   const files = await listSessionFiles(projectsRoot)
   const report = emptyReport()
+  // Scan-wide so a requestId / turn uuid shared across forked or resumed
+  // transcripts is only counted once.
+  const seenRequestIds = new Set<string>()
+  const seenTurnUuids = new Set<string>()
   for (const f of files) {
     let text: string
     try {
@@ -207,7 +237,7 @@ export async function collectForNick(
     // skip the parse entirely.
     if (!text.includes(marker)) continue
     report.files.push(f)
-    const contributed = scanFile(text, report, sinceTs)
+    const contributed = scanFile(text, report, seenRequestIds, seenTurnUuids, sinceTs)
     if (contributed) report.sessions += 1
   }
   return report

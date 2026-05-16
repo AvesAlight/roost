@@ -20,6 +20,16 @@ interface Turn {
   cache_r?: number
   // Optional API duration row that follows this turn.
   apiDurationMs?: number
+  // Optional requestId on the assistant row — repeating it across turns
+  // simulates Claude Code's "one assistant row per content block, all
+  // sharing the parent API call's usage" pattern.
+  requestId?: string
+  // Optional uuid on the system/turn_duration row — repeating across files
+  // simulates a forked/resumed transcript.
+  turnUuid?: string
+  // If true, mark the assistant row (and any paired turn_duration row)
+  // with isSidechain:true.
+  sidechain?: boolean
 }
 
 // Build a session JSONL containing the MCP banner for `nick` followed by the
@@ -56,18 +66,24 @@ async function writeSessionFile(
       // Aggregate-only path: legacy / fallback shape.
       usage.cache_creation_input_tokens = t.cache_w ?? 0
     }
-    lines.push(JSON.stringify({
+    const assist: Record<string, unknown> = {
       type: 'assistant',
       timestamp: t.ts,
       message: { role: 'assistant', model: t.model, usage },
-    }))
+    }
+    if (t.requestId) assist.requestId = t.requestId
+    if (t.sidechain) assist.isSidechain = true
+    lines.push(JSON.stringify(assist))
     if (typeof t.apiDurationMs === 'number') {
-      lines.push(JSON.stringify({
+      const dur: Record<string, unknown> = {
         type: 'system',
         subtype: 'turn_duration',
         durationMs: t.apiDurationMs,
         timestamp: t.ts,
-      }))
+      }
+      if (t.turnUuid) dur.uuid = t.turnUuid
+      if (t.sidechain) dur.isSidechain = true
+      lines.push(JSON.stringify(dur))
     }
   }
   const path = join(dir, filename)
@@ -229,6 +245,83 @@ describe('token-usage', () => {
       ])
       const r = await collectForNick('roost-x', projects)
       expect(r.unknownModels.has('<synthetic>')).toBe(false)
+    })
+
+    it('dedups assistant rows with the same requestId (multi-part response)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Three assistant rows under the same requestId — Claude Code writes
+      // one row per content block (text, tool_use, tool_use) and each
+      // repeats the parent API call's usage block verbatim.
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, cache_w_5m: 1000, cache_r: 50000, requestId: 'req_A' },
+        { ts: '2026-05-16T10:00:01Z', model: 'claude-opus-4-7', input: 10, output: 100, cache_w_5m: 1000, cache_r: 50000, requestId: 'req_A' },
+        { ts: '2026-05-16T10:00:02Z', model: 'claude-opus-4-7', input: 10, output: 100, cache_w_5m: 1000, cache_r: 50000, requestId: 'req_A' },
+        // A genuinely new call must still count.
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-opus-4-7', input: 5, output: 50, cache_w_5m: 500, cache_r: 25000, requestId: 'req_B' },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      expect(opus.input).toBe(15)
+      expect(opus.output).toBe(150)
+      expect(opus.cache_creation_5m).toBe(1500)
+      expect(opus.cache_read).toBe(75000)
+    })
+
+    it('rows without requestId are not collapsed (older shapes count as today)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // No requestId at all → each row counts independently.
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 7, output: 3 },
+        { ts: '2026-05-16T10:00:01Z', model: 'claude-opus-4-7', input: 7, output: 3 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      expect(opus.input).toBe(14)
+      expect(opus.output).toBe(6)
+    })
+
+    it('dedups requestId across files (forked/resumed transcripts)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const turn = { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, cache_r: 5000, requestId: 'req_shared' }
+      await writeSessionFile(d, 'fork-a.jsonl', 'roost-x', [turn])
+      await writeSessionFile(d, 'fork-b.jsonl', 'roost-x', [turn])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      // Same requestId in two files → counted once.
+      expect(opus.input).toBe(10)
+      expect(opus.output).toBe(100)
+      expect(opus.cache_read).toBe(5000)
+    })
+
+    it('skips sidechain (subagent) assistant rows entirely', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 1000, requestId: 'req_main' },
+        { ts: '2026-05-16T10:00:30Z', model: 'claude-opus-4-7', input: 999, output: 999, cache_w_5m: 99999, apiDurationMs: 5000, requestId: 'req_sub', sidechain: true },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      // Only the main-thread row contributes.
+      expect(opus.input).toBe(10)
+      expect(opus.output).toBe(5)
+      expect(opus.cache_creation_5m).toBe(0)
+      // Sidechain turn_duration is also skipped.
+      expect(r.apiDurationMs).toBe(1000)
+    })
+
+    it('dedups turn_duration rows by uuid across files', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const turn = { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_x', apiDurationMs: 4000, turnUuid: 'turn_shared' }
+      await writeSessionFile(d, 'fork-a.jsonl', 'roost-x', [turn])
+      await writeSessionFile(d, 'fork-b.jsonl', 'roost-x', [turn])
+      const r = await collectForNick('roost-x', projects)
+      // Counted once, not twice.
+      expect(r.apiDurationMs).toBe(4000)
     })
   })
 
