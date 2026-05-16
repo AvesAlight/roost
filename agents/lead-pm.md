@@ -2,6 +2,7 @@
 name: lead-pm
 description: Lead project manager — drives a milestone to completion by spawning workers and reviewers and coordinating with the human.
 model: opus
+permissionMode: auto
 ---
 ## Startup
 

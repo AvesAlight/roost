@@ -98,7 +98,10 @@ Usage: roost spawn <nick> [options]
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
 \`zsh -l\` so .zprofile loads — required for RVM, nvm, and similar toolchains.
-Permission mode defaults to auto for opus and acceptEdits for all other models.
+Permission mode is passed through verbatim from --permission-mode. When the
+flag is omitted, the wrapper does not pass --permission-mode to claude;
+agents may declare \`permissionMode:\` in their frontmatter, otherwise
+claude code's own default applies.
 
 Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -118,9 +121,12 @@ Options:
   --ask-target NICK          Nick whose replies count for AskUserQuestion.
                              Defaults to --perm-target when both are set.
                              Required when --ask-irc is set without --perm-target.
-  --permission-mode MODE     Override --permission-mode passed to claude.
-                             Default: auto for opus models, acceptEdits for
-                             all others.
+  --permission-mode MODE     Pass --permission-mode MODE to claude. When
+                             omitted, the wrapper does not pass the flag at
+                             all: per-agent declarations via the agent's
+                             \`permissionMode:\` frontmatter (project / user
+                             scope) apply, otherwise claude code's own
+                             default takes effect.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -599,12 +605,6 @@ cmd_spawn() {
     echo "error: --ask-irc requires --ask-target NICK (or --perm-target when also using --perm-irc)" >&2
     exit 1
   fi
-  if [ -z "${permission_mode}" ]; then
-    case "${model}" in
-      *opus*) permission_mode="auto" ;;
-      *)      permission_mode="acceptEdits" ;;
-    esac
-  fi
   if [ -n "${agent}" ]; then
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
@@ -638,6 +638,14 @@ cmd_spawn() {
       extra_str="${extra_str} $(printf '%q' "$a")"
     done
   fi
+  # Print the resolved spawn parameters early — before the tmux/ircd
+  # preflight — so operators (and tests) can see what was negotiated even
+  # when the preflight fails. permission-mode shows "(claude default)" when
+  # not set so the operator can tell the wrapper deliberately didn't pass
+  # one through (the agent's frontmatter `permissionMode:` or claude's own
+  # default applies).
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cwd: ${cwd})"
+  [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
 
   # Create a per-session data directory. mktemp guarantees uniqueness across
   # concurrent spawns and across repos using identical nick names.
@@ -709,8 +717,6 @@ cmd_spawn() {
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
   printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode}, cwd: ${cwd})"
-  [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
   # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
   # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
   # the inner command stays a clean single-quoted string.
@@ -754,7 +760,13 @@ cmd_spawn() {
   # find unless the plugin's been installed into claude's registry.
   local model_flag=""
   [ -n "${model}" ] && model_flag=" --model ${model}"
-  local inner_cmd="claude${model_flag} --permission-mode ${permission_mode}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  # Only pass --permission-mode when the operator set it explicitly. When
+  # --agent is used, the agent's frontmatter `permissionMode:` (project /
+  # user scope) is the right place to declare it; otherwise claude's own
+  # default applies.
+  local perm_mode_flag=""
+  [ -n "${permission_mode}" ] && perm_mode_flag=" --permission-mode ${permission_mode}"
+  local inner_cmd="claude${model_flag}${perm_mode_flag}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016

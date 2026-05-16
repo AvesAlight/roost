@@ -101,6 +101,49 @@ else
 fi
 teardown
 
+# -- Test 7: explicit --permission-mode is echoed verbatim -------------------
+# The flag is passed through to claude as-is and shown in the spawn echo.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --permission-mode plan --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: plan"; then
+  ok "explicit --permission-mode echoed verbatim"
+else
+  fail "explicit --permission-mode echoed verbatim" "out=$out"
+fi
+teardown
+
+# -- Test 8: bare spawn shows "(claude default)" -----------------------------
+# Without an explicit flag the wrapper does not inject --permission-mode;
+# the echo says so plainly so an operator can tell wrapper-omitted from
+# operator-forgot.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -qF "permission-mode: (claude default)"; then
+  ok "bare spawn echo: permission-mode: (claude default)"
+else
+  fail "bare spawn echo: permission-mode: (claude default)" "out=$out"
+fi
+teardown
+
+# -- Test 9: --agent with permissionMode frontmatter still shows default -----
+# The wrapper does not parse agent frontmatter for permission-mode; claude
+# code reads `permissionMode:` natively at session-load time. The wrapper's
+# echo therefore still reads "(claude default)" — the field is claude's
+# responsibility, not the wrapper's.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: opusauto\ndescription: opus auto agent\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/opusauto.md"
+out="$("${ROOST_BIN}" spawn testnick --agent opusauto --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -qF "permission-mode: (claude default)"; then
+  ok "agent w/ permissionMode frontmatter: wrapper still defers to claude"
+else
+  fail "agent w/ permissionMode frontmatter: wrapper still defers to claude" "out=$out"
+fi
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

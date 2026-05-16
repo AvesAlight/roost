@@ -44,15 +44,18 @@ Defaults:
 
 - channels: `#roost`
 - model: `opus`
-- permission mode: `auto` for opus models, `acceptEdits` for all others
+- permission mode: only passed when `--permission-mode` is given
+  explicitly; otherwise the wrapper omits the flag and the agent's
+  `permissionMode:` frontmatter (or claude code's default) applies
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
-`--permission-mode` flag (smart-defaulted: `auto` for opus, `acceptEdits`
-for non-opus; override with `--permission-mode`), and the dev-channels
+`--permission-mode` flag (passed through only when explicitly given;
+agents declare their own via `permissionMode:` frontmatter), and the
+dev-channels
 confirmation prompt that appears on first launch.
 
 Anything passed after `--` is forwarded verbatim to claude — use this
