@@ -98,10 +98,11 @@ Usage: roost spawn <nick> [options]
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
 \`zsh -l\` so .zprofile loads — required for RVM, nvm, and similar toolchains.
-Permission mode is passed through verbatim from --permission-mode. When the
-flag is omitted, the wrapper does not pass --permission-mode to claude;
-agents may declare \`permissionMode:\` in their frontmatter, otherwise
-claude code's own default applies.
+Permission mode handling splits by path. With --agent the wrapper passes
+no --permission-mode and claude code reads \`permissionMode:\` natively
+from the agent's frontmatter. With --model (or the default opus) the
+wrapper defaults to auto for opus and acceptEdits for all other models.
+Explicit --permission-mode always wins.
 
 Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
@@ -121,12 +122,13 @@ Options:
   --ask-target NICK          Nick whose replies count for AskUserQuestion.
                              Defaults to --perm-target when both are set.
                              Required when --ask-irc is set without --perm-target.
-  --permission-mode MODE     Pass --permission-mode MODE to claude. When
-                             omitted, the wrapper does not pass the flag at
-                             all: per-agent declarations via the agent's
-                             \`permissionMode:\` frontmatter (project / user
-                             scope) apply, otherwise claude code's own
-                             default takes effect.
+  --permission-mode MODE     Pass --permission-mode MODE to claude.
+                             Defaulting splits by path: with --agent the
+                             wrapper passes nothing (claude code reads
+                             \`permissionMode:\` natively from the agent
+                             frontmatter); with --model the wrapper defaults
+                             to auto for opus and acceptEdits for everything
+                             else. Explicit --permission-mode always wins.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -627,6 +629,15 @@ cmd_spawn() {
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
       exit 1
     fi
+  fi
+  # Model-derived default for the --model path only. When --agent is set,
+  # the wrapper deliberately passes no --permission-mode and lets claude
+  # code read `permissionMode:` natively from the agent's frontmatter.
+  if [ -z "${permission_mode}" ] && [ -z "${agent}" ]; then
+    case "${model}" in
+      *opus*) permission_mode="auto" ;;
+      *)      permission_mode="acceptEdits" ;;
+    esac
   fi
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output

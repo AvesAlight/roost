@@ -113,34 +113,70 @@ else
 fi
 teardown
 
-# -- Test 8: bare spawn shows "(claude default)" -----------------------------
-# Without an explicit flag the wrapper does not inject --permission-mode;
-# the echo says so plainly so an operator can tell wrapper-omitted from
-# operator-forgot.
+# -- Test 8: bare spawn → opus default → auto --------------------------------
+# Without a flag, --model defaults to opus and the model-derived default
+# kicks in (opus → auto).
 
 setup
 out="$("${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
-if echo "$out" | grep -qF "permission-mode: (claude default)"; then
-  ok "bare spawn echo: permission-mode: (claude default)"
+if echo "$out" | grep -q "permission-mode: auto"; then
+  ok "bare spawn → opus default → permission-mode: auto"
 else
-  fail "bare spawn echo: permission-mode: (claude default)" "out=$out"
+  fail "bare spawn → opus default → permission-mode: auto" "out=$out"
 fi
 teardown
 
-# -- Test 9: --agent with permissionMode frontmatter still shows default -----
-# The wrapper does not parse agent frontmatter for permission-mode; claude
-# code reads `permissionMode:` natively at session-load time. The wrapper's
-# echo therefore still reads "(claude default)" — the field is claude's
-# responsibility, not the wrapper's.
+# -- Test 9: --model sonnet (no agent) → acceptEdits -------------------------
+# Non-opus models get acceptEdits via the model-derived default.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --model sonnet --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: acceptEdits"; then
+  ok "--model sonnet → permission-mode: acceptEdits"
+else
+  fail "--model sonnet → permission-mode: acceptEdits" "out=$out"
+fi
+teardown
+
+# -- Test 10: --model opus explicit → auto -----------------------------------
+# Explicit opus also gets auto (sanity).
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --model opus --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: auto"; then
+  ok "--model opus → permission-mode: auto"
+else
+  fail "--model opus → permission-mode: auto" "out=$out"
+fi
+teardown
+
+# -- Test 11: --agent path shows "(claude default)" --------------------------
+# With --agent the wrapper passes no --permission-mode; the agent's
+# frontmatter (project / user scope) is read natively by claude code. The
+# echo says "(claude default)" so the operator knows the wrapper deferred.
 
 setup
 mkdir -p "$TDIR/.claude/agents"
 printf -- '---\nname: opusauto\ndescription: opus auto agent\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/opusauto.md"
 out="$("${ROOST_BIN}" spawn testnick --agent opusauto --cwd "$TDIR" 2>&1 || true)"
 if echo "$out" | grep -qF "permission-mode: (claude default)"; then
-  ok "agent w/ permissionMode frontmatter: wrapper still defers to claude"
+  ok "--agent path: wrapper defers, echo shows (claude default)"
 else
-  fail "agent w/ permissionMode frontmatter: wrapper still defers to claude" "out=$out"
+  fail "--agent path: wrapper defers, echo shows (claude default)" "out=$out"
+fi
+teardown
+
+# -- Test 12: --agent + explicit --permission-mode → flag wins ---------------
+# Explicit flag overrides the agent-defers default.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: someagent\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/someagent.md"
+out="$("${ROOST_BIN}" spawn testnick --agent someagent --permission-mode plan --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: plan"; then
+  ok "--agent + explicit --permission-mode → flag wins"
+else
+  fail "--agent + explicit --permission-mode → flag wins" "out=$out"
 fi
 teardown
 

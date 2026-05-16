@@ -14,6 +14,10 @@ Rides ergo for IRCv3 (multiline, chathistory, message-tags). Uses Github issues 
 
 The commands, skills, and agents this plugin ships (`prompts/`, `agents/`, `skills/`) get installed into projects we have no knowledge of. Don't bake assumptions about repo layout, package manager, scripts, or naming into them — language them generically, with fallbacks. Project-specific helpers (like `script/worktree`) are nice-to-have hints, not preconditions; describe the helper *and* the manual fallback.
 
+## Agent frontmatter
+
+Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatter — `auto` for opus agents, `acceptEdits` (or `default`) for non-opus. Claude Code reads `permissionMode:` natively on project- and user-scope agents, so the wrapper deliberately does not parse it. The `--agent` path of `bin/roost spawn` omits `--permission-mode` entirely and relies on the frontmatter. If a new shipped agent needs a different mode, declare it in the file — don't add a special case to the wrapper.
+
 ## Code quality
 
 ```
