@@ -381,9 +381,7 @@ cmd_init() {
         local _name _dst
         _name="$(basename "$_pf" .md)"
         _dst="${commands_dir}/${_name}.md"
-        if [ ! -f "$_dst" ] || [ "$force_prompts" -eq 1 ] || [ "$force" -eq 1 ]; then
-          echo "--- ${_dst} (copied verbatim from plugin prompts/${_name}.md) ---"
-        fi
+        echo "--- ${_dst} (copied verbatim from plugin prompts/${_name}.md) ---"
       done
     fi
     if [ "$no_agents" -eq 0 ] && [ "${#agent_files[@]}" -gt 0 ]; then
@@ -391,9 +389,7 @@ cmd_init() {
         local _aname _adst
         _aname="$(basename "$_af" .md)"
         _adst="${agents_dst_dir}/${_aname}.md"
-        if [ ! -f "$_adst" ] || [ "$force_agents" -eq 1 ] || [ "$force" -eq 1 ]; then
-          echo "--- ${_adst} (copied verbatim from plugin agents/${_aname}.md) ---"
-        fi
+        echo "--- ${_adst} (copied verbatim from plugin agents/${_aname}.md) ---"
       done
     fi
     exit 0

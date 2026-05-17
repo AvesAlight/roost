@@ -156,6 +156,21 @@ fi
 cd - >/dev/null
 teardown
 
+# --- --dry-run: lists prompts/agents even when they already exist ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+roost_init >/dev/null 2>&1
+dry_out="$(roost_init --dry-run 2>/dev/null)"
+if echo "$dry_out" | grep -q 'worker.md' \
+    && echo "$dry_out" | grep -q 'lead-pm.md'; then
+  ok "--dry-run: shows prompts/agents unconditionally when files exist"
+else
+  fail "--dry-run: shows prompts/agents unconditionally when files exist"
+fi
+cd - >/dev/null
+teardown
+
 # --- --force: overwrites existing config ---
 
 setup "https://github.com/TestOwner/myproject.git"
