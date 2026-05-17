@@ -147,7 +147,8 @@ cd "$TDIR"
 mkdir -p .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
 dry_out="$(roost_init --dry-run 2>/dev/null)"
-if echo "$dry_out" | grep -q '"project"'; then
+if echo "$dry_out" | grep -q '"project"' \
+    && echo "$dry_out" | grep -q 'state.json'; then
   ok "--dry-run: bypasses existing-config guard"
 else
   fail "--dry-run: bypasses existing-config guard"
