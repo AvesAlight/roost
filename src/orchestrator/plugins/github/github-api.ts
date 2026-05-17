@@ -162,6 +162,18 @@ export interface GhIssue {
   labels?: GhLabel[]
 }
 
+// Repo-issues feed shape. The `/repos/{owner}/{repo}/issues` endpoint returns
+// both issues and PRs; `pull_request` is the marker for filtering PRs out at
+// the call site (see GhClient.fetchRepoOpenIssues).
+export interface GhRepoIssue {
+  number?: number
+  title?: string
+  html_url?: string
+  state?: string
+  labels?: GhLabel[]
+  pull_request?: Record<string, unknown>
+}
+
 export interface FetchedPr {
   title: string | null
   url: string | null
@@ -301,21 +313,12 @@ export class GhClient {
   async fetchIssueComments(repo: string, number: number): Promise<GhComment[]> {
     return (await this.api(`repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
   }
-}
 
-// GitHub's issues endpoint returns PRs too — `pull_request` is the marker
-// for filtering them out at the call site.
-export interface GhRepoIssue {
-  number?: number
-  title?: string
-  html_url?: string
-  state?: string
-  labels?: GhLabel[]
-  pull_request?: Record<string, unknown>
-}
-
-// Lists open issues across the repo (excluding PRs at the caller). Paginated.
-export async function fetchRepoOpenIssues(log: PluginLogger, repo: string): Promise<GhRepoIssue[]> {
-  const raw = (await ghApi(log, `repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
-  return raw.filter(i => !i.pull_request)
+  // Lists open issues across the repo. The GH `/repos/{repo}/issues` endpoint
+  // returns PRs as well, so we filter them out via the `pull_request` marker.
+  // Paginated; the response is the de-duped, PR-stripped open-issue set.
+  async fetchRepoOpenIssues(repo: string): Promise<GhRepoIssue[]> {
+    const raw = (await this.api(`repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
+    return raw.filter(i => !i.pull_request)
+  }
 }

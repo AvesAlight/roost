@@ -37,6 +37,7 @@ Fields:
 | `plugins.<name>` | Per-plugin config slice. Keys list the enabled plugins (in emission order). |
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
+| `plugins.github-new-issues` | Repo-wide new-issue feed: `{"repo"?: "OWNER/NAME", "channels"?: [...]}` (both optional; default = `repo` at top level + project channel). |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
 destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
@@ -44,7 +45,13 @@ to `#<project>-issue-N` for each linked issue).
 
 A plugin not listed under `plugins` is not instantiated — there is no top-level
 fallback. The supported set is the first-party plugins shipped in this repo
-(`github-prs`, `github-issues`); external plugin discovery is tracked in #255.
+(`github-prs`, `github-issues`, `github-new-issues`); external plugin discovery
+is tracked in #255.
+
+`github-new-issues` is default-on whenever `repo` is set at the top level —
+the dispatcher injects an empty slice at boot if the operator hasn't written
+one. Issue #342 added it so newly-filed repo issues land in the project
+channel for triage without anyone having to DM `watch <N>` first.
 
 ## Running
 

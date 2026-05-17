@@ -12,7 +12,7 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { BasePlugin, type PluginLogger, type PluginTickResult, type TaggedEvent, defaultPluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
-import { fetchRepoOpenIssues, labelNames, type GhRepoIssue } from './github-api.js'
+import { GhClient, labelNames, type GhRepoIssue } from './github-api.js'
 
 interface NewIssuesPluginConfig {
   repo?: string
@@ -26,8 +26,15 @@ export interface NewIssuesPluginState {
 export class GitHubNewIssuesPlugin extends BasePlugin {
   readonly name = 'github-new-issues'
 
-  constructor(defaultChannel: string, protected readonly log: PluginLogger = defaultPluginLogger) {
+  // Owns the GhClient the same way GhBase does — see #338/#348 for the
+  // refactor. Not extending GhBase because that scaffolding is built around
+  // a per-entry `watched` slice and this plugin doesn't have one. A thinner
+  // shared base could be a future cleanup if more GhClient-only plugins land.
+  protected readonly client: GhClient
+
+  constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
+    this.client = new GhClient(log)
   }
 
   // Project channel is unioned in by the orchestrator, so the default case
@@ -38,22 +45,16 @@ export class GitHubNewIssuesPlugin extends BasePlugin {
     return slice.channels?.length ? [...slice.channels] : []
   }
 
-  private resolveRepo(config: OrchestratorConfig): string {
+  async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     const repo = slice.repo ?? config.repo
     if (!repo) throw new Error('github-new-issues: no repo (set `repo` at top level or under plugins.github-new-issues)')
-    return repo
-  }
 
-  private resolveAnnouncementChannels(config: OrchestratorConfig): string[] {
-    const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
-    if (slice.channels?.length) return slice.channels
-    return [resolveProjectChannel(config)]
-  }
+    const announcementChannels = slice.channels?.length
+      ? [...slice.channels]
+      : [resolveProjectChannel(config)]
 
-  async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
-    const repo = this.resolveRepo(config)
-    const issues = await fetchRepoOpenIssues(this.log, repo)
+    const issues = await this.client.fetchRepoOpenIssues(repo)
     const currentNumbers = issues
       .map(i => i.number)
       .filter((n): n is number => n != null)
@@ -64,13 +65,14 @@ export class GitHubNewIssuesPlugin extends BasePlugin {
     const taggedEvents: TaggedEvent[] = []
 
     if (prev !== null) {
-      const announcementChannels = this.resolveAnnouncementChannels(config)
       const newIssues = issues
         .filter(i => i.number != null && !seen.has(i.number))
         .sort((a, b) => (a.number ?? 0) - (b.number ?? 0))
       for (const issue of newIssues) {
         taggedEvents.push({
-          channels: announcementChannels,
+          // Per-event copy so a downstream mutation of one event's channel
+          // list can't leak into siblings.
+          channels: [...announcementChannels],
           payload: { kind: 'oneline', text: formatNewIssue(repo, issue) },
         })
       }
@@ -84,7 +86,7 @@ export class GitHubNewIssuesPlugin extends BasePlugin {
   }
 }
 
-export function formatNewIssue(repo: string, issue: GhRepoIssue): string {
+function formatNewIssue(repo: string, issue: GhRepoIssue): string {
   const tag = `${repo}#${issue.number}`
   const title = issue.title ?? ''
   const labels = labelNames(issue.labels)

@@ -1,7 +1,6 @@
 import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubNewIssuesPlugin, type NewIssuesPluginState } from '../new-issues-plugin.js'
-import * as ghApi from '../github-api.js'
-import type { GhRepoIssue } from '../github-api.js'
+import { GhClient, type GhRepoIssue } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
 
 function issue(n: number, overrides: Partial<GhRepoIssue> = {}): GhRepoIssue {
@@ -24,9 +23,15 @@ function baseConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
   }
 }
 
+// Plugin owns its GhClient; intercept fetch at the prototype seam — same shape
+// the sibling plugin tests use for scrapeIssue/scrapePr.
+function stubFetch(response: GhRepoIssue[]) {
+  return spyOn(GhClient.prototype, 'fetchRepoOpenIssues').mockResolvedValue(response)
+}
+
 describe('GitHubNewIssuesPlugin.runTick', () => {
   it('seeds without emitting on first run (prev === null)', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(1), issue(2), issue(3)])
+    const spy = stubFetch([issue(1), issue(2), issue(3)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), null)
       expect(result.taggedEvents).toHaveLength(0)
@@ -35,7 +40,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('emits a oneline announcement for issues new since last tick', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(1), issue(2), issue(3)])
+    const spy = stubFetch([issue(1), issue(2), issue(3)])
     try {
       const prevState: NewIssuesPluginState = { seen_issue_numbers: [1] }
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState)
@@ -52,7 +57,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('routes announcements to the project channel by default', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(5)])
+    const spy = stubFetch([issue(5)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), { seen_issue_numbers: [] })
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
@@ -60,7 +65,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('honors slice.channels override when set', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(5)])
+    const spy = stubFetch([issue(5)])
     try {
       const config = baseConfig({ plugins: { 'github-new-issues': { channels: ['#triage', '#leads'] } } })
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, { seen_issue_numbers: [] })
@@ -68,10 +73,17 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
+  it('emits a defensive per-event channel copy — sibling mutation does not leak', async () => {
+    const spy = stubFetch([issue(1), issue(2)])
+    try {
+      const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), { seen_issue_numbers: [] })
+      result.taggedEvents[0]?.channels.push('#tampered')
+      expect(result.taggedEvents[1]?.channels).toEqual(['#proj-leads'])
+    } finally { spy.mockRestore() }
+  })
+
   it('includes labels in the announcement when present', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([
-      issue(7, { labels: [{ name: 'bug' }, { name: 'priority:high' }] }),
-    ])
+    const spy = stubFetch([issue(7, { labels: [{ name: 'bug' }, { name: 'priority:high' }] })])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), { seen_issue_numbers: [] })
       const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
@@ -80,7 +92,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('accumulates seen numbers across ticks', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(1), issue(2)])
+    const spy = stubFetch([issue(1), issue(2)])
     try {
       const prevState: NewIssuesPluginState = { seen_issue_numbers: [5] }
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState)
@@ -89,7 +101,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('does not re-announce issues already in seen', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(1), issue(2)])
+    const spy = stubFetch([issue(1), issue(2)])
     try {
       const prevState: NewIssuesPluginState = { seen_issue_numbers: [1, 2] }
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState)
@@ -98,7 +110,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('uses slice.repo when set, falls back to config.repo otherwise', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([])
+    const spy = spyOn(GhClient.prototype, 'fetchRepoOpenIssues').mockResolvedValue([])
     try {
       const config: OrchestratorConfig = {
         project: 'proj',
@@ -106,7 +118,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
         plugins: { 'github-new-issues': { repo: 'org/feed-source' } },
       }
       await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)
-      expect(spy).toHaveBeenCalledWith(expect.anything(), 'org/feed-source')
+      expect(spy).toHaveBeenCalledWith('org/feed-source')
     } finally { spy.mockRestore() }
   })
 
@@ -130,7 +142,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
   })
 
   it('orders announcements by issue number', async () => {
-    const spy = spyOn(ghApi, 'fetchRepoOpenIssues').mockResolvedValue([issue(20), issue(5), issue(11)])
+    const spy = stubFetch([issue(20), issue(5), issue(11)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), { seen_issue_numbers: [] })
       const numbers = result.taggedEvents.map(e =>
@@ -140,4 +152,3 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 })
-
