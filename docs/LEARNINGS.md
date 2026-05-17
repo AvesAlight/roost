@@ -436,6 +436,157 @@ PR #371 (abandoned approach, closed unmerged) is the load-bearing
 artifact for this decision. Re-read its diff and comment thread before
 re-opening this investigation.
 
+### Finding J — auto-compact directive: intercept the PreCompact event, redirect to manual (#368)
+
+Auto-compaction fires without a directive — the APM lost its
+issue→PR→reviewer-nick mapping mid-task on 2026-05-17 and looped on
+wrong nicks four times before recovery. We need the compactor to run
+with our `custom_instructions`, which today only populates on manual
+`/compact <directive>`.
+
+**Not a fixed threshold — react, don't predict.** Auto-compact is
+event-driven. Scraping 60+ `compact_boundary` rows across project
+transcripts showed triggers clustered at ~167k / 267k / 367k / 467k
+input-token counts, varying by model, version, and burst pattern.
+There is no published constant to compute against, and the v2
+threshold-polling approach (150k / 75% of an assumed 200k cap) was
+trying to predict what claude code already announces. v3's whole
+point: react to the PreCompact event rather than try to recompute a
+magic number.
+
+**Hook surface — what's available:**
+
+- **PreCompact** payload carries `trigger: "manual"|"auto"`,
+  `custom_instructions` (populated only on manual), `session_id`,
+  `transcript_path`, `cwd`, `hook_event_name`. The hook can return
+  `{"decision":"block"}` on stdout to halt the corresponding
+  compaction.
+- **Hooks cannot directly trigger slash commands** via stdout/JSON
+  output (claude code hooks-guide "Limitations and troubleshooting"
+  is explicit). But a hook is a regular subprocess — it can shell
+  out to anything, including `tmux send-keys` on its own pane. That
+  side-channel works.
+- **No hook event exposes token / context-size info.** Confirmed
+  against `code.claude.com/docs/en/hooks-guide.md`. We don't need
+  this anymore since v3 reacts to the event.
+- **No SDK / CLI invocation of `/compact` against a running session.**
+  Slash commands are interactive-only. The tmux side-channel is the
+  only way in.
+- **No `compactPrompt` settings.json field.** Claimed by a third-
+  party blog post; not in the canonical settings reference.
+  Hallucination.
+
+**v1 attempt — reactive restoration (rejected by alex).** PR #376 v1
+added a `SessionStart` matcher=`compact` hook that emitted the
+agent's directive as `additionalContext` *after* auto-compact fired.
+By that point the compactor had already summarized without our
+directive — we were just telling the agent what was lost, not
+preserving it.
+
+**v2 attempt — proactive monitor (built, then rolled back).** Polled
+the transcript JSONL every 30s, fired `/compact <directive>` via
+`roost send` when an input-token estimator crossed 150k. Worked in
+principle but: (a) the threshold is unknowable in advance per the
+clustering data above, and (b) the polling, env-var knobs, and
+fired-flag bookkeeping were complexity to justify a guess. Rolled
+back at lead-pm direction.
+
+**v3 — intercept PreCompact, redirect auto → manual (shipped).**
+Single-hook design, no polling, no thresholds:
+
+1. `bin/roost-compact-hook` is wired as a PreCompact hook by
+   `bin/roost spawn`.
+2. On `trigger="auto"` with a directive on disk
+   (`${ROOST_DATA_DIR}/compact-directive.txt`, written at spawn time
+   from the agent's `## Compaction Directive` section), the hook
+   returns `{"decision":"block"}` on stdout — claude code halts the
+   directive-less auto-compact.
+3. The hook also backgrounds a subshell that sleeps 150ms (lets
+   claude code unwind its auto-compact state machine cleanly — see
+   smoke evidence below), then `tmux load-buffer` / `paste-buffer`
+   / `send-keys Enter` queues `/compact <directive>` into the
+   agent's own pane.
+4. That fires PreCompact a second time with `trigger="manual"` and
+   `custom_instructions=<directive>`. The hook sees `trigger="manual"`
+   and passes through. claude code's manual `/compact` runs with our
+   `custom_instructions`.
+5. On `trigger="manual"` or `trigger="auto"` without a directive on
+   disk, the hook passes through and signals SIGUSR1 to the MCP
+   (clearing the chathistory replay-dedupe cache so post-compact
+   backfill re-delivers messages dropped from the agent's context).
+
+**Auto-trigger smoke evidence (2026-05-17, $10 of context-stuffing
+to force a real auto-compact at ~1.2M-token paste scale).** /tmp
+artifacts were cleaned before this writeup landed, so the snippets
+below are reconstructed from the verified shape — fields,
+trigger, custom_instructions before/after — not verbatim captures.
+The chain reproduced cleanly:
+
+```
+# PreCompact #1 — auto-trigger, no directive populated
+{"session_id":"smoke","transcript_path":"/private/tmp/.../smoke.jsonl",
+ "cwd":"/private/tmp/roost-v3-autosmoke-...",
+ "hook_event_name":"PreCompact","trigger":"auto","custom_instructions":null}
+
+# Hook stdout: blocks the directive-less compaction
+{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions (issue #368)"}
+
+# Backgrounded (sleep 0.15; tmux send-keys "/compact <directive>" Enter)
+
+# PreCompact #2 — manual, directive now populated
+{"session_id":"smoke","transcript_path":"...",
+ "hook_event_name":"PreCompact","trigger":"manual",
+ "custom_instructions":"<the agent's ## Compaction Directive body>"}
+
+# Hook stdout: empty (pass-through). claude code's manual /compact
+# proceeds with our directive as custom_instructions.
+```
+
+The 150ms sleep is load-bearing — without it the `send-keys` race
+against claude code's auto-compact-halt state machine produced
+partial `/compact` buffers in one of three attempts. With the sleep,
+zero races observed across the smoke run.
+
+**Compaction is a behavior hint, not verbatim retention.** Important
+to internalize before debugging: passing a directive as
+`custom_instructions` *biases* what the summarization keeps, but the
+summarizer is still a language model summarizing the conversation.
+If a directive says "retain the issue→PR→reviewer-nick mapping",
+that mapping has to actually be in the conversation for the
+summarizer to keep it. The directive can't conjure state that isn't
+there. Future debugging: if a compaction drops a value the directive
+mentioned, check whether the value was anywhere in the
+pre-compaction transcript — the failure mode is usually "not enough
+mentions to anchor the retention," not "the directive was ignored."
+
+**v3 footprint** is one bash hook, ~100 lines including comments and
+the pass-through SIGUSR1 path inherited from the prior hook. No
+TypeScript, no env-var knobs, no polling, no fired-flag reset state
+machine.
+
+**Operational footgun surfaced during the v3 rebase (2026-05-17):**
+GitHub stopped firing CI on this PR after the v2 push. Root cause:
+the branch became `mergeable=CONFLICTING` against main once #374/
+#375/#377/#380 landed on top of files this PR touched. When a PR is
+in `CONFLICTING` state, GitHub can't generate the `refs/pull/N/merge`
+synthetic ref, and the `pull_request` workflow event is gated on
+that ref — so CI silently stops firing on subsequent pushes. **If CI
+silently stops firing across a long PR life, check `gh pr view --json
+mergeable` first.** Followup PR adds `push:` trigger (any branch)
+and required-status-checks branch protection so a CONFLICTING PR
+either still gets CI or is blocked from merge entirely.
+
+**Followup candidate (file post-merge):** Anthropic FR for either
+(a) a documented `compactPrompt` settings.json field that
+auto-compact reads, or (b) a hook output field that lets PreCompact
+mutate the compactor's `custom_instructions` directly. v3's
+tmux-side-channel approach works but is heavier than a first-party
+knob would be.
+
+PR #376 v3 is the load-bearing artifact for this decision. PR #376
+v1 and v2 are closed/superseded — re-read the PR thread for the
+design evolution.
+
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
 Worked out 2026-04-28 in a #roost session with productops-customer

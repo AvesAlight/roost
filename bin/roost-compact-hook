@@ -1,29 +1,92 @@
 #!/bin/sh
-# PreCompact hook — signal MCP to clear replay dedupe (SIGUSR1) so the next
-# chathistory backfill after reconnect delivers messages compacted out of
-# the agent's context window.
+# PreCompact hook — two jobs, both keyed off the trigger field:
+#
+# 1. trigger="auto" + a directive declared at spawn:
+#    return {"decision":"block"} to halt the directive-less auto-compact,
+#    then inject `/compact <directive>` into our own tmux pane (backgrounded
+#    with a small sleep) so the manual /compact runs with our
+#    custom_instructions. The injected manual compact re-fires PreCompact with
+#    trigger="manual" — we pass through that round without blocking.
+#
+# 2. trigger="manual" OR no directive: pass through. Still send SIGUSR1 to
+#    the MCP so its replay-dedupe cache clears (next chathistory backfill
+#    delivers messages compacted out of the agent's context).
 #
 # Wired by bin/roost at spawn time via roost-settings.json. Never exits
-# non-zero — a hook failure must not block compaction.
-if [ -z "$ROOST_DATA_DIR" ]; then
-  echo "roost-compact-hook: ROOST_DATA_DIR not set, skipping" >&2
-  exit 0
-fi
-pid_file="$ROOST_DATA_DIR/mcp.pid"
-if [ ! -f "$pid_file" ]; then
-  echo "roost-compact-hook: $pid_file not found, skipping" >&2
-  exit 0
-fi
-pid=$(cat "$pid_file")
-case "$pid" in
-  ''|*[!0-9]*)
-    echo "roost-compact-hook: malformed pid in $pid_file: '$pid', skipping" >&2
+# non-zero on its happy path — a hook failure must not block compaction
+# (the {"decision":"block"} we DO emit in case 1 is the explicit signal).
+#
+# Issue #368, v3 design — see docs/LEARNINGS.md Finding J.
+set -u
+
+log() { echo "roost-compact-hook: $*" >&2; }
+
+input="$(cat)"
+
+# Extract trigger ("auto"|"manual"). Fallback parser is grep+sed so we don't
+# require jq on the operator's box. Defaults to "manual" on parse failure
+# (the safer side: we pass through rather than blocking).
+trigger="$(printf '%s' "$input" \
+  | grep -o '"trigger"[[:space:]]*:[[:space:]]*"[^"]*"' \
+  | head -1 \
+  | sed 's/.*"trigger"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+[ -z "$trigger" ] && trigger="manual"
+
+signal_mcp() {
+  if [ -z "${ROOST_DATA_DIR:-}" ]; then
+    log "ROOST_DATA_DIR not set; skipping SIGUSR1"
+    return 0
+  fi
+  pid_file="${ROOST_DATA_DIR}/mcp.pid"
+  if [ ! -f "$pid_file" ]; then
+    log "$pid_file not found; skipping SIGUSR1"
+    return 0
+  fi
+  pid="$(cat "$pid_file")"
+  case "$pid" in
+    ''|*[!0-9]*)
+      log "malformed pid in $pid_file: '$pid'; skipping SIGUSR1"
+      return 0 ;;
+  esac
+  if kill -USR1 "$pid" 2>/dev/null; then
+    log "sent SIGUSR1 to MCP pid $pid"
+  else
+    log "kill -USR1 $pid failed (no such process?)"
+  fi
+}
+
+# Auto-trigger path requires (a) a directive on disk and (b) ROOST_IRC_NICK
+# so we know which tmux pane to inject into. Missing either → pass through.
+directive_file="${ROOST_DATA_DIR:-}/compact-directive.txt"
+nick="${ROOST_IRC_NICK:-}"
+
+if [ "$trigger" = "auto" ] && [ -n "$nick" ] && [ -s "$directive_file" ]; then
+  directive="$(cat "$directive_file")"
+  session_name="roost-${nick}"
+  if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
+    # Background subshell: claude code reads our {"decision":"block"} on stdout
+    # and unwinds its own auto-compact state machine; we want our send-keys to
+    # land after that settles, not race it. 150ms is empirically clean from
+    # the auto-trigger smoke (issue #368). The buffer name is per-pid to
+    # avoid collisions with concurrent compacts on the same box.
+    (
+      sleep 0.15
+      buf="roost-compact-${nick}-$$"
+      printf '/compact %s' "$directive" | tmux load-buffer -b "$buf" -
+      tmux paste-buffer -t "$session_name" -b "$buf" -p
+      tmux send-keys -t "$session_name" Enter
+      tmux delete-buffer -b "$buf" 2>/dev/null || true
+    ) &
+    log "auto-trigger intercepted; queued /compact <directive> for $session_name (directive bytes=$(printf '%s' "$directive" | wc -c | tr -d ' '))"
+    printf '%s\n' '{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions (issue #368)"}'
     exit 0
-    ;;
-esac
-if kill -USR1 "$pid" 2>/dev/null; then
-  echo "roost-compact-hook: sent SIGUSR1 to MCP pid $pid" >&2
-else
-  echo "roost-compact-hook: kill -USR1 $pid failed (no such process?)" >&2
+  fi
+  log "auto-trigger with directive present but tmux session $session_name not found; falling through"
 fi
+
+# Pass-through path (manual, or auto-without-directive, or no-tmux fallback):
+# clear the MCP's replay dedupe so post-compact chathistory backfill re-delivers
+# messages the compactor dropped. No stdout = no hook decision; claude code
+# proceeds with its compaction.
+signal_mcp
 exit 0

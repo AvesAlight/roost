@@ -141,6 +141,22 @@ Options:
                              multi-turn work (workers awaiting human
                              review, lead-pm, APM, dispatcher, watcher).
                              1h cache writes cost 2x the 5m rate.
+  --compact-directive TEXT   Per-agent compaction directive. Stored at
+                             \${ROOST_DATA_DIR}/compact-directive.txt; the
+                             PreCompact hook intercepts auto-compact and
+                             queues \`/compact <directive>\` into the tmux
+                             pane so the compactor runs with our
+                             custom_instructions instead of auto-compact's
+                             empty default. Mutually exclusive with
+                             --compact-directive-file. See issue #368 +
+                             docs/LEARNINGS.md Finding J.
+  --compact-directive-file PATH
+                             Same as --compact-directive but read from a
+                             file. Useful for multi-line directives.
+                             When --agent is set and neither flag is passed,
+                             the wrapper extracts the agent file's
+                             \`## Compaction Directive\` section (if present)
+                             as the default.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -534,6 +550,8 @@ cmd_spawn() {
   local ask_target=""
   local permission_mode=""
   local cache_ttl=""
+  local compact_directive=""
+  local compact_directive_file=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -560,6 +578,8 @@ cmd_spawn() {
       --ask-target)     ask_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
       --cache-ttl)      cache_ttl="$2"; shift 2 ;;
+      --compact-directive)      compact_directive="$2"; shift 2 ;;
+      --compact-directive-file) compact_directive_file="$2"; shift 2 ;;
 
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -613,17 +633,25 @@ cmd_spawn() {
     echo "error: --ask-irc requires --ask-target NICK (or --perm-target when also using --perm-irc)" >&2
     exit 1
   fi
+  if [ -n "${compact_directive}" ] && [ -n "${compact_directive_file}" ]; then
+    echo "error: --compact-directive and --compact-directive-file are mutually exclusive" >&2
+    exit 1
+  fi
+  if [ -n "${compact_directive_file}" ] && [ ! -f "${compact_directive_file}" ]; then
+    echo "error: --compact-directive-file ${compact_directive_file} not found" >&2
+    exit 1
+  fi
+  local _agent_path=""
   if [ -n "${agent}" ]; then
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
     # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
     local _agent_found=0
     local _search_root
-    local _found_path=""
     for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
       if [ -d "${_search_root}" ]; then
-        _found_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
-        if [ -n "${_found_path}" ]; then
+        _agent_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
+        if [ -n "${_agent_path}" ]; then
           _agent_found=1
           break
         fi
@@ -635,6 +663,32 @@ cmd_spawn() {
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
       exit 1
     fi
+  fi
+  # Resolve the compaction directive (issue #368). Priority:
+  #   1. --compact-directive TEXT
+  #   2. --compact-directive-file PATH
+  #   3. `## Compaction Directive` section in the agent.md (when --agent set)
+  # Stored in compact_directive_resolved; written to ROOST_DATA_DIR after mktemp.
+  local compact_directive_resolved=""
+  if [ -n "${compact_directive}" ]; then
+    compact_directive_resolved="${compact_directive}"
+  elif [ -n "${compact_directive_file}" ]; then
+    compact_directive_resolved="$(cat "${compact_directive_file}")"
+  elif [ -n "${_agent_path}" ]; then
+    # Extract the `## Compaction Directive` section (heading line excluded,
+    # body until the next `## ` heading or EOF). Trim leading/trailing blanks.
+    compact_directive_resolved="$(awk '
+      /^##[[:space:]]+Compaction[[:space:]]+Directive[[:space:]]*$/ { cap=1; next }
+      cap && /^##[[:space:]]/ { cap=0 }
+      cap { print }
+    ' "${_agent_path}" | awk '
+      NF { found=1 }
+      found { buf = buf $0 ORS }
+      END {
+        sub(/[[:space:]]+$/, "", buf)
+        if (length(buf)) print buf
+      }
+    ')"
   fi
   # Model-derived default for the --model path only. When --agent is set,
   # the wrapper deliberately passes no --permission-mode and lets claude
@@ -683,6 +737,14 @@ cmd_spawn() {
   # default applies).
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cache-ttl: ${cache_ttl:-(claude default)}, shell: ${shell_basename}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
+  if [ -n "${compact_directive_resolved}" ]; then
+    # First line only — keep the spawn log readable. The full directive is
+    # in ROOST_DATA_DIR/compact-directive.txt for the operator to inspect.
+    local _first_line _wc
+    _first_line="$(printf '%s' "${compact_directive_resolved}" | head -1)"
+    _wc=$(printf '%s' "${compact_directive_resolved}" | wc -c | tr -d ' ')
+    echo "  compact directive: ${_first_line} (${_wc} bytes)"
+  fi
 
   # Create a per-session data directory. mktemp guarantees uniqueness across
   # concurrent spawns and across repos using identical nick names.
@@ -693,8 +755,21 @@ cmd_spawn() {
     prompt_file="${ROOST_DATA_DIR}/prompt.txt"
     printf '%s' "${prompt_text}" > "${prompt_file}"
   fi
-  # On any failure before the tmux session is created, clean up the data dir.
-  trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
+  if [ -n "${compact_directive_resolved}" ]; then
+    # Hook (bin/roost-session-start-hook) reads this file post-compact and
+    # appends the contents to additionalContext. Issue #368.
+    printf '%s' "${compact_directive_resolved}" > "${ROOST_DATA_DIR}/compact-directive.txt"
+  fi
+  # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
+  # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
+  # written above after a preflight failure exits the spawn. Prod operators
+  # never set this — the success path prints "data dir: ..." after tmux comes up.
+  if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
+    echo "  data dir (preflight): ${ROOST_DATA_DIR}"
+  else
+    # On any failure before the tmux session is created, clean up the data dir.
+    trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
+  fi
 
   require_tmux
   require_ircd
@@ -752,6 +827,12 @@ cmd_spawn() {
     pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
+  # SessionStart hook fires only on source=compact (matcher) — it emits the
+  # IRC-reply reminder + a "you just came back from compaction" note so the
+  # freshly-compacted agent announces its return. PreCompact (issue #368) is
+  # the bigger lever: on trigger=auto it blocks the directive-less auto-
+  # compact and queues `/compact <directive>` into the tmux pane, so the
+  # manual compact runs with our custom_instructions.
   printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
   # bash/zsh: login shell loads the user's profile before claude, required for

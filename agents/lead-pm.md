@@ -150,13 +150,17 @@ Post in #<project>-leads each time you start work on a new issue.
 
 ## Things that come up in the work
 
-You may be asked to "self compact". That means using `roost send` to deliver a `/compact` prompt to your own session with instructions about what to retain. Your agent definition persists through compaction automatically. What you must preserve in the compact directive:
+You may be asked to "self compact". That means using `roost send` to deliver a `/compact <directive>` prompt to your own session. Your agent definition persists through compaction automatically; what doesn't persist is the runtime state listed in `## Compaction Directive` below — that section is the single source of truth for what to retain through any compaction (manual or auto). Pass its bullets as the `/compact` argument.
 
+You normally don't need to do this yourself — when claude code's auto-compact fires, the roost PreCompact hook intercepts it, blocks the directive-less default, and queues `/compact <this section>` into your pane so the compactor runs with our directive (issue #368). Manual self-compact is still available for cases where you want to compact earlier.
+
+## Compaction Directive
+
+`bin/roost spawn` extracts this section to `${ROOST_DATA_DIR}/compact-directive.txt`. When claude code's auto-compact fires, the PreCompact hook intercepts (`trigger="auto"`), returns `decision:block`, and injects `/compact <this section>` into the tmux pane. The manual `/compact` re-fires PreCompact with `custom_instructions` populated and the compactor runs with this directive instead of auto-compact's default (no directive). Issue #368 has the cited research; `docs/LEARNINGS.md` Finding J has the rationale and the auto→manual smoke evidence.
+
+Retain verbatim:
 - `project=<project> milestone=<milestone> human=<irc-nick> gh-login=<gh-login>`
-- In-flight issue numbers and their current state (worker spawned, draft PR up, PR number, reviewer done, etc.)
-- Any blockers or decisions made in `#<project>-leads` that aren't obvious from channel history
+- In-flight issue numbers + their current state: worker spawned? draft PR up? PR number? reviewer done? merged?
+- Any blockers, decisions, or human directives from `#<project>-leads` that aren't obvious from channel history.
 
-Minimum compact directive:
-```
-Retain: project=<project> milestone=<milestone> human=<irc-nick> gh-login=<gh-login>. In-flight: [list issues + state]. Post in #<project>-leads on restart.
-```
+On restart after compaction, post in `#<project>-leads` to note you're back and re-sync state with the APM. If in-flight state is missing or partial, ask the human to restate priorities rather than guessing.

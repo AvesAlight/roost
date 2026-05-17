@@ -18,6 +18,8 @@ The commands, skills, and agents this plugin ships (`prompts/`, `agents/`, `skil
 
 Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatter — `auto` for opus agents, `acceptEdits` (or `default`) for non-opus. Claude Code reads `permissionMode:` natively on project- and user-scope agents, so the wrapper deliberately does not parse it. The `--agent` path of `bin/roost spawn` omits `--permission-mode` entirely and relies on the frontmatter. If a new shipped agent needs a different mode, declare it in the file — don't add a special case to the wrapper.
 
+Long-running agents (lead-pm, associate-pm) should also include a `## Compaction Directive` heading in the body. `bin/roost spawn` extracts the section to `${ROOST_DATA_DIR}/compact-directive.txt`. The PreCompact hook (`bin/roost-compact-hook`) intercepts auto-compact (`trigger="auto"`), returns `{"decision":"block"}` to halt the directive-less default, then injects `/compact <directive>` into the tmux pane via backgrounded `tmux send-keys` — so the manual `/compact` re-fires PreCompact with `trigger="manual"` and `custom_instructions` populated, and the compactor runs with our directive. Short-lived agents (workers, reviewers) skip the section and let auto-compact handle it (unlikely to fire in their lifetime). Issue #368 + `docs/LEARNINGS.md` Finding J has the full investigation, including the auto→manual smoke evidence and why we react to the event rather than predicting a threshold.
+
 ## Code quality
 
 ```
