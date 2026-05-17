@@ -19,7 +19,7 @@ Process:
 4. Prefix all GitHub comments with [$0-worker-$1]
 5. Defer to lead-pm for marking the PR ready and tagging reviewers. If you spot something that belongs in a follow-up issue, **raise it in #$0-issue-$1** — lead-pm decides, and the APM files it. Do not `gh issue create` yourself.
 
-Do not call `gh pr ready` — that is APM-only.
+Do not call `gh pr ready` — that is lead-pm's call.
 
 Ask in the channel before any destructive or shared-state action: force-push, branch deletion, hook bypass (`--no-verify`), `git reset --hard`, dropping unfamiliar files, or anything else that's hard to reverse. Local edits and pushes to your own feature branch don't need confirmation.
 
