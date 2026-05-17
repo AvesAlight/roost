@@ -91,6 +91,58 @@ async function writeSessionFile(
   return path
 }
 
+// Build a subagent JSONL at `<parentFile-without-.jsonl>/subagents/agent-<id>.jsonl`.
+// No MCP banner — Claude Code only writes the banner into parent
+// transcripts. All rows are marked isSidechain:true to match real shape.
+async function writeSubagentFile(
+  parentFile: string,
+  agentId: string,
+  turns: Turn[],
+): Promise<string> {
+  if (!parentFile.endsWith('.jsonl')) throw new Error('parentFile must end with .jsonl')
+  const dir = join(parentFile.slice(0, -'.jsonl'.length), 'subagents')
+  await mkdir(dir, { recursive: true })
+  const lines: string[] = []
+  for (const t of turns) {
+    const usage: Record<string, unknown> = {
+      input_tokens: t.input ?? 0,
+      output_tokens: t.output ?? 0,
+      cache_read_input_tokens: t.cache_r ?? 0,
+    }
+    if (typeof t.cache_w_5m === 'number' || typeof t.cache_w_1h === 'number') {
+      usage.cache_creation_input_tokens = (t.cache_w_5m ?? 0) + (t.cache_w_1h ?? 0)
+      usage.cache_creation = {
+        ephemeral_5m_input_tokens: t.cache_w_5m ?? 0,
+        ephemeral_1h_input_tokens: t.cache_w_1h ?? 0,
+      }
+    } else {
+      usage.cache_creation_input_tokens = t.cache_w ?? 0
+    }
+    const assist: Record<string, unknown> = {
+      type: 'assistant',
+      timestamp: t.ts,
+      isSidechain: true,
+      message: { role: 'assistant', model: t.model, usage },
+    }
+    if (t.requestId) assist.requestId = t.requestId
+    lines.push(JSON.stringify(assist))
+    if (typeof t.apiDurationMs === 'number') {
+      const dur: Record<string, unknown> = {
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: t.apiDurationMs,
+        timestamp: t.ts,
+        isSidechain: true,
+      }
+      if (t.turnUuid) dur.uuid = t.turnUuid
+      lines.push(JSON.stringify(dur))
+    }
+  }
+  const path = join(dir, `agent-${agentId}.jsonl`)
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
 // Capture stdout + stderr writes for one async block, restore afterward.
 async function capture<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
   const outChunks: string[] = []
@@ -322,6 +374,112 @@ describe('token-usage', () => {
       const r = await collectForNick('roost-x', projects)
       // Counted once, not twice.
       expect(r.apiDurationMs).toBe(4000)
+    })
+
+    it('bills subagent transcripts under a matched parent to the parent nick', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const parent = await writeSessionFile(d, 'session.jsonl', 'roost-worker-99', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 2000 },
+      ])
+      await writeSubagentFile(parent, 'aaa1111111111111a', [
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-haiku-4-5-20251001', input: 200, output: 75, apiDurationMs: 800 },
+        { ts: '2026-05-16T10:02:00Z', model: 'claude-haiku-4-5-20251001', input: 50, output: 25, apiDurationMs: 400 },
+      ])
+      const r = await collectForNick('roost-worker-99', projects)
+      // Parent nick gets the haiku usage from the subagent.
+      const opus = r.byModel.get('claude-opus-4-7')!
+      const haiku = r.byModel.get('claude-haiku-4-5-20251001')!
+      expect(opus.input).toBe(100)
+      expect(haiku.input).toBe(250)
+      expect(haiku.output).toBe(100)
+      expect(r.apiDurationMs).toBe(3200)
+      // sessions counts parent + the contributing subagent file.
+      expect(r.sessions).toBe(2)
+      expect(r.files).toHaveLength(2)
+      // Wall extends across both.
+      expect(r.wallFirst).toBe('2026-05-16T10:00:00Z')
+      expect(r.wallLast).toBe('2026-05-16T10:02:00Z')
+    })
+
+    it('subagents under an unmatched parent (different nick) do not count', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const ourParent = await writeSessionFile(d, 'ours.jsonl', 'roost-worker-99', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 },
+      ])
+      const theirParent = await writeSessionFile(d, 'theirs.jsonl', 'roost-worker-100', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 999, output: 999 },
+      ])
+      // Our subagent: should count.
+      await writeSubagentFile(ourParent, 'aaa1111111111111a', [
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-haiku-4-5-20251001', input: 7, output: 3 },
+      ])
+      // Their subagent: must NOT bill to us.
+      await writeSubagentFile(theirParent, 'aaa2222222222222a', [
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-haiku-4-5-20251001', input: 9999, output: 9999 },
+      ])
+      const r = await collectForNick('roost-worker-99', projects)
+      const haiku = r.byModel.get('claude-haiku-4-5-20251001')!
+      expect(haiku.input).toBe(7)
+      expect(haiku.output).toBe(3)
+    })
+
+    it('still skips inline sidechain rows in the parent (no double-count with subagent file)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 1000, requestId: 'req_main' },
+        // Defensive: an inline sidechain row in the *parent* file gets skipped.
+        { ts: '2026-05-16T10:00:30Z', model: 'claude-haiku-4-5-20251001', input: 999, output: 999, requestId: 'req_inline_sub', sidechain: true },
+      ])
+      // Authoritative copy of the same call in the proper subagent file — counts.
+      await writeSubagentFile(parent, 'aaa3333333333333a', [
+        { ts: '2026-05-16T10:00:30Z', model: 'claude-haiku-4-5-20251001', input: 8, output: 4, requestId: 'req_inline_sub' },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const haiku = r.byModel.get('claude-haiku-4-5-20251001')!
+      // Inline parent copy skipped, subagent copy counted once.
+      expect(haiku.input).toBe(8)
+      expect(haiku.output).toBe(4)
+    })
+
+    it('cross-file requestId dedup spans parent and subagent', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 50, output: 25, requestId: 'req_shared' },
+      ])
+      // Same requestId shows up in the subagent file — pathological, but the
+      // shared seen-set should keep it from double-counting.
+      await writeSubagentFile(parent, 'aaa4444444444444a', [
+        { ts: '2026-05-16T10:00:30Z', model: 'claude-opus-4-7', input: 50, output: 25, requestId: 'req_shared' },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      const opus = r.byModel.get('claude-opus-4-7')!
+      expect(opus.input).toBe(50)
+      expect(opus.output).toBe(25)
+    })
+
+    it('sinceTs filter applies to subagent rows the same as parent rows', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 10_000 },
+      ])
+      await writeSubagentFile(parent, 'aaa5555555555555a', [
+        // Pre-window subagent turn — must NOT count.
+        { ts: '2026-05-16T09:30:00Z', model: 'claude-haiku-4-5-20251001', input: 1_000_000, output: 1_000_000, apiDurationMs: 99_999 },
+        // Post-window subagent turn — counts.
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-haiku-4-5-20251001', input: 11, output: 22, apiDurationMs: 333 },
+      ])
+      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      // Parent pre-window turn excluded, only post-window subagent turn counts.
+      expect(r.byModel.get('claude-opus-4-7')).toBeUndefined()
+      const haiku = r.byModel.get('claude-haiku-4-5-20251001')!
+      expect(haiku.input).toBe(11)
+      expect(haiku.output).toBe(22)
+      expect(r.apiDurationMs).toBe(333)
     })
   })
 

@@ -92,6 +92,27 @@ async function listSessionFiles(projectsRoot: string): Promise<string[]> {
   return files
 }
 
+// For a parent transcript at `<projectDir>/<sessionId>.jsonl`, subagent
+// transcripts live in `<projectDir>/<sessionId>/subagents/agent-*.jsonl`.
+// Directory locality is the attribution signal — subagent jsonls don't
+// carry the MCP banner (the banner is in the parent's instructions), so
+// we don't marker-check them; we bill them to whichever nick the parent
+// matched.
+async function listSubagentFiles(parentFile: string): Promise<string[]> {
+  const ext = '.jsonl'
+  if (!parentFile.endsWith(ext)) return []
+  const subagentDir = join(parentFile.slice(0, -ext.length), 'subagents')
+  const files: string[] = []
+  try {
+    for await (const f of new Bun.Glob('agent-*.jsonl').scan({ cwd: subagentDir, absolute: true })) {
+      files.push(f)
+    }
+  } catch {
+    // No subagent dir for this parent — common case, not an error.
+  }
+  return files
+}
+
 // JSONL stores MCP instructions inside a JSON-encoded string, so the inner
 // quotes around the nick are backslash-escaped. JSON.stringify gives us the
 // file-form substring (and adds outer quotes we strip off).
@@ -133,12 +154,13 @@ interface AnyRow {
 // of a multi-part response (text + tool_use + tool_use…) and each row
 // repeats the parent API call's `usage` block verbatim. Forked or resumed
 // transcripts also share requestIds across files. Sidechain (subagent)
-// rows are skipped: in current Claude Code their transcripts live in
-// `PROJECT/SESSION/subagents/agent-*.jsonl` and never carry the MCP
-// banner, so today this is defensive — older or future shapes that inline
-// sidechain rows are filtered here. Returns whether the file contributed
-// at all (used as the session-counter signal).
-function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string): boolean {
+// rows in a *parent* transcript are skipped: in current Claude Code
+// their full transcripts live in `PROJECT/SESSION/subagents/agent-*.jsonl`
+// (scanned separately with `countSidechain: true`), so this is defensive
+// — older or future shapes that inline sidechain rows in the parent are
+// filtered here to avoid double-counting. Returns whether the file
+// contributed at all (used as the session-counter signal).
+function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): boolean {
   let contributed = false
   for (const line of text.split('\n')) {
     if (!line) continue
@@ -150,7 +172,7 @@ function scanFile(text: string, report: NickReport, seenRequestIds: Set<string>,
     }
     const ts = row.timestamp
     if (sinceTs && (!ts || ts <= sinceTs)) continue
-    if (row.isSidechain) continue
+    if (row.isSidechain && !countSidechain) continue
 
     // Assistant turn: model + usage block.
     if (row.type === 'assistant' && row.message?.usage && row.message.model) {
@@ -239,6 +261,20 @@ export async function collectForNick(
     report.files.push(f)
     const contributed = scanFile(text, report, seenRequestIds, seenTurnUuids, sinceTs)
     if (contributed) report.sessions += 1
+
+    // Subagent transcripts: same nick, billed by directory locality.
+    const subagentFiles = await listSubagentFiles(f)
+    for (const sub of subagentFiles) {
+      let subText: string
+      try {
+        subText = await readFile(sub, 'utf8')
+      } catch {
+        continue
+      }
+      report.files.push(sub)
+      const subContributed = scanFile(subText, report, seenRequestIds, seenTurnUuids, sinceTs, true)
+      if (subContributed) report.sessions += 1
+    }
   }
   return report
 }
