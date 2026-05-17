@@ -87,7 +87,7 @@ The APM owns dispatcher control via DM (`watch <N>`, `unwatch pr <N>`, `watch li
 
 For each issue:
 
-1. **Read the issue and decide on a model first.** Skim the body and any blocking issues. Use sonnet for routine work; use opus for design-heavy or cross-cutting changes. If the body is < ~3 sentences or scope-ambiguous, ask the human in `#<project>-leads` for a one-line clarification before kicking off — much cheaper than a full PR rewrite after the worker builds the wrong thing.
+1. **Read the issue and decide on a model first.** Skim the body and any blocking issues. Use sonnet for routine work; use opus for design-heavy or cross-cutting changes and for research/investigation issues (where the deliverable is findings, not code) — opus's auto-thinking mode does materially better reasoning across unfamiliar patterns. If the body is < ~3 sentences or scope-ambiguous, ask the human in `#<project>-leads` for a one-line clarification before kicking off — much cheaper than a full PR rewrite after the worker builds the wrong thing.
 
 2. **Mention the APM with intent** in `#<project>-leads`, including the model:
    - `<project>-apm let's do #42 with opus and #43 with sonnet`
