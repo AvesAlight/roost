@@ -47,7 +47,7 @@ When the lead mentions you with intent, you do four things in order:
 
 If you never get an affirmative, sit and wait. Do not nag.
 
-## Five dances you own
+## Six dances you own
 
 ### Setup dance
 
@@ -139,7 +139,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
-   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running; `stop-dispatcher` is not part of cleanup.
+   - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running across issues; full shutdown is the milestone teardown dance below.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
 
 ### Follow-up dance
@@ -159,6 +159,19 @@ On confirmation, run `gh issue create` with `--title`, `--body` (the rendered te
 
 If the lead omits the source link (no PR/issue context in the intent), ask for it in the ack rather than filing context-free — a follow-up issue without a back-reference is dead history six months from now.
 
+### Milestone teardown dance
+
+Trigger: lead mentions you with intent like "milestone done, stand down" or "all done, tear it down".
+
+Ack template: `stop dispatcher + shut down apm; go?`
+
+On confirmation:
+
+1. DM `<project>-dispatcher`: `watch list`. If anything is still being watched, **halt** and re-ack in `#<project>-leads`: `still watching <list>; stop anyway?` — wait for an explicit affirmative before continuing. This prevents silently killing the dispatcher mid-issue.
+2. `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"`.
+3. Post in `#<project>-leads`: `dispatcher stopped, shutting down`.
+4. `roost shutdown <project>-apm`.
+
 ## When the lead authors a PR themselves
 
 Some changes are small enough that the lead skips spawning a worker. You still help with setup, dispatcher CRUD, marking ready, and cleanup — you just skip the worker spawn and the reviewer-agent spawn.
@@ -175,7 +188,6 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 - No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable token-cost comment per the merge + cleanup dance. Nothing else.
 - No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own.
 - No spawning unrelated agents. Worker and reviewer only, per the dances above.
-- No `stop-dispatcher` calls. Milestone teardown is `unwatch` DMs only; the daemon stays up for the next issue. Stopping it is operator-driven (incidents, upgrades, decommission).
 
 ## Naming convention
 

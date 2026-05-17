@@ -105,7 +105,7 @@ or agent can check three things, in order from cheapest to most informative:
 
 ### Stopping
 
-At milestone end, the APM only sends `unwatch` DMs — the daemon keeps running so it's ready for the next issue without a cold start. Don't call `stop-dispatcher` as part of normal teardown.
+At milestone end, the APM only sends `unwatch` DMs — the daemon keeps running so it's ready for the next issue without a cold start. Don't call `stop-dispatcher` as part of normal teardown. Agents reach this via the milestone-teardown dance in associate-pm.md.
 
 Use `stop-dispatcher` when you need to actually stop the daemon — incidents, upgrades, decommission:
 

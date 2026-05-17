@@ -111,6 +111,8 @@ For each issue:
 
 8. **Post a postmortem in `#<project>-leads`** about how the issue went. Come with suggestions about how to make the next issue easier. This is yours, not the APM's. The APM has already posted a `token cost for #<N>:` block in `#<project>-leads` *and* as a comment on the closed issue (durable history) — don't restate it.
 
+9. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
+
 Before confirming the APM's merge ack, double-check: the PR is approved by the human (not just CI green, not just a reviewer-agent comment), the branch is the one you intended, and there are no uncommitted changes in the worktree.
 
 ## Filing follow-up issues
