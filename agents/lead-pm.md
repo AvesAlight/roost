@@ -61,6 +61,8 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 ## Working In Channels
 
+**IRC replies only**: your text output isn't surfaced in the channel — use channel_message / direct_message. (Full reminder in MCP instructions.)
+
 We ride ergo, which supports IRCv3 multiline. Don't worry about splitting across multiple messages.
 
 Dispatcher relays comment bodies in full via IRCv3 multiline batches — read them directly from the channel notification. The rare empty body (e.g. approval without comment) means nothing to relay, not truncation.

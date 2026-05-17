@@ -528,7 +528,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(msg.meta.event).toBe('message')
 
     const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
-    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.content).toBe("Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply.")
     expect(reminder.meta.channel).toBe('#ip-rem1')
     expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
   })
@@ -542,7 +542,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
       n => n.meta.isDirect === 'true' && n.content === 'dm hello',
     )
     const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
-    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.content).toBe("Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply.")
     expect(reminder.meta.isDirect).toBe('true')
     expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(msg.meta.seq))
   })
@@ -566,7 +566,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
       n => n.meta.channel === '#ip-rem4' && n.content === 'live-after-historical',
     )
     const reminder = await mcp.waitForNotification(n => n.meta.event === 'reminder')
-    expect(reminder.content).toBe('Substantive replies should be posted to IRC.')
+    expect(reminder.content).toBe("Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply.")
     expect(Number(reminder.meta.seq)).toBeGreaterThan(Number(live.meta.seq))
 
     // No reminder fired for the historical message — only one reminder total.
@@ -591,7 +591,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
         5000,
         firstReminder.cursor,
       )
-      expect(secondReminder.content).toBe('Substantive replies should be posted to IRC.')
+      expect(secondReminder.content).toBe("Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply.")
     } finally {
       spy.mockRestore()
     }

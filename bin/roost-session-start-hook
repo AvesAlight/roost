@@ -1,10 +1,11 @@
 #!/bin/sh
 # SessionStart hook (matcher="compact") — inject IRC-reply directive after compaction.
+# The core reminder phrase must match REPLY_REMINDER in src/irc-server.ts.
 cat <<'EOF'
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "You are running on the Roost IRC harness. Substantive replies belong in IRC, not your local text buffer — humans cannot see your buffer. When responding to a channel message or DM, post via channel_message or direct_message. Brief tool-narration is fine to keep in the buffer.\n\nYou are returning from a context compaction. Note in IRC that you're coming back from a compaction so the humans you're working with know."
+    "additionalContext": "You are running on the Roost IRC harness. Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply. Brief tool-narration is fine to keep in the buffer.\n\nYou are returning from a context compaction. Note in IRC that you're coming back from a compaction so the humans you're working with know."
   }
 }
 EOF
