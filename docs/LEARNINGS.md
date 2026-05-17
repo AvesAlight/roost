@@ -352,6 +352,20 @@ prefer the shared predicate / assertion helpers in `test/helpers/`
 over hand-rolled inline filters, so a wire-shape change is a one-file
 edit.
 
+### Finding I — ToolSearch for built-in deferred tools is the dominant per-session cache cost (v0.5.12 readout)
+
+Production data from v0.5.12 sessions shows every worker and reviewer session paying a `tools_changed` miss of 21–28k tokens (~$0.12–0.26/session). Two distinct triggers:
+
+**Trigger 1 (workers — consistent):** Every worker calls `ToolSearch(select:TaskCreate[,WebFetch])` in its second assistant turn. The global CLAUDE.md says "Use TaskCreate to plan and track work," and the harness injects a deferred-tools reminder at session start. The ToolSearch call fetches those schemas, which injects a `deferred_tools_delta` into the session. The next API call has a different tool fingerprint → `tools_changed` miss. The miss persists for N turns (~4 in the observed sessions) while the cache re-establishes at the new fingerprint, then hits again. Sessions examined: worker-360 (00b9: 27534 tokens/turn, 4 miss turns), worker-360 (eeca: 20758, 2 turns), worker-361 (962d: 20595, 2 turns).
+
+**Trigger 2 (reviewers — variable):** The reviewer-362 session showed a 24857-token miss that was NOT caused by ToolSearch. The `mcp__claude_ai_*` tools (Gmail, Google Calendar, Google Drive, Linear — 41 tools total) connected asynchronously after the session's first API call. When a new context window started, those tools were in the fingerprint but the cache was established without them → miss. This trigger is timing-dependent and not reproducible on demand.
+
+**Why "call ToolSearch in turn 1" doesn't fix it:** Moving ToolSearch to the first assistant turn still causes a miss at turn 2 (the tool set changes between turns 1 and 2). Total miss cost per session is unchanged. The only effective mitigation is to not call ToolSearch for built-in deferred tools.
+
+**Fix applied:** `prompts/worker.md` and `prompts/reviewer.md` now include an explicit hard rule: do not call TaskCreate/ToolSearch. These roles track state via IRC, not the task list. Note that Finding A's `alwaysLoad: true` fix covers *MCP* tools (roost-irc) but has no effect on built-in deferred tools (TaskCreate, WebFetch, etc.) — those require avoiding ToolSearch entirely.
+
+**Trigger 2 open:** No fix applied. Roost doesn't control which MCP servers the user's Claude Code instance loads at session start. Followup candidate: document a per-reviewer MCP config that suppresses user-level MCPs (Gmail, etc.) to reduce the number of tools that can arrive asynchronously and change the fingerprint.
+
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
 Worked out 2026-04-28 in a #roost session with productops-customer

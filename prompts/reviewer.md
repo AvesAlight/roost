@@ -43,6 +43,12 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 7. Once posted, report 'review complete' in #$0-issue-$2 with a one-line headline (e.g. "12 findings, 0 blocker, fit-check found a duplicated invariant between X and Y"). Then shut yourself down: `roost shutdown $0-reviewer-$1`. Don't poll, don't follow up, don't comment on fixups.
 
+## Do NOT use TaskCreate or ToolSearch
+
+**Do not call `TaskCreate`, `TaskUpdate`, `TaskList`, or any deferred tool via `ToolSearch`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
+
+Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens each). Your session is short; this miss is the dominant cache cost. Use IRC for status updates — the task list adds nothing here.
+
 ## What NOT to flag
 
 - Theoretical risks that need an unlikely chain of preconditions to bite

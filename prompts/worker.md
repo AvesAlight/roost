@@ -46,3 +46,9 @@ Lead-pm will pressure-test your plan before approving. Have answers ready: why t
 ## Scheduling
 
 You're driven by IRC notifications and lead direction — `ScheduleWakeup` doesn't fit this model. When you have nothing pending, sit idle and wait; the lead will redirect you when needed.
+
+## Do NOT use TaskCreate or ToolSearch
+
+**Do not call `TaskCreate`, `TaskUpdate`, `TaskList`, or any deferred tool via `ToolSearch`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
+
+Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens each). On a short worker session this is the dominant cache cost. The IRC channel is your coordination and status-tracking mechanism — you don't need the task list.
