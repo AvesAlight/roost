@@ -2,8 +2,8 @@
 // token-usage — read Claude Code session transcripts and summarize per-nick
 // API spend in a format inspired by Claude Code's own `/usage` panel:
 //
-//   <nick>: $14.38 · 18m57s api / 44m42s wall
-//     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38)
+//   <nick>: $14.38 ($1.42 miss) · 18m57s api / 44m42s wall
+//     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38, miss: 128.3k ($1.42) [tools_changed 16.2k ($0.18) · system_changed 112.1k ($1.24)])
 //     sonnet-4-6:  1.2k in /  2.4k out /  300k cache_r /   8.5k cache_w  ($0.42)
 //
 // Sessions are matched by the MCP banner produced by src/mcp-banner.ts —
@@ -38,23 +38,22 @@ import { readFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { mcpConnectionLine } from './mcp-banner.js'
-import { costFor, excessCreationCost, type UsageCounts } from './pricing.js'
+import { costFor, missCostFor, type UsageCounts } from './pricing.js'
 
 type ModelUsage = UsageCounts
 
 interface NickReport {
   byModel: Map<string, ModelUsage>
-  // Excess cache creation per model, summed across sessions. "Excess" = the
-  // portion of cache_creation that exceeded cache_read within a single session
-  // — tokens written but never read back. Computed per-session (not in aggregate)
-  // so a wasted write in one session isn't masked by reads in another.
-  excessByModel: Map<string, { excess5m: number; excess1h: number }>
+  // Direct cache miss data from message.diagnostics.cache_miss_reason.
+  // Outer key: model ID. Inner key: reason type (tools_changed, system_changed,
+  // messages_changed, previous_message_not_found, unavailable).
+  // Value: total cache_missed_input_tokens across all calls with that reason.
+  missByModel: Map<string, Map<string, number>>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
   // Number of contributing JSONL transcript files (parent + each subagent file
-  // counted separately). Distinct from the "session" scope used for excess
-  // computation, which groups a parent and all its subagents together.
+  // counted separately).
   transcripts: number
   unknownModels: Set<string>
   files: string[]
@@ -70,7 +69,7 @@ interface SnapshotFile {
 function emptyReport(): NickReport {
   return {
     byModel: new Map(),
-    excessByModel: new Map(),
+    missByModel: new Map(),
     apiDurationMs: 0,
     transcripts: 0,
     unknownModels: new Set(),
@@ -90,19 +89,16 @@ function addToUsageMap(into: Map<string, UsageCounts>, model: string, u: UsageCo
   into.set(model, cur)
 }
 
-// For each model in the session map, compute the excess creation tokens
-// (max(0, creation_total - cache_read)) and accumulate into report.excessByModel.
-// The excess is split between tiers proportionally to their share of creation.
-function accumulateExcess(report: NickReport, sessionByModel: Map<string, UsageCounts>): void {
-  for (const [model, u] of sessionByModel) {
-    const creationTotal = u.cache_creation_5m + u.cache_creation_1h
-    const excess = Math.max(0, creationTotal - u.cache_read)
-    if (excess === 0 || creationTotal === 0) continue
-    const ratio5m = u.cache_creation_5m / creationTotal
-    const cur = report.excessByModel.get(model) ?? { excess5m: 0, excess1h: 0 }
-    cur.excess5m += excess * ratio5m
-    cur.excess1h += excess * (1 - ratio5m)
-    report.excessByModel.set(model, cur)
+function addToMissMap(into: Map<string, Map<string, number>>, from: Map<string, Map<string, number>>): void {
+  for (const [model, reasons] of from) {
+    let intoReasons = into.get(model)
+    if (!intoReasons) {
+      intoReasons = new Map<string, number>()
+      into.set(model, intoReasons)
+    }
+    for (const [reason, tokens] of reasons) {
+      intoReasons.set(reason, (intoReasons.get(reason) ?? 0) + tokens)
+    }
   }
 }
 
@@ -171,13 +167,20 @@ interface AnyRow {
         ephemeral_1h_input_tokens?: number
       }
     }
+    diagnostics?: {
+      cache_miss_reason?: {
+        type?: string
+        cache_missed_input_tokens?: number
+      }
+    }
   }
 }
 
 // Per-file scan result returned by scanFile. The caller merges these into the
-// session-level and nick-level accumulators.
+// nick-level accumulators.
 interface ScanResult {
   byModel: Map<string, UsageCounts>
+  missByModel: Map<string, Map<string, number>>
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
@@ -199,6 +202,7 @@ interface ScanResult {
 // filtered here to avoid double-counting.
 function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
+  const missByModel = new Map<string, Map<string, number>>()
   let apiDurationMs = 0
   let wallFirst: string | undefined
   let wallLast: string | undefined
@@ -263,6 +267,19 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
         if (ts) trackLocal(ts)
         contributed = true
       }
+
+      // Cache miss reason: direct signal from Claude Code for why the cache
+      // was not hit. Parsed outside the "has tokens" guard — capture even on
+      // otherwise-empty usage rows.
+      const missReason = row.message.diagnostics?.cache_miss_reason
+      if (missReason?.type && typeof missReason.cache_missed_input_tokens === 'number' && missReason.cache_missed_input_tokens > 0) {
+        let modelMiss = missByModel.get(row.message.model)
+        if (!modelMiss) {
+          modelMiss = new Map<string, number>()
+          missByModel.set(row.message.model, modelMiss)
+        }
+        modelMiss.set(missReason.type, (modelMiss.get(missReason.type) ?? 0) + missReason.cache_missed_input_tokens)
+      }
       continue
     }
 
@@ -281,7 +298,7 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
       continue
     }
   }
-  return { byModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed }
+  return { byModel, missByModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed }
 }
 
 export async function collectForNick(
@@ -308,15 +325,10 @@ export async function collectForNick(
     if (!text.includes(marker)) continue
     report.files.push(f)
 
-    // Accumulate parent + all subagents into a session-level map before
-    // merging into the nick-level report. This lets us compute per-session
-    // excess creation (writes that weren't read back within the session)
-    // without cross-session reads masking the waste.
-    const sessionByModel = new Map<string, UsageCounts>()
-
     const result = scanFile(text, seenRequestIds, seenTurnUuids, sinceTs)
     if (result.contributed) report.transcripts += 1
-    for (const [m, u] of result.byModel) addToUsageMap(sessionByModel, m, u)
+    for (const [m, u] of result.byModel) addToUsageMap(report.byModel, m, u)
+    addToMissMap(report.missByModel, result.missByModel)
     report.apiDurationMs += result.apiDurationMs
     if (result.wallFirst) trackTs(report, result.wallFirst)
     if (result.wallLast) trackTs(report, result.wallLast)
@@ -336,16 +348,13 @@ export async function collectForNick(
       // Each contributing subagent file increments transcripts independently —
       // a worker that fires 3 Task subagents shows `transcripts: 4` (parent + 3).
       if (subResult.contributed) report.transcripts += 1
-      for (const [m, u] of subResult.byModel) addToUsageMap(sessionByModel, m, u)
+      for (const [m, u] of subResult.byModel) addToUsageMap(report.byModel, m, u)
+      addToMissMap(report.missByModel, subResult.missByModel)
       report.apiDurationMs += subResult.apiDurationMs
       if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
       if (subResult.wallLast) trackTs(report, subResult.wallLast)
       for (const m of subResult.unknownModels) report.unknownModels.add(m)
     }
-
-    // Merge session totals into the nick-level report and compute excess.
-    for (const [model, u] of sessionByModel) addToUsageMap(report.byModel, model, u)
-    accumulateExcess(report, sessionByModel)
   }
   return report
 }
@@ -403,7 +412,7 @@ function shortModel(model: string): string {
 
 function formatNick(nick: string, r: NickReport): string {
   let totalCost: number | null = 0
-  let totalExcess: number | null = 0
+  let totalMissCost: number | null = 0
   const perModel: Array<{ model: string; line: string }> = []
   // Stable order so output is reproducible across runs.
   const models = [...r.byModel.keys()].sort()
@@ -415,17 +424,24 @@ function formatNick(nick: string, r: NickReport): string {
       else totalCost += c
     }
 
-    const exc = r.excessByModel.get(model)
-    const ec = exc ? excessCreationCost(model, exc.excess5m, exc.excess1h) : 0
-    if (totalExcess !== null) {
-      if (ec === null) totalExcess = null
-      else totalExcess += ec
+    let missStr = ''
+    const modelMiss = r.missByModel.get(model)
+    if (modelMiss && modelMiss.size > 0) {
+      const missTotal = [...modelMiss.values()].reduce((a, b) => a + b, 0)
+      const mc = missCostFor(model, missTotal)
+      if (totalMissCost !== null) {
+        if (mc === null) totalMissCost = null
+        else totalMissCost += mc
+      }
+      // Sort by token count descending so the costliest reason appears first.
+      const reasons = [...modelMiss.entries()].sort((a, b) => b[1] - a[1])
+      const reasonParts = reasons.map(([reason, tokens]) => `${reason} ${fmtTokens(tokens)} (${fmtDollars(missCostFor(model, tokens))})`)
+      missStr = `, miss: ${fmtTokens(missTotal)} (${fmtDollars(mc)}) [${reasonParts.join(' · ')}]`
     }
-    const excStr = ec !== 0 ? `, ${fmtDollars(ec)} excess` : ''
 
     perModel.push({
       model,
-      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)}${excStr})`,
+      line: `  ${shortModel(model)}: ${fmtTokens(u.input)} in / ${fmtTokens(u.output)} out / ${fmtTokens(u.cache_read)} cache_r / ${fmtTokens(u.cache_creation_5m)} cache_w_5m / ${fmtTokens(u.cache_creation_1h)} cache_w_1h  (${fmtDollars(c)}${missStr})`,
     })
   }
   let wallMs = 0
@@ -433,10 +449,10 @@ function formatNick(nick: string, r: NickReport): string {
     wallMs = Date.parse(r.wallLast) - Date.parse(r.wallFirst)
     if (wallMs < 0) wallMs = 0
   }
-  const excessPart = totalExcess === null || totalExcess > 0
-    ? ` (${fmtDollars(totalExcess)} excess)`
+  const missPart = totalMissCost === null || totalMissCost > 0
+    ? ` (${fmtDollars(totalMissCost)} miss)`
     : ''
-  const head = `${nick}: ${fmtDollars(totalCost)}${excessPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  const head = `${nick}: ${fmtDollars(totalCost)}${missPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
   if (perModel.length === 0) {
     return `${head}\n  (no in-window activity)`
   }
@@ -451,13 +467,12 @@ Subcommands:
              <stateDir>/token-snapshots.json. Subsequent reports for the
              same <issue> only count turns after this time.
   report     For each nick, print a multi-line cost report:
-                <nick>: $X.XX ($Y.YY excess) · 18m57s api / 44m42s wall
-                  <model>: in/out/cache_r/cache_w  ($X.XX, $Y.YY excess)
+                <nick>: $X.XX ($Y.YY miss) · 18m57s api / 44m42s wall
+                  <model>: in/out/cache_r/cache_w  ($X.XX, miss: N ($Y.YY) [reason ...])
              If a snapshot exists for <issue>+<nick>, only in-window turns
              count; otherwise the full transcript cumulative is reported.
-             "excess" = cost of cache writes that exceeded cache reads within
-             each session (a lower bound — only intra-session waste is
-             detected; reads in one session don't offset writes in another).
+             "miss" cost = (creation_rate - read_rate) x missed tokens; source:
+             message.diagnostics.cache_miss_reason in session transcripts.
 
 Cost is an estimate. Unknown model IDs render '$?' and emit a stderr
 warning; update src/pricing.ts to add them.

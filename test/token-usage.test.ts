@@ -30,6 +30,8 @@ interface Turn {
   // If true, mark the assistant row (and any paired turn_duration row)
   // with isSidechain:true.
   sidechain?: boolean
+  // Optional cache miss reason — writes message.diagnostics.cache_miss_reason.
+  cacheMissReason?: { type: string; cache_missed_input_tokens: number }
 }
 
 // Render one Turn into the (up to two) JSONL rows Claude Code emits:
@@ -54,10 +56,12 @@ function turnRows(t: Turn, forceSidechain = false): string[] {
     usage.cache_creation_input_tokens = t.cache_w ?? 0
   }
   const sidechain = forceSidechain || t.sidechain === true
+  const msg: Record<string, unknown> = { role: 'assistant', model: t.model, usage }
+  if (t.cacheMissReason) msg.diagnostics = { cache_miss_reason: t.cacheMissReason }
   const assist: Record<string, unknown> = {
     type: 'assistant',
     timestamp: t.ts,
-    message: { role: 'assistant', model: t.model, usage },
+    message: msg,
   }
   if (t.requestId) assist.requestId = t.requestId
   if (sidechain) assist.isSidechain = true
@@ -457,82 +461,74 @@ describe('token-usage', () => {
       expect(r.apiDurationMs).toBe(333)
     })
 
-    it('computes excess creation when cache writes exceed reads within a session', async () => {
+    it('parses cache_miss_reason from assistant row', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // creation_5m=1M, read=400k → excess=600k (all 5m tier)
       await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 400_000 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5,
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 16_200 } },
       ])
       const r = await collectForNick('roost-x', projects)
-      const exc = r.excessByModel.get('claude-opus-4-7')!
-      expect(exc.excess5m).toBeCloseTo(600_000)
-      expect(exc.excess1h).toBeCloseTo(0)
+      const miss = r.missByModel.get('claude-opus-4-7')!
+      expect(miss.get('tools_changed')).toBe(16_200)
     })
 
-    it('records no excess when reads meet or exceed creation', async () => {
+    it('dedups miss data by requestId — same API call counted once', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // creation=1M, read=1.5M → no excess
+      // Three rows sharing a requestId (multi-part response) — miss should count once.
       await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 1_500_000 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_A',
+          cacheMissReason: { type: 'system_changed', cache_missed_input_tokens: 50_000 } },
+        { ts: '2026-05-16T10:00:01Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_A',
+          cacheMissReason: { type: 'system_changed', cache_missed_input_tokens: 50_000 } },
       ])
       const r = await collectForNick('roost-x', projects)
-      expect(r.excessByModel.get('claude-opus-4-7')).toBeUndefined()
+      const miss = r.missByModel.get('claude-opus-4-7')!
+      expect(miss.get('system_changed')).toBe(50_000)
     })
 
-    it('isolates excess per session: reads in session B do not offset writes in session A', async () => {
-      // This is the key regression guard for the per-session approach vs aggregate.
-      // Session A: write 1M, read 100k → excess 900k
-      // Session B: write 200k, read 500k → excess 0 (efficient)
-      // Per-session total: 900k excess
-      // Aggregate would be: creation=1.2M, read=0.6M → 600k (undercounts A's waste)
-      const a = join(projects, '-pa')
-      const b = join(projects, '-pb')
-      await mkdir(a, { recursive: true })
-      await mkdir(b, { recursive: true })
-      await writeSessionFile(a, 's1.jsonl', 'roost-lead-pm', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 100_000 },
-      ])
-      await writeSessionFile(b, 's2.jsonl', 'roost-lead-pm', [
-        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 200_000, cache_r: 500_000 },
-      ])
-      const r = await collectForNick('roost-lead-pm', projects)
-      const exc = r.excessByModel.get('claude-opus-4-7')!
-      // Should be 900k (from session A), not 600k (aggregate) or 0 (fully masked)
-      expect(exc.excess5m).toBeCloseTo(900_000)
-      expect(exc.excess1h).toBeCloseTo(0)
-    })
-
-    it('splits excess between 5m and 1h tiers proportionally to creation mix', async () => {
+    it('accumulates miss tokens across multiple calls with different reasons', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // creation_5m=600k, creation_1h=400k, read=500k → excess=500k
-      // 5m share=60%, 1h share=40% → excess5m=300k, excess1h=200k
       await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 600_000, cache_w_1h: 400_000, cache_r: 500_000 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_1',
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 16_000 } },
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_2',
+          cacheMissReason: { type: 'system_changed', cache_missed_input_tokens: 112_000 } },
+        { ts: '2026-05-16T10:02:00Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_3',
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 8_000 } },
       ])
       const r = await collectForNick('roost-x', projects)
-      const exc = r.excessByModel.get('claude-opus-4-7')!
-      expect(exc.excess5m).toBeCloseTo(300_000)
-      expect(exc.excess1h).toBeCloseTo(200_000)
+      const miss = r.missByModel.get('claude-opus-4-7')!
+      expect(miss.get('tools_changed')).toBe(24_000)
+      expect(miss.get('system_changed')).toBe(112_000)
     })
 
-    it('subagents and parent are combined for session-level excess', async () => {
+    it('miss data from subagent files flows to parent nick report', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // Parent: write 500k, read 0 → contributes 500k to session creation
-      // Subagent: write 300k, read 900k → contributes 300k creation, 900k read
-      // Session total: creation=800k, read=900k → no excess (reads exceed writes combined)
       const parent = await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 0 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, requestId: 'req_parent',
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 5_000 } },
       ])
       await writeSubagentFile(parent, 'aaa6666666666666a', [
-        { ts: '2026-05-16T10:01:00Z', model: 'claude-opus-4-7', cache_w_5m: 300_000, cache_r: 900_000 },
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-haiku-4-5-20251001', input: 8, output: 4, requestId: 'req_sub',
+          cacheMissReason: { type: 'messages_changed', cache_missed_input_tokens: 3_000 } },
       ])
       const r = await collectForNick('roost-x', projects)
-      // Combined: creation=800k, read=900k → no excess
-      expect(r.excessByModel.get('claude-opus-4-7')).toBeUndefined()
+      expect(r.missByModel.get('claude-opus-4-7')!.get('tools_changed')).toBe(5_000)
+      expect(r.missByModel.get('claude-haiku-4-5-20251001')!.get('messages_changed')).toBe(3_000)
+    })
+
+    it('no miss entry when diagnostics field is absent', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.missByModel.size).toBe(0)
     })
   })
 
@@ -691,50 +687,55 @@ describe('token-usage', () => {
       expect(rep.out).toContain('(no in-window activity)')
     })
 
-    it('shows excess creation cost in per-model line and header when nonzero', async () => {
+    it('shows miss cost in per-model line and header when nonzero', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // Session: creation_5m=1M (Opus 4.7), read=0 → excess=1M
-      // Excess cost = 1M × $6.25/M = $6.25
+      // tools_changed miss: 1M tokens, opus-4-7 premium = ($6.25 - $0.50)/M = $5.75/M
+      // miss cost = 1M × $5.75/M = $5.75
       await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 0 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_1',
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 1_000_000 } },
       ])
       const rep = await capture(() => main(['report', stateDir, '339', 'roost-x']))
       expect(rep.result).toBe(0)
-      // Header: shows excess
-      expect(rep.out).toContain('$6.25 excess')
-      // Per-model line: shows excess after the cost
-      expect(rep.out).toMatch(/opus-4-7:.*\$6\.25.*\$6\.25 excess/)
+      // Header shows total miss cost
+      expect(rep.out).toContain('$5.75 miss')
+      // Per-model line shows miss breakdown
+      expect(rep.out).toMatch(/opus-4-7:.*miss: 1\.0M \(\$5\.75\) \[tools_changed 1\.0M \(\$5\.75\)\]/)
     })
 
-    it('omits excess from header and per-model line when all creation is read back', async () => {
+    it('omits miss from header and per-model line when no cache misses', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      // creation=500k, read=1M → read exceeds creation, no excess
       await writeSessionFile(d, 's.jsonl', 'roost-x', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 1_000_000 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 },
       ])
       const rep = await capture(() => main(['report', stateDir, '339', 'roost-x']))
       expect(rep.result).toBe(0)
-      expect(rep.out).not.toContain('excess')
+      expect(rep.out).not.toContain('miss')
     })
 
-    it('excess is summed across sessions per nick', async () => {
+    it('miss costs are summed across sessions and reasons per nick', async () => {
       const a = join(projects, '-pa')
       const b = join(projects, '-pb')
       await mkdir(a, { recursive: true })
       await mkdir(b, { recursive: true })
-      // Session A: creation=1M, read=0 → excess=1M → $6.25
+      // Session A: tools_changed 500k tokens → $5.75/M × 500k = $2.875
       await writeSessionFile(a, 's1.jsonl', 'roost-lead-pm', [
-        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 1_000_000, cache_r: 0 },
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_A',
+          cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 500_000 } },
       ])
-      // Session B: creation=500k, read=200k → excess=300k → $1.875 ≈ $1.88
+      // Session B: system_changed 200k tokens → $5.75/M × 200k = $1.15
       await writeSessionFile(b, 's2.jsonl', 'roost-lead-pm', [
-        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', cache_w_5m: 500_000, cache_r: 200_000 },
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_B',
+          cacheMissReason: { type: 'system_changed', cache_missed_input_tokens: 200_000 } },
       ])
       const rep = await capture(() => main(['report', stateDir, '339', 'roost-lead-pm']))
-      // Total excess: (1M + 300k) × $6.25/M = $8.125 → $8.13
-      expect(rep.out).toContain('$8.13 excess')
+      // Total miss: 700k tokens → $5.75/M × 700k = $4.025 → $4.03 (rounding)
+      expect(rep.out).toContain('$4.03 miss')
+      // Both reasons appear in the per-model line, system_changed first (larger cost after sorting by tokens)
+      expect(rep.out).toContain('tools_changed')
+      expect(rep.out).toContain('system_changed')
     })
   })
 })
