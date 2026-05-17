@@ -52,7 +52,10 @@ interface NickReport {
   apiDurationMs: number
   wallFirst?: string
   wallLast?: string
-  sessions: number
+  // Number of contributing JSONL transcript files (parent + each subagent file
+  // counted separately). Distinct from the "session" scope used for excess
+  // computation, which groups a parent and all its subagents together.
+  transcripts: number
   unknownModels: Set<string>
   files: string[]
 }
@@ -69,34 +72,22 @@ function emptyReport(): NickReport {
     byModel: new Map(),
     excessByModel: new Map(),
     apiDurationMs: 0,
-    sessions: 0,
+    transcripts: 0,
     unknownModels: new Set(),
     files: [],
   }
 }
 
-function addToModel(report: NickReport, model: string, u: UsageCounts): void {
-  const cur = report.byModel.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
+// Single accumulator for all three UsageCounts merge sites (addToModel,
+// mergeUsageMap, and the inline loop in scanFile were all identical).
+function addToUsageMap(into: Map<string, UsageCounts>, model: string, u: UsageCounts): void {
+  const cur = into.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
   cur.input += u.input
   cur.output += u.output
   cur.cache_creation_5m += u.cache_creation_5m
   cur.cache_creation_1h += u.cache_creation_1h
   cur.cache_read += u.cache_read
-  report.byModel.set(model, cur)
-}
-
-// Merge one model usage map into another (used to accumulate per-session totals
-// before computing excess).
-function mergeUsageMap(into: Map<string, UsageCounts>, from: Map<string, UsageCounts>): void {
-  for (const [model, u] of from) {
-    const cur = into.get(model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
-    cur.input += u.input
-    cur.output += u.output
-    cur.cache_creation_5m += u.cache_creation_5m
-    cur.cache_creation_1h += u.cache_creation_1h
-    cur.cache_read += u.cache_read
-    into.set(model, cur)
-  }
+  into.set(model, cur)
 }
 
 // For each model in the session map, compute the excess creation tokens
@@ -265,13 +256,7 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
       // A purely-empty usage row contributes nothing — skip so an idle
       // session doesn't get tagged as "contributed".
       if (tokens.input || tokens.output || tokens.cache_creation_5m || tokens.cache_creation_1h || tokens.cache_read) {
-        const cur = byModel.get(row.message.model) ?? { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
-        cur.input += tokens.input
-        cur.output += tokens.output
-        cur.cache_creation_5m += tokens.cache_creation_5m
-        cur.cache_creation_1h += tokens.cache_creation_1h
-        cur.cache_read += tokens.cache_read
-        byModel.set(row.message.model, cur)
+        addToUsageMap(byModel, row.message.model, tokens)
         if (costFor(row.message.model, tokens) === null) {
           unknownModels.add(row.message.model)
         }
@@ -330,8 +315,8 @@ export async function collectForNick(
     const sessionByModel = new Map<string, UsageCounts>()
 
     const result = scanFile(text, seenRequestIds, seenTurnUuids, sinceTs)
-    if (result.contributed) report.sessions += 1
-    mergeUsageMap(sessionByModel, result.byModel)
+    if (result.contributed) report.transcripts += 1
+    for (const [m, u] of result.byModel) addToUsageMap(sessionByModel, m, u)
     report.apiDurationMs += result.apiDurationMs
     if (result.wallFirst) trackTs(report, result.wallFirst)
     if (result.wallLast) trackTs(report, result.wallLast)
@@ -348,11 +333,10 @@ export async function collectForNick(
       }
       report.files.push(sub)
       const subResult = scanFile(subText, seenRequestIds, seenTurnUuids, sinceTs, true)
-      // Each contributing subagent file counts as a separate session — a
-      // worker that fires off three Task subagents shows `sessions: 4`
-      // (parent + 3), which matches the "files scanned" mental model.
-      if (subResult.contributed) report.sessions += 1
-      mergeUsageMap(sessionByModel, subResult.byModel)
+      // Each contributing subagent file increments transcripts independently —
+      // a worker that fires 3 Task subagents shows `transcripts: 4` (parent + 3).
+      if (subResult.contributed) report.transcripts += 1
+      for (const [m, u] of subResult.byModel) addToUsageMap(sessionByModel, m, u)
       report.apiDurationMs += subResult.apiDurationMs
       if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
       if (subResult.wallLast) trackTs(report, subResult.wallLast)
@@ -360,7 +344,7 @@ export async function collectForNick(
     }
 
     // Merge session totals into the nick-level report and compute excess.
-    for (const [model, u] of sessionByModel) addToModel(report, model, u)
+    for (const [model, u] of sessionByModel) addToUsageMap(report.byModel, model, u)
     accumulateExcess(report, sessionByModel)
   }
   return report
@@ -437,7 +421,7 @@ function formatNick(nick: string, r: NickReport): string {
       if (ec === null) totalExcess = null
       else totalExcess += ec
     }
-    const excStr = (ec !== null && ec !== 0) || ec === null ? `, ${fmtDollars(ec)} excess` : ''
+    const excStr = ec !== 0 ? `, ${fmtDollars(ec)} excess` : ''
 
     perModel.push({
       model,
@@ -449,8 +433,8 @@ function formatNick(nick: string, r: NickReport): string {
     wallMs = Date.parse(r.wallLast) - Date.parse(r.wallFirst)
     if (wallMs < 0) wallMs = 0
   }
-  const excessPart = (totalExcess !== null && totalExcess > 0) || totalExcess === null
-    ? ` · ${fmtDollars(totalExcess)} excess`
+  const excessPart = totalExcess === null || totalExcess > 0
+    ? ` (${fmtDollars(totalExcess)} excess)`
     : ''
   const head = `${nick}: ${fmtDollars(totalCost)}${excessPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
   if (perModel.length === 0) {
@@ -467,7 +451,7 @@ Subcommands:
              <stateDir>/token-snapshots.json. Subsequent reports for the
              same <issue> only count turns after this time.
   report     For each nick, print a multi-line cost report:
-                <nick>: $X.XX · $Y.YY excess · 18m57s api / 44m42s wall
+                <nick>: $X.XX ($Y.YY excess) · 18m57s api / 44m42s wall
                   <model>: in/out/cache_r/cache_w  ($X.XX, $Y.YY excess)
              If a snapshot exists for <issue>+<nick>, only in-window turns
              count; otherwise the full transcript cumulative is reported.

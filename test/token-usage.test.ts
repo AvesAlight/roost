@@ -184,7 +184,7 @@ describe('token-usage', () => {
       expect(sonnet.input).toBe(20)
       expect(sonnet.output).toBe(7)
       expect(r.apiDurationMs).toBe(5500)
-      expect(r.sessions).toBe(2)
+      expect(r.transcripts).toBe(2)
       expect(r.wallFirst).toBe('2026-05-16T10:00:00Z')
       expect(r.wallLast).toBe('2026-05-16T11:00:00Z')
       expect(r.files).toHaveLength(2)
@@ -208,7 +208,7 @@ describe('token-usage', () => {
       await writeSessionFile(d, 's.jsonl', 'someone-else', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 }])
       const r = await collectForNick('roost-worker-missing', projects)
       expect(r.byModel.size).toBe(0)
-      expect(r.sessions).toBe(0)
+      expect(r.transcripts).toBe(0)
       expect(r.files).toEqual([])
     })
 
@@ -236,7 +236,7 @@ describe('token-usage', () => {
       await writeFile(path, [banner, '{garbage', goodTurn, '"usage": this is not json', ''].join('\n'))
       const r = await collectForNick('roost-x', projects)
       expect(r.byModel.get('claude-opus-4-7')!.input).toBe(8)
-      expect(r.sessions).toBe(1)
+      expect(r.transcripts).toBe(1)
     })
 
     it('sinceTs filter excludes pre-window turns', async () => {
@@ -251,7 +251,7 @@ describe('token-usage', () => {
       expect(opus.input).toBe(50)
       expect(opus.output).toBe(25)
       expect(r.apiDurationMs).toBe(2_000)
-      expect(r.sessions).toBe(1)
+      expect(r.transcripts).toBe(1)
     })
 
     it('tracks unknown models for later warning', async () => {
@@ -370,7 +370,7 @@ describe('token-usage', () => {
       expect(haiku.output).toBe(100)
       expect(r.apiDurationMs).toBe(3200)
       // sessions counts parent + the contributing subagent file.
-      expect(r.sessions).toBe(2)
+      expect(r.transcripts).toBe(2)
       expect(r.files).toHaveLength(2)
       // Wall extends across both.
       expect(r.wallFirst).toBe('2026-05-16T10:00:00Z')

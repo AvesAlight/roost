@@ -73,8 +73,5 @@ export function costFor(model: string, u: UsageCounts): number | null {
 // (proportionally allocated from the session's creation mix by the caller).
 // Returns `null` for unknown models, same contract as `costFor`.
 export function excessCreationCost(model: string, excess5m: number, excess1h: number): number | null {
-  if (SKIPPED_MODELS.has(model)) return 0
-  const p = PRICING[model]
-  if (!p) return null
-  return (p.cache_creation_5m * excess5m + p.cache_creation_1h * excess1h) / 1_000_000
+  return costFor(model, { input: 0, output: 0, cache_creation_5m: excess5m, cache_creation_1h: excess1h, cache_read: 0 })
 }
