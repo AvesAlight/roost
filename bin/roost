@@ -369,34 +369,13 @@ cmd_init() {
     [ -f "$_af" ] && agent_files+=("$_af")
   done
 
-  # Decide what would actually be written. Same logic used by both
-  # dry-run and the real path so dry-run matches what the real run
-  # would do against the current filesystem state.
-  local write_config=0
-  local write_gitignore=0
-  if [ ! -f "$config_path" ] || [ "$force" -eq 1 ]; then
-    write_config=1
-  fi
-  if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
-    write_gitignore=1
-  fi
-
-  # --force-prompts and --force-agents are content-only refreshes; don't
-  # error on existing config (and don't rewrite it either).
-  if [ "$write_config" -eq 0 ] && [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
-    echo "error: ${config_path} already exists — pass \`--force\` to overwrite (or \`--force-prompts\` / \`--force-agents\` to refresh those only)" >&2
-    exit 1
-  fi
-
+  # --dry-run: preview what would be generated without writing anything.
+  # Runs before the guard so an existing config doesn't block the preview.
   if [ "$dry_run" -eq 1 ]; then
-    if [ "$write_config" -eq 1 ]; then
-      echo "--- ${config_path} ---"
-      _init_config_json "$project" "$repo" "$logins_json"
-    fi
-    if [ "$write_gitignore" -eq 1 ]; then
-      echo "--- ${gitignore_path} ---"
-      _init_gitignore
-    fi
+    echo "--- ${config_path} ---"
+    _init_config_json "$project" "$repo" "$logins_json"
+    echo "--- ${gitignore_path} ---"
+    _init_gitignore
     if [ "$no_prompts" -eq 0 ] && [ "${#prompt_files[@]}" -gt 0 ]; then
       for _pf in "${prompt_files[@]}"; do
         local _name _dst
@@ -418,6 +397,23 @@ cmd_init() {
       done
     fi
     exit 0
+  fi
+
+  # Decide what would actually be written.
+  local write_config=0
+  local write_gitignore=0
+  if [ ! -f "$config_path" ] || [ "$force" -eq 1 ]; then
+    write_config=1
+  fi
+  if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
+    write_gitignore=1
+  fi
+
+  # --force-prompts and --force-agents are content-only refreshes; don't
+  # error on existing config (and don't rewrite it either).
+  if [ "$write_config" -eq 0 ] && [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
+    echo "error: ${config_path} already exists — pass \`--force\` to overwrite (or \`--force-prompts\` / \`--force-agents\` to refresh those only)" >&2
+    exit 1
   fi
 
   mkdir -p .orchestrator
