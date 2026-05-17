@@ -109,7 +109,7 @@ async function snapshotIssue(client: GhClient, repo: string, number: number): Pr
 
 // ---- Event computation (pure; tested directly) ----------------------------
 
-export interface ScrapeResult<T> {
+interface ScrapeResult<T> {
   snap: T
   events: OrchestratorEvent[]
 }
@@ -180,7 +180,7 @@ export class GhScraper {
   ): Promise<ScrapeResult<PrSnap>> {
     const snap = await snapshotPr(this.client, repo, number, prevSnap ?? undefined)
     const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, this.agentLogins)
-    const stripped = stripInternals(snap) as PrSnap
+    const stripped = stripInternals(snap)
     stripped.warned_no_linked = nextWarnedNoLinked
     return { snap: stripped, events }
   }
@@ -191,6 +191,6 @@ export class GhScraper {
     prevIssue: IssueSnap | null | undefined,
   ): Promise<ScrapeResult<IssueSnap>> {
     const snap = await snapshotIssue(this.client, repo, number)
-    return { snap: stripInternals(snap) as IssueSnap, events: computeIssueEvents(snap, prevIssue, this.agentLogins) }
+    return { snap: stripInternals(snap), events: computeIssueEvents(snap, prevIssue, this.agentLogins) }
   }
 }
