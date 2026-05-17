@@ -171,6 +171,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   // Rate limit observability state — intentionally not persisted; resets on daemon restart.
   let prevRateLimit: { remaining: number; ts: number } | null = null
   let rateLimitWarnedAt: number | null = null
+  // 10 min: enough warnings in a 60-min reset window to act on, without spamming
   const WARN_COOLDOWN_MS = 10 * 60_000
 
   while (!stop) {
@@ -193,7 +194,8 @@ async function runDaemon(stateDir: string): Promise<void> {
       result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
     }
 
-    // Rate limit observability — once per tick, after all plugin gh calls complete.
+    // Rate limit observability — runs after every tick (including failed ones) so
+    // we can observe the budget even when gh scraping is already failing.
     // fetchRateLimit uses the free /rate_limit endpoint (exempt from rate limits).
     {
       const rlInfo: RateLimitInfo | null = await fetchRateLimit(log)
@@ -213,7 +215,7 @@ async function runDaemon(stateDir: string): Promise<void> {
           }
         }
 
-        prevRateLimit = { remaining: rlInfo.remaining, ts: Date.now() }
+        prevRateLimit = { remaining: rlInfo.remaining, ts: now }
       }
     }
 

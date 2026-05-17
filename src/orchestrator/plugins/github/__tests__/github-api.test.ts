@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, computeRateLimitWarning } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, computeRateLimitWarning, type RateLimitInfo } from '../github-api.js'
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -229,7 +229,7 @@ describe('computeRateLimitWarning', () => {
   const MIN = 60 * SEC
 
   // reset 60 minutes from now
-  function makeInfo(remaining: number, resetInMin = 60): import('../github-api.js').RateLimitInfo {
+  function makeInfo(remaining: number, resetInMin = 60): RateLimitInfo {
     return { remaining, limit: 5000, resetAt: Math.floor((T0 + resetInMin * MIN) / 1000) }
   }
 
@@ -271,5 +271,12 @@ describe('computeRateLimitWarning', () => {
     const prev = { remaining: 120, ts: T0 - 60 * SEC }
     const warning = computeRateLimitWarning(makeInfo(60, 30), prev, T0)
     expect(warning).toMatch(/projected exhaustion in 1m/)
+  })
+
+  it('shows seconds for sub-minute projected exhaustion', () => {
+    // 600 consumed in 60s → 600/min. 100 remaining → ~10s to exhaustion. reset in 30min.
+    const prev = { remaining: 700, ts: T0 - 60 * SEC }
+    const warning = computeRateLimitWarning(makeInfo(100, 30), prev, T0)
+    expect(warning).toMatch(/projected exhaustion in 10s/)
   })
 })

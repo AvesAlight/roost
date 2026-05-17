@@ -131,8 +131,12 @@ export async function fetchRateLimit(
   deps?: Partial<SpawnDeps>
 ): Promise<RateLimitInfo | null> {
   try {
-    const resp = await spawnGh(['api', '/rate_limit'], { log, attempts: 1, ...deps }) as Record<string, unknown>
-    const rate = resp?.rate as { remaining?: number; limit?: number; reset?: number } | undefined
+    // `attempts: 1` is last so deps can't accidentally override it — this call should
+    // never burn retries from the same budget it's measuring.
+    const raw = await spawnGh(['api', '/rate_limit'], { log, ...deps, attempts: 1 })
+    if (raw == null || typeof raw !== 'object') return null
+    const resp = raw as Record<string, unknown>
+    const rate = resp.rate as { remaining?: number; limit?: number; reset?: number } | undefined
     if (!rate || rate.remaining == null || rate.limit == null || rate.reset == null) return null
     return { remaining: rate.remaining, limit: rate.limit, resetAt: rate.reset }
   } catch {
@@ -157,11 +161,14 @@ export function computeRateLimitWarning(
   if (minToReset <= 0) return null
   const minToExhaustion = current.remaining / ratePerMin
   if (minToExhaustion >= minToReset) return null
+  const exhaustionStr = minToExhaustion < 1
+    ? `${Math.round(minToExhaustion * 60)}s`
+    : `${Math.round(minToExhaustion)}m`
   return (
     `[dispatcher] GH rate limit warning: ${current.remaining} calls remaining,` +
     ` reset in ${Math.round(minToReset)}m,` +
     ` current rate ~${Math.round(ratePerMin)}/min —` +
-    ` projected exhaustion in ${Math.round(minToExhaustion)}m`
+    ` projected exhaustion in ${exhaustionStr}`
   )
 }
 
