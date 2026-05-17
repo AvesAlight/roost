@@ -226,6 +226,31 @@ else
 fi
 teardown
 
+# -- Test 17: SHELL=/bin/bash is accepted by spawn ----------------------------
+# Shell resolution should not error for bash; the session may still fail for
+# other reasons (no tmux, no ircd) — only the shell error is checked here.
+
+setup
+err="$(SHELL=/bin/bash "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$err" | grep -q "unsupported login shell" \
+    && echo "$err" | grep -q "shell: bash"; then
+  ok "SHELL=/bin/bash: shell resolution accepted, banner shows shell: bash"
+else
+  fail "SHELL=/bin/bash: shell resolution accepted, banner shows shell: bash" "err=$err"
+fi
+teardown
+
+# -- Test 18: unsupported SHELL is rejected with clear error ------------------
+
+setup
+err="$(SHELL=/bin/tcsh "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1)"; exit_code=$?
+if [ "$exit_code" -ne 0 ] && echo "$err" | grep -q "unsupported login shell"; then
+  ok "unsupported SHELL: exits non-zero with clear message"
+else
+  fail "unsupported SHELL: exits non-zero with clear message" "exit=$exit_code err=$err"
+fi
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

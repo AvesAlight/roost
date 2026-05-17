@@ -97,7 +97,7 @@ Usage: roost spawn <nick> [options]
 
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
-\`zsh -l\` so .zprofile loads — required for RVM, nvm, and similar toolchains.
+the user's login shell (from \$SHELL) so .bash_profile / .zprofile loads — required for RVM, nvm, asdf, and similar toolchains.
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
@@ -651,6 +651,20 @@ cmd_spawn() {
       *) echo "error: --cache-ttl: must be 5m or 1h (got '${cache_ttl}')" >&2; exit 1 ;;
     esac
   fi
+  # Resolve login shell from $SHELL (fallback /bin/sh). bash/zsh load the
+  # user's profile via -l; sh/dash don't support -l.
+  local login_shell="${SHELL:-/bin/sh}"
+  local shell_basename
+  shell_basename="$(basename "${login_shell}")"
+  local shell_invoke
+  case "${shell_basename}" in
+    bash|zsh) shell_invoke="${login_shell} -l -c" ;;
+    sh|dash)  shell_invoke="${login_shell} -c" ;;
+    *)
+      echo "error: unsupported login shell '${shell_basename}' (SHELL=${login_shell}). Supported: bash, zsh, sh, dash. See https://github.com/AvesAlight/roost/issues/378" >&2
+      exit 1
+      ;;
+  esac
   # Properly shell-quote each extra arg so spaces and metachars survive
   # the bash → tmux → inner-shell boundary. printf '%q' produces output
   # that re-parses to the original token. Guarded against empty array
@@ -667,7 +681,7 @@ cmd_spawn() {
   # not set so the operator can tell the wrapper deliberately didn't pass
   # one through (the agent's frontmatter `permissionMode:` or claude's own
   # default applies).
-  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cache-ttl: ${cache_ttl:-(claude default)}, cwd: ${cwd})"
+  echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cache-ttl: ${cache_ttl:-(claude default)}, shell: ${shell_basename}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
 
   # Create a per-session data directory. mktemp guarantees uniqueness across
@@ -740,9 +754,9 @@ cmd_spawn() {
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
   printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
-  # `zsh -l` (login shell) ensures .zprofile runs before claude — required for
-  # RVM / nvm / shell-rc-managed toolchains. Env vars go through tmux -e so
-  # the inner command stays a clean single-quoted string.
+  # bash/zsh: login shell loads the user's profile before claude, required for
+  # RVM / nvm / asdf toolchains. sh/dash: no -l, no profile load. Env vars
+  # go through tmux -e so the inner command stays a clean string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
   case "${cache_ttl}" in
@@ -762,13 +776,13 @@ cmd_spawn() {
     [ -n "${effective_ask_target}" ] && tmux_env+=(-e "ROOST_ASK_TARGET=${effective_ask_target}")
   fi
 
-  # Build the inner zsh command. Bash expands its own ${vars} here, then
-  # we append the prompt placeholder as a single-quoted literal so $(...)
-  # is evaluated by the inner zsh — not bash and not the tmux shell.
+  # Build the inner command. Bash expands its own ${vars} here, then we
+  # append the prompt placeholder as a single-quoted literal so $(...) is
+  # evaluated by the login shell — not bash and not the tmux shell.
   # Embedding multi-line file contents directly via printf %q produces
   # $'...' ANSI-C quoting, which doesn't survive the shell-layer chain
-  # (bash → tmux shell → zsh -c). Reading the file inside the inner zsh
-  # via $(< $ROOST_PROMPT_FILE) sidesteps that entirely. The leading `--`
+  # (bash → tmux shell → login shell -c). Reading the file inside the login
+  # shell via $(< $ROOST_PROMPT_FILE) sidesteps that entirely. The leading `--`
   # is required so the prompt isn't absorbed by --dangerously-load-development-channels
   # (variadic flag — eats all subsequent non-flag args).
   local mcp_flag=""
@@ -802,7 +816,7 @@ cmd_spawn() {
   fi
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
-    "exec zsh -l -c $(printf '%q' "${inner_cmd}")"
+    "exec ${shell_invoke} $(printf '%q' "${inner_cmd}")"
 
   # Session created successfully; clear the failure-cleanup trap.
   # ROOST_DATA_DIR is already in the tmux session env via -e at new-session,
