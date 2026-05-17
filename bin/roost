@@ -643,11 +643,6 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
-  # --cache-ttl: validate, then split-by-path default. Shipped agents
-  # (lead-pm, APM) are long-lived → 1h; --model spawns (workers, reviewers)
-  # are short-lived → 5m. Explicit --cache-ttl wins. Translated to
-  # claude-code's env-var knobs at session boot (FORCE_PROMPT_CACHING_5M
-  # vs ENABLE_PROMPT_CACHING_1H).
   if [ -n "${cache_ttl}" ]; then
     case "${cache_ttl}" in
       5m|1h) ;;
@@ -754,8 +749,6 @@ cmd_spawn() {
   # the inner command stays a clean single-quoted string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
-  # Cache-TTL env var: claude-code reads these at startup. 5m and 1h are
-  # mutually exclusive — only one is ever set.
   case "${cache_ttl}" in
     5m) tmux_env+=(-e "FORCE_PROMPT_CACHING_5M=1") ;;
     1h) tmux_env+=(-e "ENABLE_PROMPT_CACHING_1H=1") ;;
