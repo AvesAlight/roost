@@ -1,17 +1,3 @@
-// GhPluginBase — thin shared base for any plugin that needs GhClient but not
-// the watch-list scaffolding. Owns client construction and agentLogins().
-// GhBase (watch-list-flavored) extends this; non-watching plugins like
-// GitHubNewIssuesPlugin do too.
-//
-// GhBase — shared scaffolding for the two watch-list GitHub plugins (PRs, issues).
-// Owns the `<issue-channel> + entry.channels` collector and the convention that
-// every GhBase plugin reads its watch list from a `{ watched?: WatchedEntry[] }`
-// slice under `config.plugins[name]`. Channel resolution + default-channel
-// fallback come from BasePlugin.
-//
-// Also implements `handleCommand` for the two verbs both plugins support:
-// each subclass declares the target keyword it claims (`null` = bare
-// `watch <N>`, `'pr'` = `watch pr <N>`) and a label used in reply text.
 import type { Command } from '../../dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
@@ -19,6 +5,9 @@ import { defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { GhClient } from './github-api.js'
 
+// Thin shared base for any plugin that needs GhClient but not watch-list
+// scaffolding. GhBase extends this; non-watching plugins (e.g.
+// GitHubNewIssuesPlugin) extend it directly.
 export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
 
@@ -36,6 +25,10 @@ interface GhPluginConfig {
   watched?: WatchedEntry[]
 }
 
+// Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
+// `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
+// slice convention, and `handleCommand` for watch/unwatch/list/help.
+// Each subclass declares the target keyword it claims and a singular label.
 export abstract class GhBase extends GhPluginBase {
   // Target keyword this plugin claims for watch/unwatch. `null` = no keyword
   // (bare `watch <N>`). The dispatcher's parser is target-agnostic; plugins
