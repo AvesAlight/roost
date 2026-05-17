@@ -213,14 +213,6 @@ Every per-project artifact carries a `<project>-` prefix:
 
 When you spawn an agent or DM the dispatcher, always pass the namespaced nick + matching channel value explicitly.
 
-## Compaction Directive
+## Compaction
 
-`bin/roost spawn` extracts this section to `${ROOST_DATA_DIR}/compact-directive.txt`. When claude code's auto-compact fires, the PreCompact hook intercepts (`trigger="auto"`), returns `decision:block`, and injects `/compact <this section>` into the tmux pane. The manual `/compact` re-fires PreCompact with `custom_instructions` populated and the compactor runs with this directive instead of auto-compact's default. Issue #368 + `docs/LEARNINGS.md` Finding J cover the why.
-
-Retain verbatim:
-- `project=<project> human=<irc-nick> gh-login=<gh-login>`
-- Every in-flight issue→PR→worker-nick→reviewer-nick mapping you're tracking. These are load-bearing for the dances; losing a nick triggers loop-on-wrong-target behavior.
-- Outstanding acks you've sent that haven't been confirmed by the lead.
-- Snapshot file paths for token-cost diffs already taken but not yet posted.
-
-On restart after compaction, re-announce yourself in `#<project>-leads` and resume from the mapping above. If the mapping is missing or partial, ask the lead to restate it rather than guessing.
+Claude code auto-compacts the conversation when context fills. Roost's PreCompact hook intercepts the auto-trigger and runs `/compact` with a generic directive that asks the compactor to retain role, IRC nick, channels joined, in-flight issue/PR numbers and state, recent decisions, and pending work — which for the APM means the issue→PR→worker-nick→reviewer-nick mappings, outstanding acks, and snapshot file paths for unposted token-cost diffs. The SessionStart hook tells you when you've returned; re-announce yourself in `#<project>-leads` and resume from the restored mapping. If it's missing or partial, ask the lead to restate rather than guessing. Issue #368 + `docs/LEARNINGS.md` Finding J cover the why.

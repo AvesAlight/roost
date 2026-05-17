@@ -150,17 +150,4 @@ Post in #<project>-leads each time you start work on a new issue.
 
 ## Things that come up in the work
 
-You may be asked to "self compact". That means using `roost send` to deliver a `/compact <directive>` prompt to your own session. Your agent definition persists through compaction automatically; what doesn't persist is the runtime state listed in `## Compaction Directive` below — that section is the single source of truth for what to retain through any compaction (manual or auto). Pass its bullets as the `/compact` argument.
-
-You normally don't need to do this yourself — when claude code's auto-compact fires, the roost PreCompact hook intercepts it, blocks the directive-less default, and queues `/compact <this section>` into your pane so the compactor runs with our directive (issue #368). Manual self-compact is still available for cases where you want to compact earlier.
-
-## Compaction Directive
-
-`bin/roost spawn` extracts this section to `${ROOST_DATA_DIR}/compact-directive.txt`. When claude code's auto-compact fires, the PreCompact hook intercepts (`trigger="auto"`), returns `decision:block`, and injects `/compact <this section>` into the tmux pane. The manual `/compact` re-fires PreCompact with `custom_instructions` populated and the compactor runs with this directive instead of auto-compact's default (no directive). Issue #368 has the cited research; `docs/LEARNINGS.md` Finding J has the rationale and the auto→manual smoke evidence.
-
-Retain verbatim:
-- `project=<project> milestone=<milestone> human=<irc-nick> gh-login=<gh-login>`
-- In-flight issue numbers + their current state: worker spawned? draft PR up? PR number? reviewer done? merged?
-- Any blockers, decisions, or human directives from `#<project>-leads` that aren't obvious from channel history.
-
-On restart after compaction, post in `#<project>-leads` to note you're back and re-sync state with the APM. If in-flight state is missing or partial, ask the human to restate priorities rather than guessing.
+Claude code auto-compacts the conversation when context fills. Roost's PreCompact hook intercepts the auto-trigger and runs `/compact` with a directive that asks the compactor to retain your role, IRC nick, channels joined, in-flight issue/PR numbers and state, recent decisions and pivots from `#<project>-leads`, and pending work. You don't drive this — the SessionStart hook will tell you when you've returned from a compaction; post in `#<project>-leads` to note you're back and re-sync state with the APM. If in-flight state is missing or partial, ask the human to restate priorities rather than guessing. Issue #368 + `docs/LEARNINGS.md` Finding J cover the why.

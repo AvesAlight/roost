@@ -492,15 +492,17 @@ fired-flag bookkeeping were complexity to justify a guess. Rolled
 back at lead-pm direction.
 
 **v3 — intercept PreCompact, redirect auto → manual (shipped).**
-Single-hook design, no polling, no thresholds:
+Single-hook design, no polling, no thresholds, no per-agent
+plumbing:
 
 1. `bin/roost-compact-hook` is wired as a PreCompact hook by
-   `bin/roost spawn`.
-2. On `trigger="auto"` with a directive on disk
-   (`${ROOST_DATA_DIR}/compact-directive.txt`, written at spawn time
-   from the agent's `## Compaction Directive` section), the hook
-   returns `{"decision":"block"}` on stdout — claude code halts the
-   directive-less auto-compact.
+   `bin/roost spawn`. The hook carries a single-line, semicolon-
+   separated directive constant near the top of the script (one
+   place to edit if we ever tune it; covers the roost agent set
+   generically — role, IRC nick, channels joined, in-flight
+   issue/PR state, recent decisions, pending work).
+2. On `trigger="auto"`, the hook returns `{"decision":"block"}` on
+   stdout — claude code halts the directive-less auto-compact.
 3. The hook also backgrounds a subshell that sleeps 150ms (lets
    claude code unwind its auto-compact state machine cleanly — see
    smoke evidence below), then `tmux load-buffer` / `paste-buffer`
@@ -510,10 +512,18 @@ Single-hook design, no polling, no thresholds:
    `custom_instructions=<directive>`. The hook sees `trigger="manual"`
    and passes through. claude code's manual `/compact` runs with our
    `custom_instructions`.
-5. On `trigger="manual"` or `trigger="auto"` without a directive on
-   disk, the hook passes through and signals SIGUSR1 to the MCP
-   (clearing the chathistory replay-dedupe cache so post-compact
-   backfill re-delivers messages dropped from the agent's context).
+5. On `trigger="manual"` (or `trigger="auto"` without a tmux
+   session reachable), the hook passes through and signals SIGUSR1
+   to the MCP (clearing the chathistory replay-dedupe cache so
+   post-compact backfill re-delivers messages dropped from the
+   agent's context).
+
+`${ROOST_DATA_DIR}/session-name.txt` is written by `bin/roost
+spawn` so the hook honors `-s/--session NAME` override; falls back
+to the default `roost-${nick}` convention if absent. No CLI flags,
+no agent.md section extraction — earlier drafts had both; alex's
+review on PR #376 ("fragile and heavyweight") pushed us to bake the
+directive into the hook itself.
 
 **Auto-trigger smoke evidence (2026-05-17, $10 of context-stuffing
 to force a real auto-compact at ~1.2M-token paste scale).** /tmp

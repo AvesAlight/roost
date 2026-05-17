@@ -1,23 +1,28 @@
 #!/bin/sh
 # PreCompact hook — two jobs, both keyed off the trigger field:
 #
-# 1. trigger="auto" + a directive declared at spawn:
-#    return {"decision":"block"} to halt the directive-less auto-compact,
-#    then inject `/compact <directive>` into our own tmux pane (backgrounded
-#    with a small sleep) so the manual /compact runs with our
+# 1. trigger="auto": return {"decision":"block"} to halt the directive-less
+#    auto-compact, then inject `/compact $DIRECTIVE` into our own tmux pane
+#    (backgrounded with a small sleep) so the manual /compact runs with our
 #    custom_instructions. The injected manual compact re-fires PreCompact with
 #    trigger="manual" — we pass through that round without blocking.
 #
-# 2. trigger="manual" OR no directive: pass through. Still send SIGUSR1 to
-#    the MCP so its replay-dedupe cache clears (next chathistory backfill
-#    delivers messages compacted out of the agent's context).
+# 2. trigger="manual": pass through. Still send SIGUSR1 to the MCP so its
+#    replay-dedupe cache clears (next chathistory backfill delivers messages
+#    compacted out of the agent's context).
 #
 # Wired by bin/roost at spawn time via roost-settings.json. Never exits
 # non-zero on its happy path — a hook failure must not block compaction
 # (the {"decision":"block"} we DO emit in case 1 is the explicit signal).
 #
-# Issue #368, v3 design — see docs/LEARNINGS.md Finding J.
+# Issue #368 — see docs/LEARNINGS.md Finding J.
 set -u
+
+# Generic compaction directive for the roost agent set. One place to edit if
+# we ever tune it. Single-line, semicolon-separated — passed as the `/compact`
+# argument; the compactor treats it as a "behavior hint" for the summary
+# (not verbatim retention — see LEARNINGS Finding J).
+DIRECTIVE='retain: agent role and IRC nick; channels currently joined; in-flight GitHub issue and PR numbers and the state of each (worker spawned, draft, reviewed, merged); recent decisions, design pivots, and blockers from the project leads channel; pending work the agent committed to or is waiting on'
 
 log() { echo "roost-compact-hook: $*" >&2; }
 
@@ -55,17 +60,15 @@ signal_mcp() {
   fi
 }
 
-# Auto-trigger path requires (a) a directive on disk and (b) ROOST_IRC_NICK
-# so we know which tmux pane to inject into. Missing either → pass through.
-directive_file="${ROOST_DATA_DIR:-}/compact-directive.txt"
+# Auto-trigger path requires ROOST_IRC_NICK so we know which tmux pane to
+# inject into. Missing → pass through.
 nick="${ROOST_IRC_NICK:-}"
 
-if [ "$trigger" = "auto" ] && [ -n "$nick" ] && [ -s "$directive_file" ]; then
-  directive="$(cat "$directive_file")"
+if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
   # session_name written by `bin/roost` at spawn — honors `-s/--session NAME`
   # override. Fall back to the default convention if absent (hook tests
   # that don't run through `bin/roost spawn`).
-  session_file="${ROOST_DATA_DIR}/session-name.txt"
+  session_file="${ROOST_DATA_DIR:-}/session-name.txt"
   if [ -s "$session_file" ]; then
     session_name="$(cat "$session_file")"
   else
@@ -84,21 +87,21 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ] && [ -s "$directive_file" ]; then
     (
       sleep 0.15
       buf="roost-compact-${nick}-$$"
-      printf '/compact %s' "$directive" | tmux load-buffer -b "$buf" -
+      printf '/compact %s' "$DIRECTIVE" | tmux load-buffer -b "$buf" -
       tmux paste-buffer -t "$session_name" -b "$buf" -p
       tmux send-keys -t "$session_name" Enter
       tmux delete-buffer -b "$buf" 2>/dev/null || true
     ) &
-    log "auto-trigger intercepted; queued /compact <directive> for $session_name (directive bytes=$(printf '%s' "$directive" | wc -c | tr -d ' '))"
+    log "auto-trigger intercepted; queued /compact <directive> for $session_name"
     printf '%s\n' '{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions (issue #368)"}'
     exit 0
   fi
-  log "auto-trigger with directive present but tmux session $session_name not found; falling through"
+  log "auto-trigger but tmux session $session_name not found; falling through"
 fi
 
-# Pass-through path (manual, or auto-without-directive, or no-tmux fallback):
-# clear the MCP's replay dedupe so post-compact chathistory backfill re-delivers
-# messages the compactor dropped. No stdout = no hook decision; claude code
-# proceeds with its compaction.
+# Pass-through path (manual, or auto-without-tmux fallback): clear the MCP's
+# replay dedupe so post-compact chathistory backfill re-delivers messages the
+# compactor dropped. No stdout = no hook decision; claude code proceeds with
+# its compaction.
 signal_mcp
 exit 0

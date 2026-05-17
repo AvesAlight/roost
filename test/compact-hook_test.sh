@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests for bin/roost-compact-hook (v3 PreCompact intercept, issue #368).
-# Plain bash — covers the three branches: auto+directive (block + inject),
-# manual (pass through), no-directive (pass through). Uses a mock tmux on
+# Tests for bin/roost-compact-hook (PreCompact intercept, issue #368).
+# Plain bash — covers the two branches: auto (block + inject the baked-in
+# DIRECTIVE constant), manual (pass through + SIGUSR1). Uses a mock tmux on
 # PATH so we don't need a real pane.
 # Run: bash test/compact-hook_test.sh
 set -uo pipefail
@@ -49,23 +49,23 @@ teardown_tmpdir() {
   trap - EXIT
 }
 
-# -- Test 1: trigger=auto + directive present → block + injected ----------------
+# -- Test 1: trigger=auto → block + injected ----------------------------------
 
 setup_tmpdir
-printf 'retain X' > "$TDIR/compact-directive.txt"
 input='{"session_id":"s","transcript_path":"/tmp/t.jsonl","cwd":"/","hook_event_name":"PreCompact","trigger":"auto","custom_instructions":null}'
 out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
 
 # Hook must return decision:block on stdout, exit 0.
 if [ "$exit_code" -eq 0 ] && echo "$out" | grep -q '"decision":"block"'; then
-  ok "auto+directive: stdout carries decision:block"
+  ok "auto: stdout carries decision:block"
 else
-  fail "auto+directive: stdout carries decision:block" "exit=$exit_code out=$out err=$(cat "$TDIR/err" 2>/dev/null)"
+  fail "auto: stdout carries decision:block" "exit=$exit_code out=$out err=$(cat "$TDIR/err" 2>/dev/null)"
 fi
 
 # Backgrounded subshell sleeps 0.15s before invoking tmux. Wait a touch
-# longer than that, then assert tmux was called with load-buffer + paste.
+# longer than that, then assert tmux was called with load-buffer + paste +
+# /compact + the baked-in directive's leading "retain:" marker.
 sleep 0.5
 if [ -s "$TRACE" ] \
     && grep -q "has-session" "$TRACE" \
@@ -73,17 +73,16 @@ if [ -s "$TRACE" ] \
     && grep -q "paste-buffer" "$TRACE" \
     && grep -q "send-keys.*Enter" "$TRACE" \
     && grep -qF '/compact' "$TRACE" \
-    && grep -qF 'retain' "$TRACE"; then
-  ok "auto+directive: tmux injection chain ran with /compact <directive>"
+    && grep -qF 'retain:' "$TRACE"; then
+  ok "auto: tmux injection chain ran with /compact + baked-in directive"
 else
-  fail "auto+directive: tmux injection chain ran with /compact <directive>" "trace=$(cat "$TRACE" 2>/dev/null)"
+  fail "auto: tmux injection chain ran with /compact + baked-in directive" "trace=$(cat "$TRACE" 2>/dev/null)"
 fi
 teardown_tmpdir
 
 # -- Test 2: trigger=manual → pass through, no injection -----------------------
 
 setup_tmpdir
-printf 'retain X' > "$TDIR/compact-directive.txt"
 input='{"session_id":"s","trigger":"manual","custom_instructions":"retain X"}'
 out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
@@ -96,40 +95,7 @@ else
 fi
 teardown_tmpdir
 
-# -- Test 3: trigger=auto but no directive file → pass through -----------------
-
-setup_tmpdir
-# Intentionally no compact-directive.txt written.
-input='{"trigger":"auto","custom_instructions":null}'
-out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
-exit_code=$?
-sleep 0.3
-
-if [ "$exit_code" -eq 0 ] && [ -z "$out" ] && ! grep -q "load-buffer" "$TRACE" 2>/dev/null; then
-  ok "auto without directive: pass-through"
-else
-  fail "auto without directive: pass-through" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
-fi
-teardown_tmpdir
-
-# -- Test 4: trigger=auto, empty directive file → pass through -----------------
-# `[ -s file ]` is the gate — zero-length file is treated as "no directive".
-
-setup_tmpdir
-: > "$TDIR/compact-directive.txt"
-input='{"trigger":"auto"}'
-out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
-exit_code=$?
-sleep 0.3
-
-if [ "$exit_code" -eq 0 ] && [ -z "$out" ] && ! grep -q "load-buffer" "$TRACE" 2>/dev/null; then
-  ok "auto with empty directive file: pass-through"
-else
-  fail "auto with empty directive file: pass-through" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
-fi
-teardown_tmpdir
-
-# -- Test 5: pass-through path sends SIGUSR1 to MCP pid -----------------------
+# -- Test 3: pass-through path sends SIGUSR1 to MCP pid -----------------------
 # Spawn a long-running sentinel (perl, so the trap stays installed across the
 # parent's fork/exec — a bare bash subshell would exec sleep and lose the
 # trap). The sentinel writes a marker on USR1 and exits.
@@ -152,10 +118,9 @@ kill "$victim_pid" 2>/dev/null || true
 wait 2>/dev/null || true
 teardown_tmpdir
 
-# -- Test 6: malformed JSON → defaults to manual (pass through, no crash) -----
+# -- Test 4: malformed JSON → defaults to manual (pass through, no crash) -----
 
 setup_tmpdir
-printf 'retain X' > "$TDIR/compact-directive.txt"
 out="$(printf 'not-json' | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
 sleep 0.3
@@ -167,41 +132,24 @@ else
 fi
 teardown_tmpdir
 
-# -- Test 7: multi-line directive (mirrors agents/lead-pm.md shape) ------------
-# Real-world directives are prose + bulleted lists with blank lines. tmux's
-# `paste-buffer -p` enables bracketed paste so newlines arrive as text rather
-# than line-per-submit — same mechanism `roost send` relies on. Mock tmux logs
-# stdin via `%q`, which renders embedded newlines as a literal `\n` inside the
-# shell-quoted form, so the entire body lands as a single grep-able payload.
+# -- Test 5: session-name.txt honored over default convention -----------------
+# `bin/roost spawn` writes session-name.txt so `-s/--session NAME` propagates.
+# Hook reads it and falls back to `roost-${nick}` only if the file is absent.
 
 setup_tmpdir
-cat > "$TDIR/compact-directive.txt" <<'DIRECTIVE'
-Retain verbatim:
-- project=roost milestone=0.6.0 human=alex gh-login=AlexSc
-- In-flight issue numbers + current state (PR open? reviewer done? merged?)
-- Any blockers or human directives from #roost-leads.
-
-On restart after compaction, post in #roost-leads to note you are back.
-DIRECTIVE
-input='{"session_id":"s","trigger":"auto","custom_instructions":null}'
+printf 'custom-session-name' > "$TDIR/session-name.txt"
+input='{"trigger":"auto","custom_instructions":null}'
 out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
 sleep 0.5
 
-# All fragments must appear, AND %q's `\n` escape must be present in the trace
-# (proves newlines survived the load-buffer pipeline as a single payload, not
-# six separate invocations).
 if [ "$exit_code" -eq 0 ] \
     && echo "$out" | grep -q '"decision":"block"' \
-    && grep -q "load-buffer" "$TRACE" \
-    && grep -qF 'project=roost' "$TRACE" \
-    && grep -qF 'milestone=0.6.0' "$TRACE" \
-    && grep -qF 'In-flight issue numbers' "$TRACE" \
-    && grep -qF 'On restart after compaction' "$TRACE" \
-    && grep -qF '\n' "$TRACE"; then
-  ok "auto+multi-line directive: bullets + paragraphs survived as one load-buffer payload"
+    && grep -qF 'custom-session-name' "$TRACE" \
+    && ! grep -qF 'roost-testnick' "$TRACE"; then
+  ok "session-name.txt: custom name targeted, default convention not used"
 else
-  fail "auto+multi-line directive: bullets + paragraphs survived as one load-buffer payload" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
+  fail "session-name.txt: custom name targeted, default convention not used" "exit=$exit_code trace=$(cat "$TRACE" 2>/dev/null)"
 fi
 teardown_tmpdir
 
