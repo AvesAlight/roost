@@ -62,13 +62,25 @@ nick="${ROOST_IRC_NICK:-}"
 
 if [ "$trigger" = "auto" ] && [ -n "$nick" ] && [ -s "$directive_file" ]; then
   directive="$(cat "$directive_file")"
-  session_name="roost-${nick}"
+  # session_name written by `bin/roost` at spawn — honors `-s/--session NAME`
+  # override. Fall back to the default convention if absent (hook tests
+  # that don't run through `bin/roost spawn`).
+  session_file="${ROOST_DATA_DIR}/session-name.txt"
+  if [ -s "$session_file" ]; then
+    session_name="$(cat "$session_file")"
+  else
+    session_name="roost-${nick}"
+  fi
   if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
     # Background subshell: claude code reads our {"decision":"block"} on stdout
     # and unwinds its own auto-compact state machine; we want our send-keys to
     # land after that settles, not race it. 150ms is empirically clean from
-    # the auto-trigger smoke (issue #368). The buffer name is per-pid to
-    # avoid collisions with concurrent compacts on the same box.
+    # the auto-trigger smoke (issue #368). Buffer name uses $$ (this hook
+    # process's pid — distinct per invocation; a subshell inherits its
+    # parent's $$ in POSIX sh) to avoid collisions across concurrent compacts.
+    # The load-buffer / paste-buffer -p / send-keys Enter / delete-buffer
+    # sequence mirrors `cmd_send` in bin/roost — keep them in sync if either
+    # grows e.g. better multi-line handling.
     (
       sleep 0.15
       buf="roost-compact-${nick}-$$"

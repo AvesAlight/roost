@@ -756,10 +756,15 @@ cmd_spawn() {
     printf '%s' "${prompt_text}" > "${prompt_file}"
   fi
   if [ -n "${compact_directive_resolved}" ]; then
-    # Hook (bin/roost-session-start-hook) reads this file post-compact and
-    # appends the contents to additionalContext. Issue #368.
+    # PreCompact hook reads this file on auto-trigger and injects
+    # `/compact <directive>` into the tmux pane. Issue #368.
     printf '%s' "${compact_directive_resolved}" > "${ROOST_DATA_DIR}/compact-directive.txt"
   fi
+  # Tell the PreCompact hook which tmux session to inject into. Without this
+  # the hook would have to guess from ROOST_IRC_NICK + the default
+  # ${SESSION_PREFIX}${nick} convention — and would silently miss when the
+  # operator passed -s/--session NAME with a non-default name.
+  printf '%s' "${session_name}" > "${ROOST_DATA_DIR}/session-name.txt"
   # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators

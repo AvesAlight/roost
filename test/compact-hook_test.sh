@@ -167,6 +167,44 @@ else
 fi
 teardown_tmpdir
 
+# -- Test 7: multi-line directive (mirrors agents/lead-pm.md shape) ------------
+# Real-world directives are prose + bulleted lists with blank lines. tmux's
+# `paste-buffer -p` enables bracketed paste so newlines arrive as text rather
+# than line-per-submit — same mechanism `roost send` relies on. Mock tmux logs
+# stdin via `%q`, which renders embedded newlines as a literal `\n` inside the
+# shell-quoted form, so the entire body lands as a single grep-able payload.
+
+setup_tmpdir
+cat > "$TDIR/compact-directive.txt" <<'DIRECTIVE'
+Retain verbatim:
+- project=roost milestone=0.6.0 human=alex gh-login=AlexSc
+- In-flight issue numbers + current state (PR open? reviewer done? merged?)
+- Any blockers or human directives from #roost-leads.
+
+On restart after compaction, post in #roost-leads to note you are back.
+DIRECTIVE
+input='{"session_id":"s","trigger":"auto","custom_instructions":null}'
+out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
+exit_code=$?
+sleep 0.5
+
+# All fragments must appear, AND %q's `\n` escape must be present in the trace
+# (proves newlines survived the load-buffer pipeline as a single payload, not
+# six separate invocations).
+if [ "$exit_code" -eq 0 ] \
+    && echo "$out" | grep -q '"decision":"block"' \
+    && grep -q "load-buffer" "$TRACE" \
+    && grep -qF 'project=roost' "$TRACE" \
+    && grep -qF 'milestone=0.6.0' "$TRACE" \
+    && grep -qF 'In-flight issue numbers' "$TRACE" \
+    && grep -qF 'On restart after compaction' "$TRACE" \
+    && grep -qF '\n' "$TRACE"; then
+  ok "auto+multi-line directive: bullets + paragraphs survived as one load-buffer payload"
+else
+  fail "auto+multi-line directive: bullets + paragraphs survived as one load-buffer payload" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
+fi
+teardown_tmpdir
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

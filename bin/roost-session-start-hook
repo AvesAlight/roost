@@ -1,25 +1,16 @@
 #!/bin/sh
 # SessionStart hook — wired with matcher="compact" so it only fires when
 # claude code re-starts the session after a compaction. Emits the IRC-reply
-# reminder + a "you just came back from a compaction" note as
+# reminder + a "you just came back from compaction" note as
 # additionalContext, so the freshly-compacted agent knows it's running on
 # roost and should announce its return in IRC.
 #
 # Phrase must match REPLY_REMINDER in src/irc-server.ts so a single search
 # finds both producers.
 #
-# Stdin is the hook payload JSON. We drain it (claude code waits for the
-# stdin pipe to close) but ignore the contents — the matcher already
-# selected source=compact for us.
-cat >/dev/null
-
-reminder='You are running on the Roost IRC harness. Your text output is'"'"'nt surfaced to humans or other agents in the channel — use channel_message / direct_message to reply. Brief tool-narration is fine to keep in the buffer.'
-note='You are returning from a context compaction. Note in IRC that you'"'"'re coming back from a compaction so the humans you'"'"'re working with know.'
-
-# JSON-escape via node — claude code is a hard dep, so node is available.
-context=$(node -e '
-  const r = process.argv[1], n = process.argv[2];
-  process.stdout.write(JSON.stringify(r + "\n\n" + n));
-' "$reminder" "$note")
-
-printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$context"
+# Output is static JSON — no fields read from the hook payload. Heredoc with
+# a single-quoted EOF delimiter so apostrophes inside the body don't need
+# escaping. The matcher already gates us to source=compact.
+cat <<'EOF'
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"You are running on the Roost IRC harness. Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply. Brief tool-narration is fine to keep in the buffer.\n\nYou are returning from a context compaction. Note in IRC that you're coming back from a compaction so the humans you're working with know."}}
+EOF
