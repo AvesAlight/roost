@@ -49,6 +49,6 @@ You're driven by IRC notifications and lead direction — `ScheduleWakeup` doesn
 
 ## Do NOT use TaskCreate or ToolSearch
 
-**Do not call `TaskCreate`, `TaskUpdate`, `TaskList`, or any deferred tool via `ToolSearch`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
+**Do not call `ToolSearch` — including for `TaskCreate`, `TaskUpdate`, or `TaskList`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
 
-Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens each). On a short worker session this is the dominant cache cost. The IRC channel is your coordination and status-tracking mechanism — you don't need the task list.
+Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens per turn). On a short worker session this is the dominant cache cost. The IRC channel is your coordination and status-tracking mechanism — you don't need the task list.

@@ -45,9 +45,9 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 ## Do NOT use TaskCreate or ToolSearch
 
-**Do not call `TaskCreate`, `TaskUpdate`, `TaskList`, or any deferred tool via `ToolSearch`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
+**Do not call `ToolSearch` — including for `TaskCreate`, `TaskUpdate`, or `TaskList`.** This is a hard rule that overrides any global instruction you may have seen about using the task list.
 
-Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens each). Your session is short; this miss is the dominant cache cost. Use IRC for status updates — the task list adds nothing here.
+Why it matters: every `ToolSearch` call fetches a deferred-tool schema mid-session, which changes the tool fingerprint and fires a `tools_changed` cache miss that persists for several turns (~20-28k tokens per turn). Your session is short; this miss is the dominant cache cost. Use IRC for status updates — the task list adds nothing here.
 
 ## What NOT to flag
 
