@@ -34,6 +34,32 @@ interface Turn {
   cacheMissReason?: { type: string; cache_missed_input_tokens: number }
 }
 
+// A compact_boundary marker that auto-compaction writes into the JSONL.
+// We dedup by uuid across files — same as turn_duration rows.
+interface CompactBoundary {
+  ts: string
+  uuid?: string
+  preTokens: number
+  postTokens: number
+  durationMs: number
+}
+
+function compactBoundaryRow(c: CompactBoundary): string {
+  const row: Record<string, unknown> = {
+    type: 'system',
+    subtype: 'compact_boundary',
+    timestamp: c.ts,
+    compactMetadata: {
+      trigger: 'auto',
+      preTokens: c.preTokens,
+      postTokens: c.postTokens,
+      durationMs: c.durationMs,
+    },
+  }
+  if (c.uuid) row.uuid = c.uuid
+  return JSON.stringify(row)
+}
+
 // Render one Turn into the (up to two) JSONL rows Claude Code emits:
 // an `assistant` row carrying the usage block, and — when apiDurationMs
 // is set — a `system/turn_duration` companion. `forceSidechain` stamps
@@ -82,12 +108,14 @@ function turnRows(t: Turn, forceSidechain = false): string[] {
 
 // Build a session JSONL containing the MCP banner for `nick` followed by the
 // given assistant turns (and an optional per-turn `system/turn_duration`
-// row using the same ts). Returns the written file path.
+// row using the same ts). Returns the written file path. Extra rows
+// (e.g. compact_boundary) get appended after the turns.
 async function writeSessionFile(
   dir: string,
   filename: string,
   nick: string,
   turns: Turn[],
+  extras: { compactBoundaries?: CompactBoundary[] } = {},
 ): Promise<string> {
   const lines: string[] = []
   lines.push(JSON.stringify({ type: 'permission-mode', permissionMode: 'auto' }))
@@ -99,6 +127,7 @@ async function writeSessionFile(
     },
   }))
   for (const t of turns) lines.push(...turnRows(t))
+  for (const c of extras.compactBoundaries ?? []) lines.push(compactBoundaryRow(c))
   const path = join(dir, filename)
   await writeFile(path, lines.join('\n') + '\n')
   return path
@@ -538,6 +567,56 @@ describe('token-usage', () => {
       expect(r.missByModel.size).toBe(0)
     })
 
+    it('aggregates compact_boundary markers into compactions stats', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1 },
+      ], {
+        compactBoundaries: [
+          { ts: '2026-05-16T10:30:00Z', uuid: 'compact_1', preTokens: 200_000, postTokens: 10_000, durationMs: 90_000 },
+          { ts: '2026-05-16T11:30:00Z', uuid: 'compact_2', preTokens: 150_000, postTokens: 8_000, durationMs: 60_000 },
+        ],
+      })
+      const r = await collectForNick('roost-x', projects)
+      expect(r.compactions.count).toBe(2)
+      expect(r.compactions.preTokens).toBe(350_000)
+      expect(r.compactions.postTokens).toBe(18_000)
+      expect(r.compactions.durationMs).toBe(150_000)
+    })
+
+    it('dedups compact_boundary rows by uuid across forked transcripts', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      const shared: CompactBoundary = { ts: '2026-05-16T10:30:00Z', uuid: 'compact_shared', preTokens: 100_000, postTokens: 5_000, durationMs: 50_000 }
+      await writeSessionFile(d, 'fork-a.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1 },
+      ], { compactBoundaries: [shared] })
+      await writeSessionFile(d, 'fork-b.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1 },
+      ], { compactBoundaries: [shared] })
+      const r = await collectForNick('roost-x', projects)
+      // Counted once, not twice.
+      expect(r.compactions.count).toBe(1)
+      expect(r.compactions.preTokens).toBe(100_000)
+    })
+
+    it('sinceTs excludes pre-window compact_boundary rows', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 },
+      ], {
+        compactBoundaries: [
+          { ts: '2026-05-16T09:00:00Z', uuid: 'pre', preTokens: 999_000, postTokens: 99_000, durationMs: 99_000 },
+          { ts: '2026-05-16T11:30:00Z', uuid: 'post', preTokens: 200_000, postTokens: 10_000, durationMs: 80_000 },
+        ],
+      })
+      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      expect(r.compactions.count).toBe(1)
+      expect(r.compactions.preTokens).toBe(200_000)
+    })
+
     it('splits miss tokens by creation tier from the same row', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
@@ -737,6 +816,31 @@ describe('token-usage', () => {
       const rep = await capture(() => main(['report', stateDir, '339', 'roost-x']))
       expect(rep.result).toBe(0)
       expect(rep.out).not.toContain('miss')
+    })
+
+    it('report renders compaction line when nick has compact_boundary rows', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 5000 },
+      ], {
+        compactBoundaries: [
+          { ts: '2026-05-16T10:30:00Z', uuid: 'c1', preTokens: 268_000, postTokens: 12_000, durationMs: 131_000 },
+        ],
+      })
+      const rep = await capture(() => main(['report', stateDir, '334', 'roost-lead-pm']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('compaction: 1× (pre 268k → post 12k, 2m11s; call cost not captured)')
+    })
+
+    it('report omits compaction line when nick has no compactions', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '334', 'roost-x']))
+      expect(rep.out).not.toContain('compaction')
     })
 
     it('miss costs are summed across sessions and reasons per nick', async () => {

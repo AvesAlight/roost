@@ -45,6 +45,13 @@ type ModelUsage = UsageCounts
 // is read from the creation block on the same JSONL row that reported the miss.
 type MissCounts = { tokens5m: number; tokens1h: number }
 
+// Aggregate of compact_boundary rows for a nick. Each compaction is one
+// summarization API call whose own usage block is NOT logged in the JSONL —
+// only the pre/post context-size totals and the wall duration are. We surface
+// what's available so the gap is visible; we do not synthesize a per-field
+// usage from preTokens because the input/cache_r split is unknowable here.
+interface CompactionStats { count: number; preTokens: number; postTokens: number; durationMs: number }
+
 interface NickReport {
   byModel: Map<string, ModelUsage>
   // Direct cache miss data from message.diagnostics.cache_miss_reason.
@@ -60,6 +67,7 @@ interface NickReport {
   transcripts: number
   unknownModels: Set<string>
   files: string[]
+  compactions: CompactionStats
 }
 
 interface SnapshotFile {
@@ -77,6 +85,7 @@ function emptyReport(): NickReport {
     transcripts: 0,
     unknownModels: new Set(),
     files: [],
+    compactions: { count: 0, preTokens: 0, postTokens: 0, durationMs: 0 },
   }
 }
 
@@ -106,6 +115,13 @@ function addToMissMap(into: Map<string, Map<string, MissCounts>>, from: Map<stri
       intoReasons.set(reason, cur)
     }
   }
+}
+
+function mergeCompactions(into: CompactionStats, from: CompactionStats): void {
+  into.count += from.count
+  into.preTokens += from.preTokens
+  into.postTokens += from.postTokens
+  into.durationMs += from.durationMs
 }
 
 function trackTs(report: NickReport, ts: string): void {
@@ -159,6 +175,15 @@ interface AnyRow {
   requestId?: string
   uuid?: string
   isSidechain?: boolean
+  // system/compact_boundary rows: emitted when Claude Code auto-compacts the
+  // conversation. preTokens/postTokens describe the context size; durationMs
+  // is the compaction API call's wall time. No per-field usage block.
+  compactMetadata?: {
+    trigger?: string
+    preTokens?: number
+    postTokens?: number
+    durationMs?: number
+  }
   message?: {
     model?: string
     usage?: {
@@ -192,6 +217,7 @@ interface ScanResult {
   wallLast?: string
   unknownModels: Set<string>
   contributed: boolean
+  compactions: CompactionStats
 }
 
 // Walk one JSONL file and return its token usage. Only rows with
@@ -206,13 +232,20 @@ interface ScanResult {
 // (scanned separately with `countSidechain: true`), so this is defensive
 // — older or future shapes that inline sidechain rows in the parent are
 // filtered here to avoid double-counting.
-function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
+//
+// Compaction handling: a `system/compact_boundary` row marks an auto-
+// compaction. It carries preTokens/postTokens + durationMs but no per-
+// field usage block — the summary API call itself isn't logged. We
+// aggregate the markers so the gap is visible, without pricing it.
+// See AvesAlight/roost#334 for the broader /usage-panel gap taxonomy.
+function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, seenCompactUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
   const missByModel = new Map<string, Map<string, MissCounts>>()
   let apiDurationMs = 0
   let wallFirst: string | undefined
   let wallLast: string | undefined
   const unknownModels = new Set<string>()
+  const compactions: CompactionStats = { count: 0, preTokens: 0, postTokens: 0, durationMs: 0 }
   let contributed = false
 
   const trackLocal = (ts: string) => {
@@ -317,8 +350,26 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
       contributed = true
       continue
     }
+
+    // System compact_boundary row: marks an auto-compaction. The summary
+    // API call's per-field usage is not in the JSONL, so we only surface
+    // the available aggregates (pre/post context size, wall duration).
+    // Dedup by uuid so a forked/resumed transcript doesn't re-add it.
+    if (row.type === 'system' && row.subtype === 'compact_boundary' && row.compactMetadata) {
+      if (row.uuid) {
+        if (seenCompactUuids.has(row.uuid)) continue
+        seenCompactUuids.add(row.uuid)
+      }
+      compactions.count += 1
+      compactions.preTokens += row.compactMetadata.preTokens ?? 0
+      compactions.postTokens += row.compactMetadata.postTokens ?? 0
+      compactions.durationMs += row.compactMetadata.durationMs ?? 0
+      if (ts) trackLocal(ts)
+      contributed = true
+      continue
+    }
   }
-  return { byModel, missByModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed }
+  return { byModel, missByModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed, compactions }
 }
 
 export async function collectForNick(
@@ -329,10 +380,11 @@ export async function collectForNick(
   const marker = markerFor(nick)
   const files = await listSessionFiles(projectsRoot)
   const report = emptyReport()
-  // Scan-wide so a requestId / turn uuid shared across forked or resumed
-  // transcripts is only counted once.
+  // Scan-wide so a requestId / turn uuid / compact_boundary uuid shared
+  // across forked or resumed transcripts is only counted once.
   const seenRequestIds = new Set<string>()
   const seenTurnUuids = new Set<string>()
+  const seenCompactUuids = new Set<string>()
   for (const f of files) {
     let text: string
     try {
@@ -345,7 +397,7 @@ export async function collectForNick(
     if (!text.includes(marker)) continue
     report.files.push(f)
 
-    const result = scanFile(text, seenRequestIds, seenTurnUuids, sinceTs)
+    const result = scanFile(text, seenRequestIds, seenTurnUuids, seenCompactUuids, sinceTs)
     if (result.contributed) report.transcripts += 1
     for (const [m, u] of result.byModel) addToUsageMap(report.byModel, m, u)
     addToMissMap(report.missByModel, result.missByModel)
@@ -353,6 +405,7 @@ export async function collectForNick(
     if (result.wallFirst) trackTs(report, result.wallFirst)
     if (result.wallLast) trackTs(report, result.wallLast)
     for (const m of result.unknownModels) report.unknownModels.add(m)
+    mergeCompactions(report.compactions, result.compactions)
 
     // Subagent transcripts: same nick, billed by directory locality.
     const subagentFiles = await listSubagentFiles(f)
@@ -364,7 +417,7 @@ export async function collectForNick(
         continue
       }
       report.files.push(sub)
-      const subResult = scanFile(subText, seenRequestIds, seenTurnUuids, sinceTs, true)
+      const subResult = scanFile(subText, seenRequestIds, seenTurnUuids, seenCompactUuids, sinceTs, true)
       // Each contributing subagent file increments transcripts independently —
       // a worker that fires 3 Task subagents shows `transcripts: 4` (parent + 3).
       if (subResult.contributed) report.transcripts += 1
@@ -374,6 +427,7 @@ export async function collectForNick(
       if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
       if (subResult.wallLast) trackTs(report, subResult.wallLast)
       for (const m of subResult.unknownModels) report.unknownModels.add(m)
+      mergeCompactions(report.compactions, subResult.compactions)
     }
   }
   return report
@@ -481,10 +535,19 @@ function formatNick(nick: string, r: NickReport): string {
     ? ` (${fmtDollars(totalMissCost)} miss)`
     : ''
   const head = `${nick}: ${fmtDollars(totalCost)}${missPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  // Compaction is its own line — surface what the JSONL gives us (pre/post
+  // context size, total wall) and explicitly call out that the API call's
+  // input/output isn't captured. See scanFile's "Known gaps" comment.
+  const compactionLine = r.compactions.count > 0
+    ? `  compaction: ${r.compactions.count}× (pre ${fmtTokens(r.compactions.preTokens)} → post ${fmtTokens(r.compactions.postTokens)}, ${fmtDuration(r.compactions.durationMs)}; call cost not captured)`
+    : null
   if (perModel.length === 0) {
-    return `${head}\n  (no in-window activity)`
+    const tail = compactionLine ?? '  (no in-window activity)'
+    return `${head}\n${tail}`
   }
-  return [head, ...perModel.map((p) => p.line)].join('\n')
+  const lines = [head, ...perModel.map((p) => p.line)]
+  if (compactionLine) lines.push(compactionLine)
+  return lines.join('\n')
 }
 
 function usage(stream: NodeJS.WriteStream): void {
