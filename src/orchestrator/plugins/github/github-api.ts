@@ -114,6 +114,57 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
   throw new GhError(`spawnGh: loop exited without result for ${cmd}`)
 }
 
+// ---- Rate limit observability ----------------------------------------------
+
+export interface RateLimitInfo {
+  remaining: number
+  limit: number
+  resetAt: number  // unix seconds
+}
+
+// Fetches the current GH rate limit via `gh api /rate_limit` (exempt endpoint —
+// does not consume a token). Returns null on any failure; never throws.
+// `attempts: 1` because this is observability — we don't want retries burning
+// more of the budget we're trying to observe.
+export async function fetchRateLimit(
+  log: PluginLogger,
+  deps?: Partial<SpawnDeps>
+): Promise<RateLimitInfo | null> {
+  try {
+    const resp = await spawnGh(['api', '/rate_limit'], { log, attempts: 1, ...deps }) as Record<string, unknown>
+    const rate = resp?.rate as { remaining?: number; limit?: number; reset?: number } | undefined
+    if (!rate || rate.remaining == null || rate.limit == null || rate.reset == null) return null
+    return { remaining: rate.remaining, limit: rate.limit, resetAt: rate.reset }
+  } catch {
+    return null
+  }
+}
+
+// Pure trajectory computation. Returns a warning string when the current
+// consumption rate predicts exhaustion before the reset boundary; null otherwise.
+// `prev` carries (remaining, ts) from the previous tick for the delta.
+export function computeRateLimitWarning(
+  current: RateLimitInfo,
+  prev: { remaining: number; ts: number },
+  now: number
+): string | null {
+  const consumed = prev.remaining - current.remaining
+  if (consumed <= 0) return null
+  const intervalMs = now - prev.ts
+  if (intervalMs <= 0) return null
+  const ratePerMin = consumed / (intervalMs / 60_000)
+  const minToReset = (current.resetAt * 1000 - now) / 60_000
+  if (minToReset <= 0) return null
+  const minToExhaustion = current.remaining / ratePerMin
+  if (minToExhaustion >= minToReset) return null
+  return (
+    `[dispatcher] GH rate limit warning: ${current.remaining} calls remaining,` +
+    ` reset in ${Math.round(minToReset)}m,` +
+    ` current rate ~${Math.round(ratePerMin)}/min —` +
+    ` projected exhaustion in ${Math.round(minToExhaustion)}m`
+  )
+}
+
 export interface GhLabel {
   name?: string
 }

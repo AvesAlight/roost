@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, computeRateLimitWarning } from '../github-api.js'
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -186,5 +186,90 @@ describe('spawnGh (retry-aware)', () => {
     expect(calls).toBe(1)
     expect(h.sleeps).toEqual([])
     expect((caught as Error).message).toBe('bun.spawn died')
+  })
+})
+
+describe('fetchRateLimit', () => {
+  const noopLog = () => {}
+
+  it('returns parsed RateLimitInfo on success', async () => {
+    const exec = async () => ({ rate: { limit: 5000, remaining: 4987, reset: 1716000000 } })
+    const info = await fetchRateLimit(noopLog, { exec })
+    expect(info).toEqual({ limit: 5000, remaining: 4987, resetAt: 1716000000 })
+  })
+
+  it('returns null when rate field is absent', async () => {
+    const exec = async () => ({ resources: { core: { limit: 5000, remaining: 4987, reset: 1716000000 } } })
+    expect(await fetchRateLimit(noopLog, { exec })).toBeNull()
+  })
+
+  it('returns null when rate fields are incomplete', async () => {
+    const exec = async () => ({ rate: { limit: 5000 } })  // missing remaining + reset
+    expect(await fetchRateLimit(noopLog, { exec })).toBeNull()
+  })
+
+  it('returns null on gh failure (never throws)', async () => {
+    const exec = async () => { throw new GhError('no auth', 'HTTP 401: Unauthorized') }
+    expect(await fetchRateLimit(noopLog, { exec })).toBeNull()
+  })
+
+  it('uses attempts:1 so a failure logs exhaustion at attempt 1 (no retries)', async () => {
+    const logs: string[] = []
+    const log = (m: string) => { logs.push(m) }
+    let calls = 0
+    const exec = async () => { calls++; throw mkErr('HTTP 500') }
+    await fetchRateLimit(log, { exec, baseMs: 0 })
+    expect(calls).toBe(1)  // no retries
+  })
+})
+
+describe('computeRateLimitWarning', () => {
+  const T0 = 1_000_000_000_000  // arbitrary epoch ms
+  const SEC = 1000
+  const MIN = 60 * SEC
+
+  // reset 60 minutes from now
+  function makeInfo(remaining: number, resetInMin = 60): import('../github-api.js').RateLimitInfo {
+    return { remaining, limit: 5000, resetAt: Math.floor((T0 + resetInMin * MIN) / 1000) }
+  }
+
+  it('returns null when remaining is unchanged (no consumption)', () => {
+    const prev = { remaining: 1000, ts: T0 - 15 * SEC }
+    expect(computeRateLimitWarning(makeInfo(1000), prev, T0)).toBeNull()
+  })
+
+  it('returns null when remaining went up (reset happened between ticks)', () => {
+    const prev = { remaining: 100, ts: T0 - 15 * SEC }
+    expect(computeRateLimitWarning(makeInfo(5000), prev, T0)).toBeNull()
+  })
+
+  it('returns null when reset is already in the past', () => {
+    const info = { remaining: 10, limit: 5000, resetAt: Math.floor((T0 - MIN) / 1000) }
+    const prev = { remaining: 100, ts: T0 - 15 * SEC }
+    expect(computeRateLimitWarning(info, prev, T0)).toBeNull()
+  })
+
+  it('returns null when trajectory is fine (exhaustion after reset)', () => {
+    // 10 consumed in 15s → ~40/min. 2000 remaining → 50 min to exhaustion. reset in 30min.
+    // exhaustion (50m) > reset (30m) → no warning
+    const prev = { remaining: 2010, ts: T0 - 15 * SEC }
+    expect(computeRateLimitWarning(makeInfo(2000, 30), prev, T0)).toBeNull()
+  })
+
+  it('returns warning string when exhaustion is predicted before reset', () => {
+    // 400 consumed in 15s → 1600/min. 200 remaining → ~0.125 min exhaustion. reset in 30min.
+    const prev = { remaining: 600, ts: T0 - 15 * SEC }
+    const warning = computeRateLimitWarning(makeInfo(200, 30), prev, T0)
+    expect(warning).toMatch(/rate limit warning/)
+    expect(warning).toMatch(/200 calls remaining/)
+    expect(warning).toMatch(/reset in 30m/)
+    expect(warning).toMatch(/~1600\/min/)
+  })
+
+  it('warning includes projected exhaustion time', () => {
+    // 60 consumed in 60s → 60/min. 60 remaining → 1 min to exhaustion. reset in 30min.
+    const prev = { remaining: 120, ts: T0 - 60 * SEC }
+    const warning = computeRateLimitWarning(makeInfo(60, 30), prev, T0)
+    expect(warning).toMatch(/projected exhaustion in 1m/)
   })
 })
