@@ -1,12 +1,3 @@
-// GhBase — shared scaffolding for the two GitHub plugins (PRs, issues).
-// Owns the agent-login set, the `<issue-channel> + entry.channels` collector,
-// and the convention that every GhBase plugin reads its watch list from a
-// `{ watched?: WatchedEntry[] }` slice under `config.plugins[name]`. Channel
-// resolution + default-channel fallback come from BasePlugin.
-//
-// Also implements `handleCommand` for the two verbs both plugins support:
-// each subclass declares the target keyword it claims (`null` = bare
-// `watch <N>`, `'pr'` = `watch pr <N>`) and a label used in reply text.
 import type { Command } from '../../dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
@@ -14,21 +5,10 @@ import { defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { GhClient } from './github-api.js'
 
-interface GhPluginConfig {
-  watched?: WatchedEntry[]
-}
-
-export abstract class GhBase extends BasePlugin {
-  // Target keyword this plugin claims for watch/unwatch. `null` = no keyword
-  // (bare `watch <N>`). The dispatcher's parser is target-agnostic; plugins
-  // declare which keyword (if any) they own here.
-  protected abstract readonly target: string | null
-  // Singular noun used in reply lines (e.g. "issue", "pr"). Plural is the
-  // plugin name slice.
-  protected abstract readonly label: string
-
-  // Shared gh handle — owns the PluginLogger so individual fetch/snapshot/
-  // scrape callsites stay log-free.
+// Thin shared base for any plugin that needs GhClient but not watch-list
+// scaffolding. GhBase extends this; non-watching plugins (e.g.
+// GitHubNewIssuesPlugin) extend it directly.
+export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
 
   constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
@@ -39,6 +19,24 @@ export abstract class GhBase extends BasePlugin {
   protected agentLogins(config: OrchestratorConfig): Set<string> {
     return new Set(config.agent_logins ?? [])
   }
+}
+
+interface GhPluginConfig {
+  watched?: WatchedEntry[]
+}
+
+// Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
+// `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
+// slice convention, and `handleCommand` for watch/unwatch/list/help.
+// Each subclass declares the target keyword it claims and a singular label.
+export abstract class GhBase extends GhPluginBase {
+  // Target keyword this plugin claims for watch/unwatch. `null` = no keyword
+  // (bare `watch <N>`). The dispatcher's parser is target-agnostic; plugins
+  // declare which keyword (if any) they own here.
+  protected abstract readonly target: string | null
+  // Singular noun used in reply lines (e.g. "issue", "pr"). Plural is the
+  // plugin name slice.
+  protected abstract readonly label: string
 
   // The plugin's `watched` list from `config.plugins[name].watched` — the
   // shared shape for every GhBase plugin.

@@ -222,7 +222,7 @@ export function labelNames(labels: GhLabel[] | null | undefined): string[] {
 // GhClient — per-plugin handle that owns the PluginLogger and exposes the
 // fetch surface as instance methods. Every gh call lands in spawnGh via the
 // private api()/graphql() shape helpers, so retry stays the universal contract.
-// Plugins construct one at boot (see GhBase) and pass it down through
+// Plugins construct one at boot (see GhPluginBase) and pass it down through
 // snapshot/scraper instead of threading `log` through each callsite.
 export class GhClient {
   constructor(private readonly log: PluginLogger) {}

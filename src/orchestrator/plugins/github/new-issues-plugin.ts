@@ -15,9 +15,10 @@
 // pruned from `seen` (we don't prune today, so closed-then-reopened is
 // silently suppressed; that's fine, the operator can `watch <N>` for it).
 import type { OrchestratorConfig } from '../../config.js'
-import { BasePlugin, type PluginLogger, type PluginTickResult, type TaggedEvent, defaultPluginLogger } from '../../plugin.js'
+import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
-import { GhClient, labelNames, type GhRepoIssue } from './github-api.js'
+import { labelNames, type GhRepoIssue } from './github-api.js'
+import { GhPluginBase } from './base.js'
 
 interface NewIssuesPluginConfig {
   repo?: string
@@ -28,19 +29,8 @@ export interface NewIssuesPluginState {
   seen_issue_numbers: number[]
 }
 
-export class GitHubNewIssuesPlugin extends BasePlugin {
+export class GitHubNewIssuesPlugin extends GhPluginBase {
   readonly name = 'github-new-issues'
-
-  // Owns the GhClient the same way GhBase does — see #338/#348 for the
-  // refactor. Not extending GhBase because that scaffolding is built around
-  // a per-entry `watched` slice and this plugin doesn't have one. A thinner
-  // shared base could be a future cleanup if more GhClient-only plugins land.
-  protected readonly client: GhClient
-
-  constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
-    super(defaultChannel)
-    this.client = new GhClient(log)
-  }
 
   // Project channel is unioned in by the orchestrator, so the default case
   // returns []. An explicit slice.channels override is surfaced here so those
