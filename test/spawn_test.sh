@@ -232,10 +232,11 @@ teardown
 
 setup
 err="$(SHELL=/bin/bash "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
-if ! echo "$err" | grep -q "unsupported login shell"; then
-  ok "SHELL=/bin/bash: shell resolution accepted"
+if ! echo "$err" | grep -q "unsupported login shell" \
+    && echo "$err" | grep -q "shell: bash"; then
+  ok "SHELL=/bin/bash: shell resolution accepted, banner shows shell: bash"
 else
-  fail "SHELL=/bin/bash: shell resolution accepted" "err=$err"
+  fail "SHELL=/bin/bash: shell resolution accepted, banner shows shell: bash" "err=$err"
 fi
 teardown
 

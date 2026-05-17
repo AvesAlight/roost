@@ -652,7 +652,7 @@ cmd_spawn() {
     esac
   fi
   # Resolve login shell from $SHELL (fallback /bin/sh). bash/zsh load the
-  # user's profile via -l; sh/dash don't support -l; fish uses --login.
+  # user's profile via -l; sh/dash don't support -l.
   local login_shell="${SHELL:-/bin/sh}"
   local shell_basename
   shell_basename="$(basename "${login_shell}")"
@@ -660,9 +660,8 @@ cmd_spawn() {
   case "${shell_basename}" in
     bash|zsh) shell_invoke="${login_shell} -l -c" ;;
     sh|dash)  shell_invoke="${login_shell} -c" ;;
-    fish)     shell_invoke="${login_shell} --login -c" ;;
     *)
-      echo "error: unsupported login shell '${shell_basename}' (SHELL=${login_shell}). Supported: bash, zsh, sh, dash, fish. See https://github.com/AvesAlight/roost/issues/378" >&2
+      echo "error: unsupported login shell '${shell_basename}' (SHELL=${login_shell}). Supported: bash, zsh, sh, dash. See https://github.com/AvesAlight/roost/issues/378" >&2
       exit 1
       ;;
   esac
@@ -755,8 +754,8 @@ cmd_spawn() {
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
   printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
 
-  # The login shell (shell_invoke, resolved above) ensures the user's profile
-  # loads before claude — required for RVM / nvm / asdf toolchains. Env vars
+  # bash/zsh: login shell loads the user's profile before claude, required for
+  # RVM / nvm / asdf toolchains. sh/dash: no -l, no profile load. Env vars
   # go through tmux -e so the inner command stays a clean string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
