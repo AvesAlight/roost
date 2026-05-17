@@ -160,8 +160,10 @@ teardown
 
 setup "https://github.com/TestOwner/myproject.git"
 cd "$TDIR"
-roost_init >/dev/null 2>&1
-dry_out="$(roost_init --dry-run 2>/dev/null)"
+dry_out=""
+if roost_init >/dev/null 2>&1; then
+  dry_out="$(roost_init --dry-run 2>/dev/null)"
+fi
 if echo "$dry_out" | grep -q 'worker.md' \
     && echo "$dry_out" | grep -q 'lead-pm.md'; then
   ok "--dry-run: shows prompts/agents unconditionally when files exist"
