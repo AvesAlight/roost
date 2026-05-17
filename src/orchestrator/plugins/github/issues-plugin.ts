@@ -3,7 +3,7 @@ import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
-import { scrapeIssue } from './scraper.js'
+import { GhScraper } from './scraper.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { IssueSnap, IssuePluginState } from './types.js'
@@ -33,6 +33,7 @@ export class GitHubIssuesPlugin extends GhBase {
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null
+    const scraper = new GhScraper(this.client, agentLogins)
 
     // Scrape all issues in parallel — each entry is independent. Preserve
     // config order for taggedEvents so output is stable. prevIssue semantics:
@@ -41,7 +42,7 @@ export class GitHubIssuesPlugin extends GhBase {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
       const prevIssue: IssueSnap | null | undefined = prev === null ? undefined : (prev.issues[key] ?? null)
-      const { snap, events } = await scrapeIssue(this.client, repo, number, prevIssue, agentLogins)
+      const { snap, events } = await scraper.scrapeIssue(repo, number, prevIssue)
       return { key, snap, events, entryChannels }
     }))
 

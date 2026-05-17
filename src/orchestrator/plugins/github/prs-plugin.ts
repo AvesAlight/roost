@@ -3,7 +3,7 @@ import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
-import { scrapePr } from './scraper.js'
+import { GhScraper } from './scraper.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { PrSnap, PrPluginState } from './types.js'
@@ -39,6 +39,7 @@ export class GitHubPrsPlugin extends GhBase {
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null
+    const scraper = new GhScraper(this.client, agentLogins)
 
     // Scrape all PRs in parallel — each entry is independent. Preserve config
     // order for taggedEvents so output is stable. prevPr semantics for the
@@ -48,7 +49,7 @@ export class GitHubPrsPlugin extends GhBase {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
       const prevPr: PrSnap | null | undefined = prev === null ? undefined : (prev.prs[key] ?? null)
-      const { snap, events } = await scrapePr(this.client, repo, number, prevPr, agentLogins)
+      const { snap, events } = await scraper.scrapePr(repo, number, prevPr)
       return { key, snap, events, entryChannels }
     }))
 

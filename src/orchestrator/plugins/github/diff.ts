@@ -1,5 +1,5 @@
 import type { PrSnap, IssueSnap } from './types.js'
-import type { PrSnapInternal, IssueSnapInternal } from './snapshot.js'
+import type { PrSnapInternal, IssueSnapInternal } from './scraper.js'
 import type { GhComment, GhReview } from './github-api.js'
 
 // ---- Event types -----------------------------------------------------------

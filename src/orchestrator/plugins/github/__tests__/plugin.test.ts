@@ -4,7 +4,7 @@ import { GitHubIssuesPlugin } from '../issues-plugin.js'
 import { GhPluginBase } from '../base.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { PrSnap, IssueSnap } from '../types.js'
-import * as scraper from '../scraper.js'
+import { GhScraper } from '../scraper.js'
 import type { OrchestratorEvent } from '../diff.js'
 
 function fakePrSnap(overrides: Partial<PrSnap> = {}): PrSnap {
@@ -34,7 +34,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       linked_issues: [14],
     } as OrchestratorEvent
 
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap({ linked_issues: [14] }),
       events: [commentEv],
     })
@@ -57,7 +57,7 @@ describe('GitHubPrsPlugin.runTick', () => {
   })
 
   it('persists scraped PR state under its own slice', async () => {
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap({ linked_issues: [7] }), events: [],
     })
     try {
@@ -81,7 +81,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_no_linked_issues',
       repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap({ linked_issues: [] }),
       events: [warningEv],
     })
@@ -100,7 +100,7 @@ describe('GitHubPrsPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap(), events: [seedEv],
     })
     try {
@@ -118,7 +118,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
       linked_issues: [7, 14],
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap({ linked_issues: [7, 14] }), events: [seedEv],
     })
     try {
@@ -141,7 +141,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
       linked_issues: [7],
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapePr').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
       snap: fakePrSnap({ linked_issues: [7] }), events: [seedEv],
     })
     try {
@@ -164,7 +164,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapeIssue').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
       snap: fakeIssueSnap(), events: [seedEv],
     })
     try {
@@ -186,7 +186,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(scraper, 'scrapeIssue').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
       snap: fakeIssueSnap(), events: [seedEv],
     })
     try {
@@ -211,7 +211,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
       comment_id: 2, comment_url: 'https://example.com/c/2',
     } as OrchestratorEvent
 
-    const spy = spyOn(scraper, 'scrapeIssue').mockResolvedValue({
+    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
       snap: fakeIssueSnap(), events: [issueEv],
     })
     try {
@@ -376,7 +376,7 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
 describe('GhPluginBase.observeRateLimit integration', () => {
   it('merges observeRateLimit warning events into runTick taggedEvents', async () => {
     const warningEvent = { channels: ['#proj-leads'], payload: { kind: 'oneline' as const, text: 'rate limit warning' } }
-    const scrapeSpy = spyOn(scraper, 'scrapePr').mockResolvedValue({ snap: fakePrSnap(), events: [] })
+    const scrapeSpy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({ snap: fakePrSnap(), events: [] })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const observeSpy = spyOn(GhPluginBase.prototype as any, 'observeRateLimit').mockResolvedValue([warningEvent])
     try {

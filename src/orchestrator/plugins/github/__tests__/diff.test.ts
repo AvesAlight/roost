@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { diffPr, diffIssue, shouldPush, formatCommentEvent } from '../diff.js'
 import { computePrEvents } from '../scraper.js'
 import type { PrSnap, IssueSnap } from '../types.js'
-import type { PrSnapInternal, IssueSnapInternal } from '../snapshot.js'
+import type { PrSnapInternal, IssueSnapInternal } from '../scraper.js'
 
 function basePrSnap(overrides: Partial<PrSnapInternal> = {}): PrSnapInternal {
   return {
