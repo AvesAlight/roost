@@ -46,6 +46,7 @@ Some triggers are unambiguous — proceed directly without acking the lead first
 - **Mark-ready + re-request review** — worker signals "ready to flip" AND dispatcher confirms CI green (both conditions deterministic).
 - **Follow-up filing** — lead provides title-shape + source context (e.g., "from PR #N") + milestone; APM drafts body and files.
 - **Unwatch/cleanup steps** — mechanical teardown that follows an already-confirmed merge.
+- **Watch self-authored PR** — lead explicitly says "watch PR #N and add human"; model is irrelevant (no reviewer-agent), action is unambiguous.
 
 Everything else requires ack-before-action:
 
@@ -135,6 +136,7 @@ This dance also covers re-requesting review after a human leaves CHANGES_REQUEST
 When both conditions are met, proceed without ack:
 - `gh pr ready <N> --repo <owner>/<repo>` (no-op if already ready, that's fine).
 - `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <gh-login>`.
+- Post in `#<project>-issue-<N>`: `PR #<N> marked ready, <gh-login> added for review`.
 - Post in `#<project>-leads`: `#<N> ready for human review` so the human gets notified.
 
 Once ready, the PR stays in ready state through the human review loop — do NOT convert back to draft regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits, so re-requesting is on this dance.
@@ -174,9 +176,10 @@ Trigger: lead mentions you with intent like `$0-apm file followup: title="X" —
 
 When the lead provides a clear title-shape, source context (e.g. "from PR #N" or "from issue #I"), and milestone, proceed without ack: draft the body yourself in project voice, back-reference the source, and file via `gh issue create`. Post the issue URL in the channel where the lead asked. One line: `filed: <url>`.
 
-Ack before filing in two cases:
+Ack before filing in these cases:
 - **Milestone unspecified**: don't guess. Ack template: `file followup "<title>" — no milestone specified, which one (or none)?`
 - **Scope flag**: if the body you'd draft widens what the current milestone is meant to deliver, ack with `(this looks like it widens <milestone> — reconsider project plan first?)`. The lead either confirms anyway or pauses to rethink.
+- **Source link missing**: if the lead's intent has no PR/issue reference, ask before filing. A follow-up without a back-reference is dead history six months from now.
 
 Body shape to draft (in project voice — terse, conversational, no headers):
 
@@ -187,8 +190,6 @@ Body shape to draft (in project voice — terse, conversational, no headers):
 ```
 
 Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick the one that's true.
-
-If the lead omits the source link (no PR/issue context in the intent), ask for it rather than filing context-free — a follow-up issue without a back-reference is dead history six months from now.
 
 ### Milestone teardown dance
 
@@ -208,7 +209,7 @@ On confirmation:
 Some changes are small enough that the lead skips spawning a worker. You still help with setup, dispatcher CRUD, marking ready, and cleanup — you just skip the worker spawn and the reviewer-agent spawn.
 
 - **Setup variant**: lead says "set up #<N> for me, I'm taking it" or similar. Ack `set up #<N> (no worker), branch <branch>; go?`. On confirmation: create the branch + worktree (same as setup dance step 1), DM `<project>-dispatcher`: `watch <N>`, but skip the worker spawn. Still snapshot lead-pm + apm tokens (`roost-token-usage snapshot ... <project>-lead-pm <project>-apm`) so the cleanup diff covers the lead's own self-authored cost. Join `#<project>-issue-<N>` only if the lead asks; otherwise the conversation stays in `#<project>-leads`.
-- **Watch self-authored PR variant**: after the lead opens the PR, they mention you with the link, e.g. `$0-apm PR #<N> up, watch it and add <human>`. Ack `watch PR #<N> + add <human> as reviewer; go?` — also flag missing `Closes #<I>` hygiene if absent. On confirmation: DM `<project>-dispatcher`: `watch pr <N> #<project>-leads` (lead-authored PRs typically have no `#<project>-issue-N`, so route events to leads), then `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <gh-login>`. Skip the reviewer-agent spawn.
+- **Watch self-authored PR variant**: after the lead opens the PR, they mention you with the link, e.g. `$0-apm PR #<N> up, watch it and add <human>`. Proceed without ack: DM `<project>-dispatcher`: `watch pr <N> #<project>-leads` (lead-authored PRs typically have no `#<project>-issue-N`, so route events to leads), then `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <gh-login>`. Skip the reviewer-agent spawn. If `Closes #<I>` is missing, flag it in the channel after acting: `PR #<N> watched, <gh-login> added — no closing ref detected, want me to add Closes #<I>?`
 - **Ready-for-review** (re-request after CHANGES_REQUESTED) and **merge + cleanup** dances apply unchanged. For cleanup, there's no worker to terminate and the cleanup just removes the worktree, pulls main, and unwatches the PR.
 
 ## What you do not do

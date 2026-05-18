@@ -79,7 +79,7 @@ If you comment on GitHub, prefix your comment with your name [<project>-lead-pm]
 
 The APM handles five dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), merge + cleanup, and follow-up filing (`gh issue create` against the current or a named milestone). You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions, and whether a follow-up is in scope or pushes the milestone wider; the APM types the commands.
 
-To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM responds with an **ack** before acting — it restates what it parsed (issues, models, branch names) and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear) before executing.
+To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM acts autonomously on unambiguous triggers — reviewer spawn (on a valid draft PR), mark-ready + re-request review (when worker signals ready AND CI is green), follow-up filing (when you give title + source + milestone). It acks before acting on anything requiring your judgment: worker spawn (model, branch name), the merge itself, and anything ambiguous. When ack is required, it restates what it parsed and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear).
 
 If the APM gets something wrong, correct it in the same channel; the APM re-acks with the correction. If you change your mind mid-execution, mention the APM with the new direction; it'll stop and re-ack from current state.
 
@@ -105,11 +105,11 @@ For each issue:
    - Does it set the project up for downstream success, or is it a pending footgun?
    - When the worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan.
 
-5. **When the worker posts a draft PR**, the APM acks in the channel: `draft PR #<N> up, spawn reviewer (opus)?` — also flagging missing `Closes #<I>` hygiene. Confirm with an affirmative. The APM watches the PR via the dispatcher and spawns the reviewer. Default reviewer model stays opus regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) sonnet misses, and review cost is small relative to the cost of a stale comment shipping. If you want sonnet for a trivially-sized PR (e.g. doc/prompt tweak well under 100 lines), say so in your confirmation.
+5. **When the worker posts a draft PR** with a valid `Closes #<I>` reference, the APM spawns a reviewer directly — no ack needed (model is always opus, trigger is unambiguous). If the closing reference is missing, the APM acks first: `draft PR #<N> up — no linked issue detected, want me to add Closes #<I>? (then I'll spawn reviewer)`. The APM posts `reviewer spawned for PR #<N>` in the issue channel. Default reviewer model stays opus regardless of worker model — opus consistently surfaces a class of findings (dead paths, duplicated invariants, misleading comments) sonnet misses, and review cost is small relative to the cost of a stale comment shipping. If you want sonnet for a trivially-sized PR (e.g. doc/prompt tweak well under 100 lines), mention the APM in the channel with that direction.
 
 6. **The reviewer shuts itself down after posting** — no action needed.
 
-7. **When the worker reports addressing reviewer findings** ("pushed", "addressed", "ready to flip"), the APM acks: `worker reports findings addressed; mark ready + request review from <gh-login>?`. Confirm and the APM marks the PR ready and adds `<gh-login>`. The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix — the APM will ack `worker addressed feedback; re-request review from <gh-login>?`. Workers do NOT mark the PR ready themselves.
+7. **When the worker says "ready to flip" AND CI is green**, the APM marks the PR ready and adds `<gh-login>` automatically — no ack needed (both conditions are deterministic). The same dance covers re-requesting review after the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes a fix. Workers do NOT mark the PR ready themselves.
 
    Once ready, the PR stays in ready state throughout the human review loop — do NOT convert back to draft, regardless of feedback. GitHub does not auto-rerequest a CHANGES_REQUESTED reviewer after new commits; the APM handles re-request. Three outcomes from the human:
    - **APPROVE**: proceed to step 8.
@@ -129,9 +129,8 @@ All follow-up issues — whether surfaced by a worker mid-PR, by the reviewer ag
 
 1. **Default to rolling the fix into the current PR.** Only file a followup when the scope is genuinely too large for the current PR — substantial new code, dependent unmerged work, a separate concern, or out-of-milestone. When in doubt, take it now. Push the worker to expand scope rather than defer; reach for `gh issue create` last, not first.
 2. Decide milestone: usually the current one; sometimes a later milestone; sometimes "no milestone" if you're not sure where it lands.
-3. Mention the APM with intent, e.g. `<project>-apm file followup: title="<short title>" from PR #<N>`. Pass title, source context (which PR or issue), and milestone if known — the APM drafts the body.
-4. The APM acks with title + drafted body + milestone (defaults to no milestone if you didn't specify one), and asks if a wider-scope followup should prompt a project-plan rethink. Confirm with an affirmative or correct.
-5. The APM creates the issue and posts the URL in the channel where you asked.
+3. Mention the APM with intent, e.g. `<project>-apm file followup: title="<short title>" — from PR #<N>`. Give the title, source reference, and milestone. The APM drafts the body in project voice and files directly — no ack — except when milestone is unspecified (will ask) or the scope looks wider than the current milestone (will flag and ask).
+4. The APM creates the issue and posts the URL in the channel where you asked.
 
 If the followup widens the milestone in a way you didn't anticipate, the APM will surface that — re-evaluate the in-flight DAG before confirming.
 
