@@ -182,6 +182,95 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
   })
 })
 
+describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)', () => {
+  let ergo: ErgoContext
+
+  beforeAll(async () => {
+    ergo = (await startErgo())!
+  })
+
+  it('returns the agent\'s own outbound messages', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer1')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp1')
+
+    await peer.joinChannel('#ip-cq-own')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-own' } })
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-own', text: 'my-own-mid-session-msg' } })
+    await sleep(200)
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-own' } })
+    expect(hist.isError).toBeFalsy()
+    expect(toolText(hist)).toContain('my-own-mid-session-msg')
+  })
+
+  it('reflects activity from before the MCP started (after JOIN, via server-authoritative query)', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer2')
+
+    // Peer sends messages before any MCP has run for this nick.
+    await peer.joinChannel('#ip-cq-prestart')
+    peer.say('#ip-cq-prestart', 'pre-start-1')
+    peer.say('#ip-cq-prestart', 'pre-start-2')
+    await sleep(200)
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp2')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-prestart' } })
+    // Wait for the JOIN-time backfill to land so we know the auto-replay has happened.
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'pre-start-2', channel: '#ip-cq-prestart' }))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-prestart' } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+    expect(text).toContain('pre-start-1')
+    expect(text).toContain('pre-start-2')
+  })
+
+  it('pending-join guard: JOIN auto-replay still emits historical notifications when an explicit query races it', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer3')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp3')
+
+    await peer.joinChannel('#ip-cq-race')
+    peer.say('#ip-cq-race', 'race-pre-1')
+    peer.say('#ip-cq-race', 'race-pre-2')
+    await sleep(200)
+
+    // Fire channel_join and channel_history concurrently. The guard's job is to
+    // ensure the JOIN's auto-replay batch isn't stolen by the explicit-query
+    // resolver — i.e. the on-join historical notifications still fire. The
+    // explicit query's own return value depends on whether ergo emits a second
+    // batch in this race; that's not what we're proving here.
+    await Promise.all([
+      mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-race' } }),
+      mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-race' } }),
+    ])
+
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'race-pre-1', channel: '#ip-cq-race' }))
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'race-pre-2', channel: '#ip-cq-race' }))
+  })
+
+  it('falls back to the local ring when the chathistory cap is suppressed', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer4')
+    // Peer pre-populates channel history before the MCP starts.
+    await peer.joinChannel('#ip-cq-fallback')
+    peer.say('#ip-cq-fallback', 'fallback-pre-1')
+    await sleep(200)
+
+    // chathistoryDisabled=true → cap not requested → chathistoryLatest short-circuits
+    // to null → channel_history falls back to the local in-memory ring. The MCP
+    // never joins the channel, so the ring stays empty; this isolates the
+    // fallback code path (with-cap version is covered by the pre-startup test).
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp4', {
+      chathistoryDisabled: true,
+      chathistoryQueryTimeoutMs: 250, // doesn't matter since cap is off, but keeps test snappy
+    })
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-fallback' } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+    expect(text).toContain('no history for #ip-cq-fallback')
+    expect(text).not.toContain('fallback-pre-1')
+  })
+})
+
 // Subprocess-only: requires process.kill on subprocess pid via pidfile.
 describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
   let ergo: ErgoContext
