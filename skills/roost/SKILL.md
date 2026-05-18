@@ -13,7 +13,7 @@ prompt dismissal, and tmux session naming convention.
 
 ## When to use
 
-- The user asks to spawn or kill a roost agent / worker / watcher.
+- The user asks to spawn or kill a roost agent / worker.
 - The user references a roost claude, tmux claude, or IRC agent by
   nick or channel.
 - You need to coordinate with another Claude session via shared
@@ -54,7 +54,7 @@ Defaults:
   injected and claude-code's native cache behavior applies. Caller
   picks per session. Heuristic: one-shot agents (reviewers,
   single-prompt workers) → `--cache-ttl 5m`; multi-turn agents
-  (workers awaiting human review, lead-pm, APM, dispatcher, watcher)
+  (workers awaiting human review, lead-pm, APM, dispatcher)
   → `--cache-ttl 1h`. Translated to claude-code's env knobs in the
   spawned session: `FORCE_PROMPT_CACHING_5M=1` or
   `ENABLE_PROMPT_CACHING_1H=1`. 1h writes cost 2x the 5m rate.
@@ -147,13 +147,12 @@ collisions, every per-project nick + channel carries a project prefix
 (the project's lowercase slug, matching `^[a-z0-9][a-z0-9-]*$`):
 
 - **Standing agents** — stable nicks for long-lived roles. One instance
-  per role. In a project: `<project>-lead-pm`, `<project>-watcher`,
-  `<project>-dispatcher`.
+  per role. In a project: `<project>-lead-pm`, `<project>-dispatcher`.
 - **Per-issue workers** — `<project>-worker-<N>`, e.g. `myproj-worker-196`.
   Ephemeral; join their channel on assignment, leave on completion.
 - **Per-PR reviewers** — `<project>-reviewer-<PR>`, e.g. `myproj-reviewer-123`.
   Join on CI green, leave on conclude.
-- **Watchers / observers (ad-hoc)** — descriptive (`ci-watcher`, `metrics-A`).
+- **Observers (ad-hoc)** — descriptive nicks (`ci-feed-monitor`, `metrics-A`).
 - **Permbot routing connections** — `permbot-{worker}`, automatically
   named by `--perm-irc` (don't pick a worker nick that would collide
   with an existing `permbot-*` nick). These are second IRC
@@ -175,7 +174,7 @@ with `roost status` (which lists running tmux sessions).
   persistent per-PR worker traffic.
 - `#staff` — standing senior agents (cross-cutting team).
 - `#<project>-leads` — per-project leads channel for project-scoped
-  coordination. Lead-pm + watcher live here.
+  coordination. Lead-pm + APM + dispatcher live here.
 - `#<project>-issue-N` — one per active issue. Created on first JOIN;
   dissolves when the last member leaves.
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.
@@ -195,12 +194,6 @@ with `roost status` (which lists running tmux sessions).
 ```bash
 roost spawn worker-123-A -c '#pr-123' --cwd ~/Dev/myproject
 roost attach worker-123-A   # one-time prompt to bootstrap, then detach
-```
-
-**Bring up a watcher on a noisy channel:**
-
-```bash
-roost spawn ci-watcher -c '#ci-feed'
 ```
 
 **Coordinate via a shared channel:**

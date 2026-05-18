@@ -259,7 +259,7 @@ first MCP tool.
 
 **Implication:** worker roles split cleanly along this axis:
 
-- **Pure listeners** (e.g., a logging-only watcher, an observability
+- **Pure listeners** (e.g., a logging-only observer, an observability
   pane): never pay the deferred-tool cost.
 - **Listener + worker** (the common case — receives messages, acts via
   IRC tools): pays the cost once at first tool load. Amortizes over

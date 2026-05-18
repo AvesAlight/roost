@@ -44,9 +44,8 @@ const VERBS = new Set(['watch', 'unwatch', 'help'])
 
 // ---- Parser ----------------------------------------------------------------
 
-// Split a raw inbound body into individual command lines. Newlines /
-// semicolons / commas are all separators — matches the watcher prompt
-// grammar.
+// Split a raw inbound body into individual command lines. Newlines,
+// semicolons, and commas are all treated as separators.
 export function splitCommands(text: string): string[] {
   return text
     .split(/[\n;,]+/)
