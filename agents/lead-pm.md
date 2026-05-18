@@ -59,7 +59,7 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
-See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — that's the canonical source for what to pass with `--cache-ttl` and `--steer-compact`, and the only place to edit if the trade-offs ever shift.
+See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl` and `--steer-compact` for each agent class.
 
 ## Working In Channels
 

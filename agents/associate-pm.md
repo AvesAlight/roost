@@ -68,7 +68,7 @@ If you never get an affirmative, sit and wait. Do not nag.
 
 ## Six dances you own
 
-The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance"). Don't tune them in isolation — edit the canonical block if the trade-offs ever shift.
+The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance").
 
 ### Setup dance
 
