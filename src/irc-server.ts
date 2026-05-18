@@ -21,6 +21,12 @@
  *   ROOST_IRC_HISTORY              Per-channel history buffer size (default: 50)
  *   ROOST_IRC_JOIN_HISTORY_LINES   Max historical messages emitted on join (default: 20)
  *   ROOST_IRC_JOIN_HISTORY_MINUTES Time window for join history in minutes (default: 30)
+ *   ROOST_IRC_DISABLE_CHATHISTORY  When set (1/true), suppress the chathistory cap request
+ *                                  so channel_history falls back to the local in-memory ring.
+ *                                  Test hook for the cap-missing path.
+ *   ROOST_IRC_PENDING_JOIN_REPLAY_MS  Window we wait for a chathistory auto-replay batch
+ *                                  after self-JOIN before letting an explicit chathistoryLatest
+ *                                  query proceed (default: 500ms; raise for remote daemons).
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -111,7 +117,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'channel_history',
-    description: 'Return up to N recent messages observed by this MCP for a channel or DM peer (since startup, capped at ROOST_IRC_HISTORY).',
+    description: "Return up to N recent messages for a channel or DM peer. Issues an IRCv3 CHATHISTORY LATEST query against the server when the chathistory cap is active — includes the agent's own outbound messages and pre-startup activity. Falls back to this MCP's in-memory ring (since startup, capped at ROOST_IRC_HISTORY) when the cap isn't advertised or the query times out.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -380,8 +386,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const key = args.channel as string
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
-        const slice = client.getHistory(key, limit)
-        if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key} (since this MCP started)</channel>` }] }
+        const fromServer = await client.chathistoryLatest(key, limit)
+        const slice = fromServer ?? client.getHistory(key, limit)
+        if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
         const lines = slice.map(m => {
           const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })
           return `<channel ${renderMessageAttrs(wireMeta)}>${escBody(m.text)}</channel>`
@@ -433,6 +440,12 @@ if (import.meta.main) {
 
   const env = (k: string, def?: string) => process.env[k] ?? def
   const numericEnv = (k: string, def: number) => Number(env(k, String(def)))
+  const booleanEnv = (k: string, def: boolean) => {
+    const v = (env(k, '') || '').toLowerCase()
+    if (v === '1' || v === 'true') return true
+    if (v === '0' || v === 'false') return false
+    return def
+  }
   const required = (k: string): string => {
     const v = process.env[k]
     if (!v) {
@@ -465,6 +478,8 @@ if (import.meta.main) {
     historySize: numericEnv('ROOST_IRC_HISTORY', 50),
     joinHistoryLines: numericEnv('ROOST_IRC_JOIN_HISTORY_LINES', 20),
     joinHistoryMinutes: numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30),
+    chathistoryDisabled: booleanEnv('ROOST_IRC_DISABLE_CHATHISTORY', false),
+    pendingJoinReplayMs: numericEnv('ROOST_IRC_PENDING_JOIN_REPLAY_MS', 500),
   }
 
   if (ownership === 'passive') {
