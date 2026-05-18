@@ -129,8 +129,8 @@ All follow-up issues — whether surfaced by a worker mid-PR, by the reviewer ag
 
 1. **Default to rolling the fix into the current PR.** Only file a followup when the scope is genuinely too large for the current PR — substantial new code, dependent unmerged work, a separate concern, or out-of-milestone. When in doubt, take it now. Push the worker to expand scope rather than defer; reach for `gh issue create` last, not first.
 2. Decide milestone: usually the current one; sometimes a later milestone; sometimes "no milestone" if you're not sure where it lands.
-3. Mention the APM with intent, e.g. `<project>-apm file followup: title="<short title>" — <one-line body>`. Reference the source PR or issue (e.g. "from PR #<N>") so the APM can quote-link it in the body.
-4. The APM acks with title + body shape + milestone (defaults to no milestone if you didn't specify one), and asks if a wider-scope followup should prompt a project-plan rethink. Confirm with an affirmative or correct.
+3. Mention the APM with intent, e.g. `<project>-apm file followup: title="<short title>" from PR #<N>`. Pass title, source context (which PR or issue), and milestone if known — the APM drafts the body.
+4. The APM acks with title + drafted body + milestone (defaults to no milestone if you didn't specify one), and asks if a wider-scope followup should prompt a project-plan rethink. Confirm with an affirmative or correct.
 5. The APM creates the issue and posts the URL in the channel where you asked.
 
 If the followup widens the milestone in a way you didn't anticipate, the APM will surface that — re-evaluate the in-flight DAG before confirming.
