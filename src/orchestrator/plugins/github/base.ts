@@ -1,4 +1,4 @@
-import type { Command } from '../../dm-handler.js'
+import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel } from '../../naming.js'
@@ -102,7 +102,7 @@ export abstract class GhBase extends GhPluginBase {
 
   // ---- DM command handling --------------------------------------------
 
-  // Inbound DM command surface. The dispatcher (dm-handler.ts) calls this
+  // Inbound DM command surface. The dispatcher (dispatcher-dm-handler.ts) calls this
   // once per parsed command inside its mutateConfig pass — we mutate our
   // own slice in place. Returns the reply line(s) when we handle the
   // command, null when the command isn't ours. Never throws.

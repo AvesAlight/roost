@@ -139,7 +139,7 @@ export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string
     const project = defaultProject(config)
     return [leadPmNick(project), apmNick(project)]
   } catch (e) {
-    log?.(`dm-handler: cannot resolve default allowlist (no project/repo in config): ${e}`)
+    log?.(`dispatcher-dm-handler: cannot resolve default allowlist (no project/repo in config): ${e}`)
     return []
   }
 }
@@ -204,14 +204,14 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   try {
     snapshot = await loadConfig(deps.stateDir)
   } catch (e) {
-    deps.log(`dm-handler: config load failed for ${dm.sender}: ${e}`)
+    deps.log(`dispatcher-dm-handler: config load failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config load: ${e}`)
     return
   }
 
   const allowed = new Set(resolveAllowlist(snapshot, deps.log).map(n => n.toLowerCase()))
   if (!allowed.has(senderLower)) {
-    deps.log(`dm-handler: rejecting ${dm.sender} (not in allowlist)`)
+    deps.log(`dispatcher-dm-handler: rejecting ${dm.sender} (not in allowlist)`)
     deps.dm(dm.sender, 'not authorized; configure irc.command_senders')
     return
   }
@@ -223,7 +223,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   // the half that parsed. Report all parse errors in one reply.
   const unknowns = cmds.filter((c): c is Extract<Command, { kind: 'unknown' }> => c.kind === 'unknown')
   if (unknowns.length) {
-    for (const u of unknowns) deps.log(`dm-handler: ${dm.sender} parse: ${u.error}`)
+    for (const u of unknowns) deps.log(`dispatcher-dm-handler: ${dm.sender} parse: ${u.error}`)
     deps.dm(dm.sender, unknowns.map(u => `error: ${u.error}`).join('\n'))
     return
   }
@@ -237,9 +237,9 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
       try {
         const reply = await routeOne(snapshot, cmd, deps.plugins)
         if (reply !== null) replies.push(reply)
-        deps.log(`dm-handler: ${dm.sender} cmd=${cmd.kind}`)
+        deps.log(`dispatcher-dm-handler: ${dm.sender} cmd=${cmd.kind}`)
       } catch (e) {
-        deps.log(`dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
+        deps.log(`dispatcher-dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
         deps.postProjectError(`[dispatcher_error] handleCommand(${cmd.kind}): ${e}`)
         replies.push(`error: handler crashed on ${cmd.kind}`)
       }
@@ -262,7 +262,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
             replies.push(unmatchedReply(cmd, deps.plugins))
           }
         } catch (e) {
-          deps.log(`dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
+          deps.log(`dispatcher-dm-handler: handler threw on ${cmd.kind} from ${dm.sender}: ${e}`)
           deps.postProjectError(`[dispatcher_error] handleCommand(${cmd.kind}): ${e}`)
           replies.push(`error: handler crashed on ${cmd.kind}`)
         }
@@ -270,7 +270,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
     })
   } catch (e) {
     writeFailed = true
-    deps.log(`dm-handler: mutateConfig failed for ${dm.sender}: ${e}`)
+    deps.log(`dispatcher-dm-handler: mutateConfig failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config write: ${e}`)
     deps.dm(dm.sender, `error: failed to update config — ${e}`)
   }
@@ -278,7 +278,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   if (writeFailed) return
   for (const cmd of cmds) {
     const summary = `cmd=${cmd.kind}${'target' in cmd ? ` target=${cmd.target ?? '(default)'}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
-    deps.log(`dm-handler: ${dm.sender} ${summary}`)
+    deps.log(`dispatcher-dm-handler: ${dm.sender} ${summary}`)
   }
   deps.dm(dm.sender, replies.join('\n\n'))
 }

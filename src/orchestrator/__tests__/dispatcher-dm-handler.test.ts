@@ -10,14 +10,14 @@ import {
   splitCommands,
   type Command,
   type HandlerDeps,
-} from '../dm-handler.js'
+} from '../dispatcher-dm-handler.js'
 import { loadConfig, writeConfig, type OrchestratorConfig } from '../config.js'
 import type { Plugin, PluginTickResult } from '../plugin.js'
 
 let dir: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'roost-dm-handler-test-'))
+  dir = await mkdtemp(join(tmpdir(), 'roost-dispatcher-dm-handler-test-'))
 })
 
 afterEach(async () => {

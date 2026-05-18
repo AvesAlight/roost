@@ -23,7 +23,7 @@ import { defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrat
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
-import { handleDm } from './orchestrator/dm-handler.js'
+import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
 // ---- Path setup ------------------------------------------------------------
@@ -128,7 +128,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   log('orchestrator[daemon]: connected\n')
 
   // DM command handler. Channel messages are ignored; DMs flow through
-  // the allowlist + parser + mutateConfig pipeline in dm-handler.ts.
+  // the allowlist + parser + mutateConfig pipeline in dispatcher-dm-handler.ts.
   const dmHandlerDeps = {
     stateDir,
     plugins,
@@ -144,7 +144,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   client.on('message', (msg) => {
     if (!msg.isDirect) return
     handleDm(dmHandlerDeps, { sender: msg.sender, text: msg.text }).catch((e: unknown) => {
-      log(`orchestrator[daemon]: dm-handler crashed: ${e}\n`)
+      log(`orchestrator[daemon]: dispatcher-dm-handler crashed: ${e}\n`)
     })
   })
 
