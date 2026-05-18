@@ -247,6 +247,44 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     await mcp.waitForNotification(messagePredicate({ historical: true, content: 'race-pre-2', channel: '#ip-cq-race' }))
   })
 
+  it("filters HistServ's synthesized join/part announcements out of the response", async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer-hs')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp-hs')
+
+    // The simple act of joining causes ergo's HistServ to synthesize a
+    // "<nick> joined the channel" PRIVMSG into history. Without the filter,
+    // CHATHISTORY LATEST returns those alongside real messages.
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-histserv' } })
+    await peer.joinChannel('#ip-cq-histserv')
+    peer.say('#ip-cq-histserv', 'real-user-msg')
+    await mcp.waitForNotification(messagePredicate({ content: 'real-user-msg', channel: '#ip-cq-histserv' }))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-histserv' } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+    expect(text).toContain('real-user-msg')
+    expect(text).not.toContain('joined the channel')
+    expect(text).not.toContain('sender="HistServ"')
+  })
+
+  it('falls back to the local ring on query timeout (cap on, server slow)', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer-to')
+    // Cap is active, but the query timeout is set so low that the server can never
+    // respond in time. Exercises the timeout → null → getHistory() branch of the tool.
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp-to', { chathistoryQueryTimeoutMs: 1 })
+
+    await peer.joinChannel('#ip-cq-timeout')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-timeout' } })
+    peer.say('#ip-cq-timeout', 'ring-only-msg')
+    await mcp.waitForNotification(messagePredicate({ content: 'ring-only-msg', channel: '#ip-cq-timeout' }))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-timeout' } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+    // Live message landed in the ring; fallback returned it.
+    expect(text).toContain('ring-only-msg')
+  })
+
   it('falls back to the local ring when the chathistory cap is suppressed', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer4')
     // Peer pre-populates channel history before the MCP starts.

@@ -151,10 +151,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   })
 
   it('channel_history empty before any messages', async () => {
-    // Force the local-ring fallback path: this test pre-dates the server-authoritative
-    // CHATHISTORY query (which on a freshly-joined channel returns HistServ join
-    // announcements rather than an empty result). The empty-ring semantics are still
-    // worth exercising for the fallback path.
+    // Force the local-ring fallback path. The server-authoritative CHATHISTORY query
+    // returns ergo's HistServ join announcement for a freshly-joined channel, so the
+    // empty-ring "no-history" semantics only hold against the fallback path.
     const mcp = await startMcpInProcess(ergo, 'ip-hist2', { chathistoryDisabled: true })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist2' } })
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist2' } })

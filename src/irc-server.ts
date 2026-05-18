@@ -437,6 +437,12 @@ if (import.meta.main) {
 
   const env = (k: string, def?: string) => process.env[k] ?? def
   const numericEnv = (k: string, def: number) => Number(env(k, String(def)))
+  const booleanEnv = (k: string, def: boolean) => {
+    const v = (env(k, '') || '').toLowerCase()
+    if (v === '1' || v === 'true') return true
+    if (v === '0' || v === 'false') return false
+    return def
+  }
   const required = (k: string): string => {
     const v = process.env[k]
     if (!v) {
@@ -463,14 +469,13 @@ if (import.meta.main) {
   const SESSION_ID = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
   const ownership = (DATA_DIR && SESSION_ID) ? claimOwnership(DATA_DIR, SESSION_ID) : 'owner'
 
-  const disableChathistory = ((env('ROOST_IRC_DISABLE_CHATHISTORY', '') || '').toLowerCase())
   const clientConfig: ClientConfig = {
     nick: NICK,
     autoJoin: AUTO_JOIN,
     historySize: numericEnv('ROOST_IRC_HISTORY', 50),
     joinHistoryLines: numericEnv('ROOST_IRC_JOIN_HISTORY_LINES', 20),
     joinHistoryMinutes: numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30),
-    chathistoryDisabled: disableChathistory === '1' || disableChathistory === 'true',
+    chathistoryDisabled: booleanEnv('ROOST_IRC_DISABLE_CHATHISTORY', false),
   }
 
   if (ownership === 'passive') {

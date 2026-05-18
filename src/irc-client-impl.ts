@@ -30,8 +30,22 @@ const CAP_CHATHISTORY = 'draft/chathistory'
 // as the cap; the spec keeps the type unscoped.
 const BATCH_TYPE_CHATHISTORY = 'chathistory'
 
+// Server-side service senders that synthesize PRIVMSGs into channel history for
+// membership/admin events ("X joined the channel", "Y set channel modes: …",
+// etc.). They're noise for agents — channel_history's contract is the PRIVMSG
+// stream, not the membership log (which arrives live via the membership event).
+// Ergo-specific; extend if other servers ship similar services.
+const HISTORY_SERVICE_SENDERS = new Set(['histserv'])
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
+
+// Canonical "is this a DM" predicate: an IRC PRIVMSG target is a channel iff it
+// starts with '#' (we don't care about '&'/'+'/'!' in this codebase). Used by
+// both the live message path (event.target) and the chathistory-batch path
+// (the original query target). Keeping a single derivation drops the risk of
+// the two paths drifting on the DM/channel boundary.
+const targetIsDirect = (target: string): boolean => !target.startsWith('#')
 
 // ---- IRC event shapes ------------------------------------------------------
 
@@ -65,6 +79,12 @@ interface ChathistoryResolver {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface PendingJoinReplay {
+  timer: ReturnType<typeof setTimeout>
+  done: Promise<void>
+  resolve: () => void
+}
+
 export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly nick: string
   private readonly nickMentionRegex: RegExp
@@ -87,10 +107,21 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // Channels for which we expect the server to push an auto-replay chathistory batch on
   // join. Set on self-join, cleared when the matching batch arrives (or after 5s, so a
   // server that sends no batch doesn't block a future explicit query indefinitely).
-  private readonly pendingJoinReplays = new Map<string, ReturnType<typeof setTimeout>>()
-  // FIFO queue of explicit `chathistoryLatest` resolvers, keyed by lowercased target.
-  // Cleared as soon as the matching batch end fires (or on timeout, with null).
+  // Exposes a Promise (done) so chathistoryLatest can wait for the auto-replay window
+  // to close before issuing its own query — otherwise the explicit query's batch is
+  // stolen by the pending-join guard and the agent times out into an empty fallback.
+  private readonly pendingJoinReplays = new Map<string, PendingJoinReplay>()
+  // Explicit `chathistoryLatest` resolvers keyed by lowercased target. At most one per
+  // target at a time — chathistoryLatest serializes same-target queries via a Promise
+  // chain (chathistoryQueriesByTarget) so the FIFO shift here can never mismatch.
   private readonly chathistoryResolvers = new Map<string, ChathistoryResolver[]>()
+  // Per-target serialization chain. Concurrent chathistoryLatest(target, …) calls chain
+  // sequentially so each gets its own batch from the server.
+  private readonly chathistoryQueriesByTarget = new Map<string, Promise<IrcMessage[] | null>>()
+  // If a chathistory query times out, mark the target so the FIRST late batch (if any)
+  // is dropped rather than satisfying a subsequent query's resolver. TCP/IRC delivery
+  // is FIFO, so dropping one batch is enough.
+  private readonly chathistorySkipNextBatch = new Set<string>()
   private multilineMaxLines = 100
   private readonly history = new Map<string, IrcMessage[]>()
   private readonly unread = new Map<string, UnreadInfo>()
@@ -213,6 +244,22 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (!this.chathistoryCapActive) return null
     if (limit <= 0) return []
     const key = target.toLowerCase()
+    const prev = this.chathistoryQueriesByTarget.get(key) ?? Promise.resolve(null as IrcMessage[] | null)
+    const next = prev.catch(() => null).then(() => this.sendChathistoryQuery(target, limit))
+    this.chathistoryQueriesByTarget.set(key, next)
+    void next.finally(() => {
+      if (this.chathistoryQueriesByTarget.get(key) === next) this.chathistoryQueriesByTarget.delete(key)
+    })
+    return next
+  }
+
+  private async sendChathistoryQuery(target: string, limit: number): Promise<IrcMessage[] | null> {
+    const key = target.toLowerCase()
+    // Wait for any in-flight JOIN auto-replay window for this target to close first.
+    // The pending-join guard would otherwise consume the explicit query's batch and the
+    // query would time out into an empty fallback.
+    const pending = this.pendingJoinReplays.get(key)
+    if (pending) await pending.done
     return new Promise<IrcMessage[] | null>((resolve) => {
       const timer = setTimeout(() => {
         const list = this.chathistoryResolvers.get(key)
@@ -221,6 +268,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
           if (idx !== -1) list.splice(idx, 1)
           if (list.length === 0) this.chathistoryResolvers.delete(key)
         }
+        this.chathistorySkipNextBatch.add(key)
         this.log(`chathistory query timed out for ${target} after ${this.chathistoryQueryTimeoutMs}ms — falling back`)
         resolve(null)
       }, this.chathistoryQueryTimeoutMs)
@@ -561,7 +609,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (event.nick === this.nick) return
     if (event.batch?.type === 'draft/multiline') return
     if (event.batch?.type === BATCH_TYPE_CHATHISTORY) return
-    const isDirect = event.target === this.nick
+    const isDirect = targetIsDirect(event.target)
     const channel = isDirect ? event.nick.toLowerCase() : event.target.toLowerCase()
     const ts = event.tags?.['time'] ?? new Date().toISOString()
     const msg: IrcMessage = { channel, sender: event.nick, text: event.message, ts, isDirect }
@@ -577,7 +625,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const sender = cmds[0].nick
     if (sender === this.nick) return
     const text = reassembleMultilineBatch(cmds)
-    const isDirect = rawTarget === this.nick
+    const isDirect = targetIsDirect(rawTarget)
     const channel = isDirect ? sender.toLowerCase() : rawTarget.toLowerCase()
     const serverTimeMs = cmds[0].getServerTime?.()
     const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
@@ -593,11 +641,20 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
     // Pending-join guard: ergo pushes an auto-replay batch on JOIN even when the
     // agent has an explicit chathistoryLatest() in flight for the same channel.
-    // Route the join's auto-replay to the historical-emit path first; any second
-    // batch (the explicit query's) then satisfies the queued resolver.
+    // chathistoryLatest awaits the pending-join clear before sending, so we can
+    // safely consume this batch as the auto-replay without racing the explicit
+    // query's response.
     if (this.pendingJoinReplays.has(key)) {
       this.clearPendingJoinReplay(key)
       this.emitAutoReplayBatch(event.commands, target)
+      return
+    }
+
+    // A previous query timed out — drop one late batch to keep it from satisfying
+    // a subsequent query's resolver with stale data. FIFO socket delivery means a
+    // single skip is sufficient.
+    if (this.chathistorySkipNextBatch.has(key)) {
+      this.chathistorySkipNextBatch.delete(key)
       return
     }
 
@@ -636,36 +693,49 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       : 0
     // Channel batches (target starts with '#') always carry channel messages. Nick-keyed
     // batches always carry DMs between us and that peer; key all rows under the peer nick.
-    const isDirect = !target.startsWith('#')
+    const isDirect = targetIsDirect(target)
     const channelKey = target.toLowerCase()
     const batch: IrcMessage[] = []
     for (const c of commands) {
       if (c.command !== 'PRIVMSG') continue
       const sender = c.nick
       if (!sender) continue
+      if (HISTORY_SERVICE_SENDERS.has(sender.toLowerCase())) continue
       const text = c.params[c.params.length - 1] ?? ''
       const serverTimeMs = c.getServerTime?.()
       if (cutoffMs > 0 && serverTimeMs !== undefined && serverTimeMs < cutoffMs) continue
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
-      batch.push({ channel: channelKey, sender, text, ts, isDirect })
+      const msg: IrcMessage = { channel: channelKey, sender, text, ts, isDirect }
+      msg.mention = this.nickMentionRegex.test(text)
+      batch.push(msg)
     }
     return opts.applyJoinFilters && this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
   }
 
+  // Window we expect ergo's auto-replay chathistory batch to land within after a
+  // self-JOIN. chathistoryLatest awaits this window before sending its own query;
+  // if no auto-replay arrives (empty channel, no history), the timer fires and the
+  // awaiting query proceeds. Tight bound — replays land within ~100ms in practice;
+  // anything wider just delays empty-channel queries for no benefit.
+  private static readonly PENDING_JOIN_REPLAY_MS = 500
+
   private markPendingJoinReplay(channel: string): void {
-    // Self-clearing timer: if the server doesn't replay (no cap, empty history,
-    // unsupported, etc.) the guard releases after 5s so a later explicit query
-    // for the same channel isn't blocked.
     this.clearPendingJoinReplay(channel)
-    const timer = setTimeout(() => this.pendingJoinReplays.delete(channel), 5000)
+    let resolveDone!: () => void
+    const done = new Promise<void>((r) => { resolveDone = r })
+    const timer = setTimeout(() => {
+      this.pendingJoinReplays.delete(channel)
+      resolveDone()
+    }, RoostIrcClientImpl.PENDING_JOIN_REPLAY_MS)
     timer.unref?.()
-    this.pendingJoinReplays.set(channel, timer)
+    this.pendingJoinReplays.set(channel, { timer, done, resolve: resolveDone })
   }
 
   private clearPendingJoinReplay(channel: string): void {
-    const t = this.pendingJoinReplays.get(channel)
-    if (t !== undefined) {
-      clearTimeout(t)
+    const entry = this.pendingJoinReplays.get(channel)
+    if (entry !== undefined) {
+      clearTimeout(entry.timer)
+      entry.resolve()
       this.pendingJoinReplays.delete(channel)
     }
   }
@@ -685,7 +755,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       for (const r of list) { clearTimeout(r.timer); r.resolve(null) }
     }
     this.chathistoryResolvers.clear()
-    for (const t of this.pendingJoinReplays.values()) clearTimeout(t)
+    this.chathistoryQueriesByTarget.clear()
+    this.chathistorySkipNextBatch.clear()
+    for (const entry of this.pendingJoinReplays.values()) {
+      clearTimeout(entry.timer)
+      entry.resolve()
+    }
     this.pendingJoinReplays.clear()
     this.chathistoryCapActive = false
     this.ircReady = false
