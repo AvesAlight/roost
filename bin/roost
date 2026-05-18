@@ -863,8 +863,9 @@ cmd_spawn() {
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016
     case "${shell_basename}" in
-      fish) inner_cmd="${inner_cmd} --"' (string collect <$ROOST_PROMPT_FILE)' ;;
-      *)    inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
+      fish)    inner_cmd="${inner_cmd} --"' (string collect <$ROOST_PROMPT_FILE)' ;;
+      sh|dash) inner_cmd="${inner_cmd} --"' "$(cat "$ROOST_PROMPT_FILE")"' ;;
+      *)       inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
     esac
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
   fi

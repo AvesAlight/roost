@@ -308,6 +308,38 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 18d: sh uses $(cat ...) prompt-read syntax, not $(< file) -----------
+
+setup
+out="$(SHELL=/bin/sh ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(cat "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+  ok "SHELL=sh + --prompt: inner_cmd uses \$(cat ...), not \$(<file)"
+else
+  fail "SHELL=sh + --prompt: inner_cmd uses \$(cat ...), not \$(<file)" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 18e: dash uses $(cat ...) prompt-read syntax, not $(< file) ---------
+
+setup
+out="$(SHELL=/bin/dash ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(cat "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+  ok "SHELL=dash + --prompt: inner_cmd uses \$(cat ...), not \$(<file)"
+else
+  fail "SHELL=dash + --prompt: inner_cmd uses \$(cat ...), not \$(<file)" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 # -- Test 19: --steer-compact wires PreCompact + writes session-name.txt -----
 # ROOST_SPAWN_KEEP_DATA_DIR=1 keeps the data-dir alive after a preflight
 # failure (tmux session not actually created), so we can inspect what the
