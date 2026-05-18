@@ -18,6 +18,9 @@ setup() {
 
 teardown() {
   rm -rf "$TDIR"
+  # On dev boxes with ergo running, shell-resolution tests pass through to a
+  # real tmux new-session — kill it so the next test gets a fresh "roost-testnick".
+  tmux kill-session -t "roost-testnick" 2>/dev/null || true
   trap - EXIT
   TDIR=""
 }
@@ -244,11 +247,65 @@ teardown
 
 setup
 err="$(SHELL=/bin/tcsh "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1)"; exit_code=$?
-if [ "$exit_code" -ne 0 ] && echo "$err" | grep -q "unsupported login shell"; then
-  ok "unsupported SHELL: exits non-zero with clear message"
+if [ "$exit_code" -ne 0 ] \
+    && echo "$err" | grep -q "unsupported login shell" \
+    && echo "$err" | grep -q "bash, zsh, fish (3.1+), sh, dash"; then
+  ok "unsupported SHELL: exits non-zero with clear self-contained message"
 else
-  fail "unsupported SHELL: exits non-zero with clear message" "exit=$exit_code err=$err"
+  fail "unsupported SHELL: exits non-zero with clear self-contained message" "exit=$exit_code err=$err"
 fi
+teardown
+
+# -- Test 18a: SHELL=fish is accepted, banner shows shell: fish ---------------
+# Path doesn't need to exist — shell selection happens by basename before tmux
+# preflight, so /usr/local/bin/fish is treated as fish regardless of presence.
+
+setup
+err="$(SHELL=/usr/local/bin/fish "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$err" | grep -q "unsupported login shell" \
+    && echo "$err" | grep -q "shell: fish"; then
+  ok "SHELL=fish: shell resolution accepted, banner shows shell: fish"
+else
+  fail "SHELL=fish: shell resolution accepted, banner shows shell: fish" "err=$err"
+fi
+teardown
+
+# -- Test 18b: fish picks the fish-flavored prompt-read syntax ----------------
+# inner-cmd.txt is staged to the data dir under ROOST_SPAWN_KEEP_DATA_DIR=1,
+# before require_tmux/require_ircd — so the assertion works in CI where no
+# IRC daemon is listening. fish must use `(string collect <$ROOST_PROMPT_FILE)`
+# — `$(< file)` is bash/zsh shorthand fish doesn't grok.
+
+setup
+out="$(SHELL=/usr/local/bin/fish ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+# Unquoted (string collect ...) is required: fish treats bare (...) inside
+# double quotes as a literal, so quoting would silently disable substitution.
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- '-- (string collect <$ROOST_PROMPT_FILE)' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+  ok "SHELL=fish + --prompt: inner_cmd uses unquoted string-collect, not \$(<file)"
+else
+  fail "SHELL=fish + --prompt: inner_cmd uses unquoted string-collect, not \$(<file)" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 18c: bash keeps the $(< file) prompt-read syntax --------------------
+
+setup
+out="$(SHELL=/bin/bash ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '(string collect <$ROOST_PROMPT_FILE)'; then
+  ok "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect"
+else
+  fail "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
 # -- Test 19: --steer-compact wires PreCompact + writes session-name.txt -----

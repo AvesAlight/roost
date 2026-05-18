@@ -97,7 +97,7 @@ Usage: roost spawn <nick> [options]
 
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
-the user's login shell (from \$SHELL) so .bash_profile / .zprofile loads — required for RVM, nvm, asdf, and similar toolchains.
+the user's login shell (from \$SHELL) so .bash_profile / .zprofile / ~/.config/fish/config.fish loads — required for RVM, nvm, asdf, and similar toolchains.
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
@@ -668,16 +668,18 @@ cmd_spawn() {
     esac
   fi
   # Resolve login shell from $SHELL (fallback /bin/sh). bash/zsh load the
-  # user's profile via -l; sh/dash don't support -l.
+  # user's profile via -l; fish uses --login for the same effect; sh/dash
+  # don't support -l.
   local login_shell="${SHELL:-/bin/sh}"
   local shell_basename
   shell_basename="$(basename "${login_shell}")"
   local shell_invoke
   case "${shell_basename}" in
     bash|zsh) shell_invoke="${login_shell} -l -c" ;;
+    fish)     shell_invoke="${login_shell} --login -c" ;;
     sh|dash)  shell_invoke="${login_shell} -c" ;;
     *)
-      echo "error: unsupported login shell '${shell_basename}' (SHELL=${login_shell}). Supported: bash, zsh, sh, dash. See https://github.com/AvesAlight/roost/issues/378" >&2
+      echo "error: unsupported login shell '${shell_basename}' (SHELL=${login_shell}). Supported: bash, zsh, fish (3.1+), sh, dash." >&2
       exit 1
       ;;
   esac
@@ -780,18 +782,12 @@ cmd_spawn() {
     trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
   fi
 
-  require_tmux
-  require_ircd
-
-  if tmux has-session -t "${session_name}" 2>/dev/null; then
-    echo "error: tmux session '${session_name}' already exists" >&2
-    echo "  shutdown first: roost shutdown ${nick}" >&2
-    exit 3
-  fi
-
-  # bash/zsh: login shell loads the user's profile before claude, required for
-  # RVM / nvm / asdf toolchains. sh/dash: no -l, no profile load. Env vars
-  # go through tmux -e so the inner command stays a clean string.
+  # bash/zsh: -l loads .bash_profile / .zprofile before claude. fish loads
+  # config.fish on every invocation regardless of --login (the flag only flips
+  # `status is-login`); we still pass --login so any profile config gated on it
+  # runs. sh/dash: no -l, no profile load. All three populate the env that
+  # RVM / nvm / asdf etc. require. Env vars go through tmux -e so the inner
+  # command stays a clean string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
   case "${cache_ttl}" in
@@ -812,14 +808,24 @@ cmd_spawn() {
   fi
 
   # Build the inner command. Bash expands its own ${vars} here, then we
-  # append the prompt placeholder as a single-quoted literal so $(...) is
-  # evaluated by the login shell — not bash and not the tmux shell.
+  # append the prompt placeholder as a single-quoted literal so the file-read
+  # is evaluated by the login shell — not bash and not the tmux shell.
   # Embedding multi-line file contents directly via printf %q produces
   # $'...' ANSI-C quoting, which doesn't survive the shell-layer chain
   # (bash → tmux shell → login shell -c). Reading the file inside the login
-  # shell via $(< $ROOST_PROMPT_FILE) sidesteps that entirely. The leading `--`
-  # is required so the prompt isn't absorbed by --dangerously-load-development-channels
-  # (variadic flag — eats all subsequent non-flag args).
+  # shell sidesteps that entirely. The leading `--` is required so the prompt
+  # isn't absorbed by --dangerously-load-development-channels (variadic flag —
+  # eats all subsequent non-flag args).
+  #
+  # The read syntax is shell-flavored: bash/zsh use `$(< "$ROOST_PROMPT_FILE")`;
+  # fish has no `$(< file)` shorthand and treats unquoted `(...)` as command
+  # substitution but treats bare `(...)` inside double quotes as a literal, so
+  # we use unquoted `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string
+  # collect emits a single argument with newlines preserved, which fish hands
+  # to claude as one arg even unquoted.
+  #
+  # Done before require_tmux/require_ircd so the ROOST_SPAWN_KEEP_DATA_DIR=1
+  # test seam can surface the assembled command without an IRC daemon running.
   local mcp_flag=""
   local channel_server="server:plugin:roost:roost-irc"
   if [ -n "${mcp_config}" ]; then
@@ -846,9 +852,30 @@ cmd_spawn() {
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016
-    inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"'
+    case "${shell_basename}" in
+      fish) inner_cmd="${inner_cmd} --"' (string collect <$ROOST_PROMPT_FILE)' ;;
+      *)    inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
+    esac
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
   fi
+  # Same test seam as the data-dir echo above: surface the assembled inner
+  # command so the spawn_test.sh shell-flavor regressions can grep for the
+  # prompt-read syntax that matches the resolved shell. Stage it to a file
+  # too so tests can read it deterministically without parsing stdout.
+  if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
+    echo "  inner cmd (preflight): ${inner_cmd}"
+    printf '%s' "${inner_cmd}" > "${ROOST_DATA_DIR}/inner-cmd.txt"
+  fi
+
+  require_tmux
+  require_ircd
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "error: tmux session '${session_name}' already exists" >&2
+    echo "  shutdown first: roost shutdown ${nick}" >&2
+    exit 3
+  fi
+
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
     "exec ${shell_invoke} $(printf '%q' "${inner_cmd}")"
