@@ -395,7 +395,6 @@ describe('GhPluginBase.observeRateLimit integration', () => {
 })
 
 describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function observe(plugin: GitHubPrsPlugin, remaining: number, resetInMs = 60 * 60_000) {
     const fetch = async () => ({
       remaining,
