@@ -23,6 +23,11 @@ export interface ClientConfig {
   chathistoryDisabled?: boolean
   /** Timeout for mid-session CHATHISTORY queries before falling back to the local ring. Default 2000ms. */
   chathistoryQueryTimeoutMs?: number
+  /** Window we expect a chathistory auto-replay batch within after self-JOIN.
+   *  chathistoryLatest awaits this before issuing its query so the auto-replay
+   *  isn't stolen off the resolver queue. Default 500ms (tuned for loopback ergo;
+   *  raise for higher-latency remote daemons). */
+  pendingJoinReplayMs?: number
 }
 
 // Extras attached to inbound message events (buffered = reassembled multiline batch).

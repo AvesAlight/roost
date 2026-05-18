@@ -24,6 +24,9 @@
  *   ROOST_IRC_DISABLE_CHATHISTORY  When set (1/true), suppress the chathistory cap request
  *                                  so channel_history falls back to the local in-memory ring.
  *                                  Test hook for the cap-missing path.
+ *   ROOST_IRC_PENDING_JOIN_REPLAY_MS  Window we wait for a chathistory auto-replay batch
+ *                                  after self-JOIN before letting an explicit chathistoryLatest
+ *                                  query proceed (default: 500ms; raise for remote daemons).
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -476,6 +479,7 @@ if (import.meta.main) {
     joinHistoryLines: numericEnv('ROOST_IRC_JOIN_HISTORY_LINES', 20),
     joinHistoryMinutes: numericEnv('ROOST_IRC_JOIN_HISTORY_MINUTES', 30),
     chathistoryDisabled: booleanEnv('ROOST_IRC_DISABLE_CHATHISTORY', false),
+    pendingJoinReplayMs: numericEnv('ROOST_IRC_PENDING_JOIN_REPLAY_MS', 500),
   }
 
   if (ownership === 'passive') {

@@ -95,6 +95,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly whoisTimeoutMs: number
   private readonly chathistoryDisabled: boolean
   private readonly chathistoryQueryTimeoutMs: number
+  private readonly pendingJoinReplayMs: number
 
   private readonly irc: IrcFrameworkClient
 
@@ -143,6 +144,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.whoisTimeoutMs = config.whoisTimeoutMs ?? 5000
     this.chathistoryDisabled = config.chathistoryDisabled ?? false
     this.chathistoryQueryTimeoutMs = config.chathistoryQueryTimeoutMs ?? 2000
+    this.pendingJoinReplayMs = config.pendingJoinReplayMs ?? 500
     this.irc = new IRC.Client()
     this.registerHandlers()
   }
@@ -712,14 +714,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return opts.applyJoinFilters && this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
   }
 
-  // Window we expect ergo's auto-replay chathistory batch to land within after a
-  // self-JOIN. chathistoryLatest awaits this window before sending its own query;
-  // if no auto-replay arrives (empty channel, no history), the timer fires and the
-  // awaiting query proceeds. Tight bound — replays land within ~100ms in practice;
-  // anything wider just delays empty-channel queries for no benefit.
-  // Assumes loopback ergo; revisit if/when we attach to a remote IRC daemon.
-  private static readonly PENDING_JOIN_REPLAY_MS = 500
-
+  // pendingJoinReplayMs (set from ClientConfig, default 500ms): window we expect a
+  // chathistory auto-replay batch within after self-JOIN. chathistoryLatest awaits
+  // this before sending its query; if no auto-replay arrives (empty channel, no
+  // history), the timer fires and the awaiting query proceeds. Default tuned for
+  // loopback ergo (~100ms in practice); raise via ROOST_IRC_PENDING_JOIN_REPLAY_MS
+  // for higher-latency remote daemons.
   private markPendingJoinReplay(channel: string): void {
     this.clearPendingJoinReplay(channel)
     let resolveDone!: () => void
@@ -727,7 +727,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const timer = setTimeout(() => {
       this.pendingJoinReplays.delete(channel)
       resolveDone()
-    }, RoostIrcClientImpl.PENDING_JOIN_REPLAY_MS)
+    }, this.pendingJoinReplayMs)
     timer.unref?.()
     this.pendingJoinReplays.set(channel, { timer, done, resolve: resolveDone })
   }
