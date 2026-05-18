@@ -10,7 +10,7 @@ import {
   splitCommands,
   type Command,
   type HandlerDeps,
-} from '../dm-handler.js'
+} from '../dispatcher-dm-handler.js'
 import { loadConfig, writeConfig, type OrchestratorConfig } from '../config.js'
 import type { Plugin, PluginTickResult } from '../plugin.js'
 

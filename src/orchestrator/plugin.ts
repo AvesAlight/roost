@@ -5,10 +5,10 @@
 // agnostic to the source plugin's event vocabulary.
 //
 // Plugins may also opt in to inbound DM commands via `handleCommand`: see
-// dm-handler.ts for the routing layer. Plugins mutate their own slice
+// dispatcher-dm-handler.ts for the routing layer. Plugins mutate their own slice
 // (config.plugins[name]) in place inside the dispatcher's mutateConfig
-// callback; dm-handler never touches slice shapes.
-import type { Command } from './dm-handler.js'
+// callback; dispatcher-dm-handler never touches slice shapes.
+import type { Command } from './dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from './config.js'
 
 // Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
@@ -43,7 +43,7 @@ export interface Plugin {
   // including dynamic discoveries like PR linked-issues). Seeding is signaled
   // by `prevState === null`.
   runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
-  // Optional: handle a parsed DM command (see dm-handler.ts). Plugins mutate
+  // Optional: handle a parsed DM command (see dispatcher-dm-handler.ts). Plugins mutate
   // their own slice (config.plugins[name]) in place — the call site is wrapped
   // in mutateConfig so writes are atomic across plugins. Return a reply line
   // when this plugin handles the command, null when it doesn't apply.
