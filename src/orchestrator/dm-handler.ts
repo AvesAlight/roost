@@ -46,7 +46,7 @@ const VERBS = new Set(['watch', 'unwatch', 'help'])
 
 // Split a raw inbound body into individual command lines. Newlines /
 // semicolons / commas are all separators — matches the watcher prompt
-// grammar (operator-facing UX since the haiku watcher).
+// grammar (operator-facing UX for DM commands).
 export function splitCommands(text: string): string[] {
   return text
     .split(/[\n;,]+/)

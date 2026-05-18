@@ -23,9 +23,9 @@ from `irssi` and see everything.
 ```
 
 The channel-of-record for an active piece of work is `#issue-NNN`,
-not `#pr-NNN` — issues outlive any single PR attempt (PR #75 closed
-+ PR #76 restart on the same C-718 means the channel needs to be
-stable across restarts; per-issue gives that, per-PR doesn't).
+not `#pr-NNN` — issues outlive any single PR attempt (a PR close +
+restart on the same issue means the channel needs to be stable across
+restarts; per-issue gives that, per-PR doesn't).
 
 ## Channels
 
@@ -33,7 +33,7 @@ stable across restarts; per-issue gives that, per-PR doesn't).
 |-------------------|---------|
 | `#staff`          | Standing senior agents (senior PO, CoS, finance, sales, opsmanager, tooldev). Cross-cutting only. |
 | `#leads-{proj}`   | One per project. Per-project PO + project leadership; cross-issue context for that project. |
-| `#issue-{NNN}`    | One per active issue. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). Stable across PR restarts (PR #75 closed → PR #76 fresh start = same `#issue-NNN`). |
+| `#issue-{NNN}`    | One per active issue. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). Stable across PR restarts (old PR closes, new PR opens = same `#issue-NNN`). |
 
 ## Identities
 

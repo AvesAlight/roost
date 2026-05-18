@@ -248,7 +248,7 @@ export function startPermbot(
       // Tear down on disconnect. The hook's askDaemon detects the missing
       // socket and falls back to a transient-DM + emit('ask'), so the
       // worker degrades cleanly. Owner-gate eliminates the collision-driven
-      // disconnect that motivated #188; if a real network drop becomes a
+      // disconnect; if a real network drop becomes a
       // recurring failure mode, add auto-reconnect as a followup.
       log('IRC connection lost, shutting down')
       stop()

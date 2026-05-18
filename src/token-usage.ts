@@ -237,7 +237,6 @@ interface ScanResult {
 // compaction. It carries preTokens/postTokens + durationMs but no per-
 // field usage block — the summary API call itself isn't logged. We
 // aggregate the markers so the gap is visible, without pricing it.
-// See AvesAlight/roost#334 for the broader /usage-panel gap taxonomy.
 function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, seenCompactUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
   const missByModel = new Map<string, Map<string, MissCounts>>()

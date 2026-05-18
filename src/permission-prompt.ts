@@ -218,7 +218,7 @@ if (import.meta.main) {
   // the operator to approve them. Anything else falls through to the gate.
   if (PASSTHROUGH_PREFIXES.some(p => toolName.startsWith(p))) emit('allow', 'roost-irc passthrough')
 
-  // Owner-gate short-circuit (#188): nested claudes inherit the parent's
+  // Owner-gate short-circuit: nested claudes inherit the parent's
   // ROOST_DATA_DIR via tmux env, so the unix socket path resolves to the
   // owner's permbot. Routing a nested-claude's prompt there would DM the
   // operator about a tool call they didn't initiate. Defer to the local
