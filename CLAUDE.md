@@ -22,7 +22,7 @@ The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` a
 
 ## Comments
 
-In-tree comments (code and docs) must be timeless — no PR/issue/version refs (e.g. `(#276)`, `Issue #342`, `from #136`, `since v3`). Future readers encounter them without that context. Systems of record (commit messages, PR bodies, LEARNINGS.md) keep their refs; in-tree comments don't.
+In-tree comments (code and docs) must be timeless — no PR/issue/version refs (e.g. `(#276)`, `Issue #342`, `from #136`, `since v3`). Future readers encounter them without that context. Systems of record (commit messages, PR bodies, LEARNINGS.md, dated audit reports under `docs/audit-*`) keep their refs; in-tree comments don't.
 
 ## Code quality
 
