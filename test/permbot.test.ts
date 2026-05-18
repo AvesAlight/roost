@@ -24,6 +24,7 @@ function makeMockClient() {
     quit: () => { quitted = true },
     whoisChannels: async () => [],
     getHistory: () => [],
+    chathistoryLatest: async () => null,
     getUsers: () => [],
     getUnread: () => new Map<string, UnreadInfo>(),
     ackUnread: () => {},

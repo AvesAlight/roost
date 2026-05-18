@@ -19,6 +19,10 @@ export interface ClientConfig {
   joinHistoryLines: number
   joinHistoryMinutes: number
   whoisTimeoutMs?: number
+  /** Suppress the chathistory cap request — forces the local-ring fallback path. Test hook. */
+  chathistoryDisabled?: boolean
+  /** Timeout for mid-session CHATHISTORY queries before falling back to the local ring. Default 2000ms. */
+  chathistoryQueryTimeoutMs?: number
 }
 
 // Extras attached to inbound message events (buffered = reassembled multiline batch).
@@ -71,6 +75,12 @@ export interface RoostIrcClient {
 
   // Served from local cache — no network round-trip.
   getHistory(key: string, limit?: number): IrcMessage[]
+
+  // Server-authoritative history via IRCv3 CHATHISTORY LATEST. Returns null when the
+  // server didn't advertise the chathistory cap (caller falls back to getHistory) or
+  // when the query times out. Includes the requester's own outbound messages and
+  // pre-startup activity; the local ring does not.
+  chathistoryLatest(target: string, limit: number): Promise<IrcMessage[] | null>
   getUsers(channel: string): string[]
   // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.
   getUnread(): ReadonlyMap<string, UnreadInfo>

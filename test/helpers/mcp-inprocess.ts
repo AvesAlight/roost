@@ -16,6 +16,8 @@ export interface StartMcpInProcessOptions {
   historySize?: number
   joinHistoryLines?: number
   joinHistoryMinutes?: number
+  chathistoryDisabled?: boolean
+  chathistoryQueryTimeoutMs?: number
 }
 
 let instanceCounter = 0
@@ -35,6 +37,8 @@ export async function startMcpInProcess(
     historySize: options?.historySize ?? 50,
     joinHistoryLines: options?.joinHistoryLines ?? 20,
     joinHistoryMinutes: options?.joinHistoryMinutes ?? 30,
+    chathistoryDisabled: options?.chathistoryDisabled,
+    chathistoryQueryTimeoutMs: options?.chathistoryQueryTimeoutMs,
   }
 
   const ircClient = new RoostIrcClientImpl(clientConfig)

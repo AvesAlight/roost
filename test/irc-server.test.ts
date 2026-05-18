@@ -151,7 +151,10 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   })
 
   it('channel_history empty before any messages', async () => {
-    const mcp = await startMcpInProcess(ergo, 'ip-hist2')
+    // Force the local-ring fallback path. The server-authoritative CHATHISTORY query
+    // returns ergo's HistServ join announcement for a freshly-joined channel, so the
+    // empty-ring "no-history" semantics only hold against the fallback path.
+    const mcp = await startMcpInProcess(ergo, 'ip-hist2', { chathistoryDisabled: true })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist2' } })
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-hist2' } })
     const text = toolText(hist)
@@ -160,7 +163,9 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
   })
 
   it('channel_history returns <channel> XML elements with historical="true"', async () => {
-    const mcp = await startMcpInProcess(ergo, 'ip-histshape1')
+    // Exercise the local-ring shape — server-authoritative responses include service
+    // announcements (HistServ join messages) that pollute the no-mention assertion.
+    const mcp = await startMcpInProcess(ergo, 'ip-histshape1', { chathistoryDisabled: true })
     const peer = await connectPeer(ergo, 'ip-histshape1-peer')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-histshape1' } })
     await peer.joinChannel('#ip-histshape1')
@@ -751,6 +756,7 @@ function makeStubClient(): RoostIrcClient {
     quit: () => {},
     whoisChannels: async () => null,
     getHistory: () => [],
+    chathistoryLatest: async () => null,
     getUsers: () => [],
     getUnread: () => new Map(),
     ackUnread: () => {},

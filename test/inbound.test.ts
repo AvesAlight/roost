@@ -158,7 +158,10 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
   })
 
   it('peer NICK: history key renamed — channel_history newNick returns pre-rename DMs', async () => {
-    const mcp = await startMcpInProcess(ergo, 'ip-in-mcp8')
+    // Local-ring-only: nick-rename re-keying is purely a client-side ring detail.
+    // The server-authoritative query path keys by account (when available) and is
+    // outside this test's scope.
+    const mcp = await startMcpInProcess(ergo, 'ip-in-mcp8', { chathistoryDisabled: true })
     const peer = await connectPeer(ergo, 'ip-in-peer8')
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-nick-hist' } })
