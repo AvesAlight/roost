@@ -52,23 +52,18 @@ Defaults:
   in both paths.
 - cache-ttl: no wrapper default — if unset, neither env var is
   injected and claude-code's native cache behavior applies. Caller
-  picks per session. Heuristic: one-shot agents (reviewers,
-  single-prompt workers) → `--cache-ttl 5m`; multi-turn agents
-  (workers awaiting human review, lead-pm, APM, dispatcher)
-  → `--cache-ttl 1h`. Translated to claude-code's env knobs in the
+  picks per session. Translated to claude-code's env knobs in the
   spawned session: `FORCE_PROMPT_CACHING_5M=1` or
-  `ENABLE_PROMPT_CACHING_1H=1`. 1h writes cost 2x the 5m rate.
+  `ENABLE_PROMPT_CACHING_1H=1`. See `roost spawn --help`
+  ("Agent class guidance") for the role→flag heuristic.
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)
 - `--steer-compact`: opt-in. Wires a PreCompact hook that intercepts
   claude code's auto-compact and redirects it as a manual `/compact`
   with a directive (so the compactor runs with `custom_instructions`
-  rather than its empty default). Pass on long-running PM-class
-  agents (lead-pm, associate-pm) whose runtime state would otherwise
-  be lost across a directive-less auto-compact. Workers and
-  reviewers are short-lived enough that the default behavior is
-  fine — omit the flag.
+  rather than its empty default). See `roost spawn --help`
+  ("Agent class guidance") for which agents need this.
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the

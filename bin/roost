@@ -136,12 +136,8 @@ Options:
                              \`ENABLE_PROMPT_CACHING_1H=1\` for 1h).
                              No wrapper default — if unset, neither env
                              var is injected and claude-code's native
-                             cache behavior applies. Caller picks per
-                             session: \`5m\` for one-shot agents (reviewers,
-                             single-prompt workers); \`1h\` for anything with
-                             multi-turn work (workers awaiting human
-                             review, lead-pm, APM, dispatcher).
-                             1h cache writes cost 2x the 5m rate.
+                             cache behavior applies. See "Agent class
+                             guidance" below for which value to pick.
   --steer-compact            Opt in to roost's auto-compact intercept.
                              Wires a PreCompact hook that, on
                              \`trigger=auto\`, blocks the directive-less
@@ -149,13 +145,8 @@ Options:
                              \`/compact <directive>\` into the agent's
                              own tmux pane — so the compactor runs with
                              our directive instead of the empty default.
-                             Use this for long-running agents whose
-                             runtime state would be lost across a
-                             directive-less auto-compact (lead-pm,
-                             associate-pm). Short-lived agents
-                             (workers, reviewers) should omit the flag
-                             and let claude code's native auto-compact
-                             run unmodified.
+                             See "Agent class guidance" below for which
+                             agents need this.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -184,12 +175,26 @@ Options:
                              Use for --chrome, --system-prompt, etc.
 
 Agent class guidance:
-  PM agents (lead-pm, associate-pm) — long-running, need compact steering:
+  Pick --cache-ttl and --steer-compact by session lifetime and cache
+  reuse. 1h cache writes cost 2x the 5m rate, so reach for 1h only when
+  the session genuinely idles past 5 minutes. --steer-compact preserves
+  runtime state across auto-compact; long-running agents need it,
+  short-lived ones don't (auto-compact rarely fires in their lifetime).
+
+  PM agents (lead-pm, associate-pm) — long-running, idle through review
+  loops and message-relay timescales that blow past 5m; runtime state
+  would be lost across a directive-less auto-compact:
     --steer-compact --cache-ttl 1h
-  Workers (post-PR, waiting through reviewer + human review cycles):
+  Workers — multi-turn through reviewer + human review cycles that
+  routinely exceed 5 minutes, so \`--cache-ttl 1h\`. But short-lived
+  enough that auto-compact rarely fires, so no \`--steer-compact\`:
     --cache-ttl 1h
-  One-shot agents (reviewers, single-prompt workers):
+  One-shot agents (reviewers, single-prompt workers) — read input,
+  post output, shut down inside 5 minutes:
     --cache-ttl 5m
+
+  Unset is legal for ad-hoc/sandbox spawns where the cost shape isn't
+  worth thinking about — claude-code's native cache behavior applies.
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject

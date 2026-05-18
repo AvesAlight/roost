@@ -704,22 +704,12 @@ are spawned via `--model` but routinely sit through reviewer + human
 review cycles that exceed 5 minutes. Pinning them at 5m means they
 pay a fresh cache-write on each wake — exactly the cost we wanted to
 avoid. Rather than carry edge cases per role, we dropped the default
-entirely. Heuristic that goes in the docs:
+entirely.
 
-- **One-shot agents → `--cache-ttl 5m`.** Reviewers (read PR → post
-  findings → shut down) and single-prompt workers fit here. The 5m
-  write is half the cost of 1h and the session won't outlive it
-  anyway.
-- **Multi-turn agents → `--cache-ttl 1h`.** Workers awaiting human
-  review, lead-pm, APM, the dispatcher. These idle through review-loop
-  and message-relay timescales that blow past 5m.
-- **Unset is legal.** No env var is injected and claude-code's native
-  cache behavior applies. Useful for ad-hoc/sandbox spawns where the
-  cost shape isn't worth thinking about.
-
-Refs at the spawn call sites: `agents/lead-pm.md` (APM spawn pins 1h),
-`agents/associate-pm.md` (worker spawn template pins 1h, reviewer
-template pins 5m).
+The role→flag heuristic itself lives in `roost spawn --help`
+("Agent class guidance") — that's the canonical source operators read
+when picking flags, and the only place to edit if the trade-offs ever
+shift. Agent prompts and the roost skill point at it.
 
 Acceptance: the next wave's cost reports should show reviewers and
 one-shot writes in the 5m bucket; workers, lead-pm, and APM in the 1h

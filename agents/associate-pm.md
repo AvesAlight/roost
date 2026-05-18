@@ -68,6 +68,8 @@ If you never get an affirmative, sit and wait. Do not nag.
 
 ## Six dances you own
 
+The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance").
+
 ### Setup dance
 
 Trigger: lead mentions you with intent like "let's do #290 with opus, and #291" or "kick off 42".
@@ -87,7 +89,6 @@ On confirmation, for each issue N:
      --prompt '/worker <project> <N> <owner>/<repo> <branch> <human-nick>' \
      --perm-irc --perm-target <project>-lead-pm
    ```
-   Workers wait through reviewer + human review cycles which routinely exceed 5 minutes, so they need 1h cache to avoid paying a fresh cache-write on each wake.
 4. Join `#<project>-issue-<N>` yourself.
 5. Snapshot lead-pm + APM cumulative token usage so the cleanup post-mortem can diff per-issue:
    ```
@@ -121,7 +122,6 @@ Trigger: a worker posts a draft PR link in an issue channel you're in.
        --perm-irc --perm-target <project>-lead-pm
      ```
    - Default to opus for review regardless of worker model. Drop to sonnet only when the lead specifies.
-   - Reviewers are one-shot (read PR → post findings → shut down), so 5m cache suffices and is half the cost of 1h.
    - Post in the issue channel: `reviewer spawned for PR #<N>`.
 4. **Missing link** (`closingIssuesReferences` empty): ack before acting. Template: `draft PR #<N> up — no linked issue detected, want me to add Closes #<I>? (then I'll spawn reviewer)`. On confirmation: `gh pr edit <N> --repo <owner>/<repo> --body "..."` with the corrected body — preserve the existing body shape (add `Closes #<I>` as the first line, leave everything else in place). Re-query `closingIssuesReferences` after the edit to confirm the link took, then proceed as in the happy path.
 

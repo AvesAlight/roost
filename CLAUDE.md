@@ -20,6 +20,10 @@ Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatte
 
 The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` at spawn. When wired, it intercepts claude code's auto-compact (`trigger="auto"`), returns `{"decision":"block"}` to halt the directive-less default, then injects `/compact <directive>` into the tmux pane via backgrounded `tmux send-keys` — so the manual `/compact` re-fires PreCompact with `trigger="manual"` and `custom_instructions` populated, and the compactor runs with our directive. The directive is a single-line constant near the top of the hook script (one place to edit; covers the roost agent set generically — role, IRC nick, channels joined, in-flight issue/PR state, recent decisions, pending work). Long-running PM-class agents (lead-pm, associate-pm) pass `--steer-compact`; workers and reviewers don't (auto-compact rarely fires in their lifetime). The `docs/LEARNINGS.md` finding on auto-compact has the empirical investigation.
 
+## Agent class heuristic
+
+The role→flag heuristic for `--cache-ttl` and `--steer-compact` lives in the "Agent class guidance" block of `bin/roost`'s `spawn --help` output — that's the canonical source. Agent prompts (`agents/lead-pm.md`, `agents/associate-pm.md`), the roost skill, and `docs/LEARNINGS.md` §9 all point at it. Edit the `bin/roost` block if the trade-offs shift; the pointers don't need to move. Shipped artifacts (agent prompts, the skill) deliberately don't carry "edit here" instructions — they install into projects that aren't roost, where operators don't own the heuristic.
+
 ## Comments
 
 In-tree comments (code and docs) must be timeless — no PR/issue/version refs (e.g. `(#276)`, `Issue #342`, `from #136`, `since v3`). Future readers encounter them without that context. Systems of record (commit messages, PR bodies, LEARNINGS.md, dated audit reports under `docs/audit-*`) keep their refs; in-tree comments don't.

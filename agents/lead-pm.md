@@ -59,9 +59,7 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
-Cache-TTL is explicit at the call site — no wrapper default. Heuristic: **one-shot agents (reviewers, single-prompt workers) → `--cache-ttl 5m`; anything with multi-turn work (the APM, workers awaiting human review, you) → `--cache-ttl 1h`.** Workers in particular wait through review cycles that routinely exceed 5 minutes, so they need 1h to avoid paying a fresh cache-write per wake. 1h writes cost 2x the 5m rate, so don't reach for it on truly ephemeral spawns.
-
-`--steer-compact` opts the APM (and you, when you spawn yourself) into roost's auto-compact intercept: claude code's auto-compact gets blocked and redirected to a manual `/compact` with a directive that asks the compactor to retain role + nick, channels joined, in-flight issue/PR state, recent decisions, and pending work. Long-running PM-class agents need it. Workers and reviewers spawned by the APM do NOT pass it — they're short-lived enough that auto-compact is unlikely to fire, and the default behavior is fine.
+See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl` and `--steer-compact` for each agent class.
 
 ## Working In Channels
 
