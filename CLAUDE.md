@@ -20,6 +20,10 @@ Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatte
 
 The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` at spawn. When wired, it intercepts claude code's auto-compact (`trigger="auto"`), returns `{"decision":"block"}` to halt the directive-less default, then injects `/compact <directive>` into the tmux pane via backgrounded `tmux send-keys` — so the manual `/compact` re-fires PreCompact with `trigger="manual"` and `custom_instructions` populated, and the compactor runs with our directive. The directive is a single-line constant near the top of the hook script (one place to edit; covers the roost agent set generically — role, IRC nick, channels joined, in-flight issue/PR state, recent decisions, pending work). Long-running PM-class agents (lead-pm, associate-pm) pass `--steer-compact`; workers and reviewers don't (auto-compact rarely fires in their lifetime). The `docs/LEARNINGS.md` finding on auto-compact has the empirical investigation.
 
+## Comments
+
+In-tree comments (code and docs) must be timeless — no PR/issue/version refs (e.g. `(#276)`, `Issue #342`, `from #136`, `since v3`). Future readers encounter them without that context. Systems of record (commit messages, PR bodies, LEARNINGS.md, dated audit reports under `docs/audit-*`) keep their refs; in-tree comments don't.
+
 ## Code quality
 
 ```
@@ -37,7 +41,7 @@ Requires ergo (IRCv3 server). Install with `bin/install-ergo` or set `ERGO_BIN` 
 
 **Never pipe `bun test` through `tail`, `head`, or `grep`.** The shell returns the *last* command's exit code, which is always 0 for those filters — so `bun test ... | tail -N` reports success even when bun failed. The pipe also buffers the entire run until exit, masking hangs. If you need to trim noisy output, write the full result to a file and read it: `bun test ... > /tmp/out 2>&1; echo "exit=$?"; tail -N /tmp/out`. The exit code is the only honest signal.
 
-**Bun-specific footgun (issue #170, upstream report TBD):** when an unhandled promise rejection arrives from a test the runner has already abandoned, bun 1.2.20 deadlocks the runner (no subsequent test runs, process never exits). Any test helper that resolves/rejects via a `setTimeout(reject, ...)` race against the user's `await` will hit this if the user's await is ever aborted (test timeout, prior failure, etc.). Wrap such promises with `suppressLateRejection` from `test/helpers/tool.ts`: it pre-attaches a no-op `.catch()` so an abandoned rejection is silently absorbed, while a still-active `await` still throws normally. The existing wait-style helpers in `test/helpers/mcp-core.ts` and `test/helpers/peer.ts` already use it.
+**Bun-specific footgun:** when an unhandled promise rejection arrives from a test the runner has already abandoned, bun 1.2.20 deadlocks the runner (no subsequent test runs, process never exits). Any test helper that resolves/rejects via a `setTimeout(reject, ...)` race against the user's `await` will hit this if the user's await is ever aborted (test timeout, prior failure, etc.). Wrap such promises with `suppressLateRejection` from `test/helpers/tool.ts`: it pre-attaches a no-op `.catch()` so an abandoned rejection is silently absorbed, while a still-active `await` still throws normally. The existing wait-style helpers in `test/helpers/mcp-core.ts` and `test/helpers/peer.ts` already use it.
 
 ## Worktrees
 

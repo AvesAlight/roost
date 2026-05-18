@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 // PreToolUse hook with a Bash matcher. Closes the bypass where Claude Code's
-// structural safety analyzer skips PermissionRequest (issue #276) and shows
+// structural safety analyzer skips PermissionRequest and shows
 // a terminal-only prompt that workers spawned with --perm-irc never see.
 // PreToolUse fires *before* the analyzer, so a routing decision here takes
 // precedence over the analyzer's TUI path.
@@ -35,8 +35,7 @@ const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 // keep in sync with src/permission-prompt.ts (SOCKET_SAFETY_TIMEOUT)
 const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOST_PERM_TIMEOUT_SECS'] ?? '570')))
 
-// bashMissKind labels lifted from the 2.1.139 binary (issue #276). These are
-// roost's *approximations* of the harness's classification — not literal
+// bashMissKind labels approximate the harness's Bash safety classifier — not literal
 // `decisionReason` strings. We collapse several harness kinds (e.g.
 // cd-git-compound / cd-compound-write / cd-compound-redirect → `cd-compound`)
 // and rename others (`semantics` → `newline-hash` for legibility in operator
@@ -170,7 +169,7 @@ if (import.meta.main) {
   const kind = classifyBash(command)
   if (kind === null) passthrough()
 
-  // Owner-gate short-circuit (#188): nested claudes inherit ROOST_DATA_DIR
+  // Owner-gate short-circuit: nested claudes inherit ROOST_DATA_DIR
   // via tmux env and would otherwise route the parent's prompt to the
   // owner's permbot. Fall through to the local TUI for non-owner sessions.
   if (DATA_DIR && SESSION_ID) {

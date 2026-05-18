@@ -247,9 +247,8 @@ export function startPermbot(
     } else if (kind === 'disconnected') {
       // Tear down on disconnect. The hook's askDaemon detects the missing
       // socket and falls back to a transient-DM + emit('ask'), so the
-      // worker degrades cleanly. Owner-gate eliminates the collision-driven
-      // disconnect that motivated #188; if a real network drop becomes a
-      // recurring failure mode, add auto-reconnect as a followup.
+      // worker degrades cleanly. Owner-gate eliminates the collision-driven disconnect;
+      // if a real network drop becomes a recurring failure mode, add auto-reconnect.
       log('IRC connection lost, shutting down')
       stop()
     } else if (kind === 'cap-missing') {

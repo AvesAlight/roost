@@ -13,7 +13,7 @@ config at your own repo / channel set.
 
 Each watched item routes to `#<project>-issue-{number}`. The project channel
 (default `#<project>-leads`) is a fallback for errors and project-level events.
-See `src/orchestrator/naming.ts` for the full namespacing convention (#196).
+See `src/orchestrator/naming.ts` for the full namespacing convention.
 
 ## Setup
 
@@ -46,9 +46,9 @@ to `#<project>-issue-N` for each linked issue).
 A plugin not listed under `plugins` is not instantiated — there is no top-level
 fallback. The supported set is the first-party plugins shipped in this repo
 (`github-prs`, `github-issues`, `github-new-issues`); external plugin discovery
-is tracked in #255.
+is not yet supported.
 
-`github-new-issues` (added in #342) needs an explicit `plugins.github-new-issues`
+`github-new-issues` needs an explicit `plugins.github-new-issues`
 entry to run. `bin/roost init` writes one for new projects; for existing
 projects, add `"github-new-issues": {}` to enable the repo-wide new-issue
 feed on the project channel.

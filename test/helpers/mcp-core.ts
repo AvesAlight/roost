@@ -30,7 +30,7 @@ export type MessageNotification = ChannelNotification & { meta: MessageNotificat
 // is optional and ignored if undefined; if set, all must match. An empty
 // `MessageMatch` ({}) matches any message notification — useful as a
 // wait-for-any-message form. Centralizing this avoids the per-site inline
-// predicate pattern that bit #246: a wire-shape change is a one-file edit
+// predicate pattern: any wire-shape change is a one-file edit
 // here, and the helper enforces the positive `event === 'message'`
 // discriminator.
 export interface MessageMatch {

@@ -44,7 +44,7 @@ const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same RO
 
 const REPLY_REMINDER = "Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply."
 const UNREAD_HINT = '(post a message to those channels/peers or call channel_ack to clear)'
-// 1/7 — midpoint of the 1/5–1/10 range from #136. Random rate avoids the
+// 1/7 — midpoint of a 1/5–1/10 range. Random rate avoids the
 // pattern-match-and-ignore failure mode of a fixed cadence.
 const REMINDER_PROBABILITY = 1 / 7
 
@@ -506,7 +506,7 @@ async function runOwnerMcp(args: {
   // Permbot runs in-process when --perm-irc is on. Same MCP, second IRC
   // connection on nick `permbot-${NICK}`. Lifecycle = MCP lifecycle, so a
   // crashed nested-claude spawn can no longer kick the worker's permbot
-  // off via nick collision (#188). The hook stays a separate process and
+  // off via nick collision. The hook stays a separate process and
   // talks to us over the unix socket as before.
   const PERM_SOCK = process.env['ROOST_PERM_SOCK'] ?? ''
   const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''

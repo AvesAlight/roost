@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for bin/roost-compact-hook (PreCompact intercept, issue #368).
+# Tests for bin/roost-compact-hook (PreCompact intercept).
 # Plain bash — covers the two branches: auto (block + inject the baked-in
 # DIRECTIVE constant), manual (pass through + SIGUSR1). Uses a mock tmux on
 # PATH so we don't need a real pane.

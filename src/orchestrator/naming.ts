@@ -3,7 +3,7 @@
 // to carry a project prefix so two projects sharing one ergo + one tmux do
 // not collide. Single source of truth for the prefix shape.
 //
-// Format choice (#196): project-first (`#<project>-leads`, `#<project>-issue-N`,
+// Format: project-first (`#<project>-leads`, `#<project>-issue-N`,
 // `<project>-worker-N`). Project-first groups every channel for one project
 // together in irssi/weechat `/list`, which is the dogfooding ergonomic.
 

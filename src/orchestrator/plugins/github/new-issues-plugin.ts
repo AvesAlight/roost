@@ -2,7 +2,7 @@
 // oneline announcement to the project channel the first time a given issue
 // number is observed. Sibling to `github-issues`: that plugin routes activity
 // for hand-watched issues; this one surfaces brand-new issues so the team
-// doesn't have to notice them manually. Issue #342.
+// doesn't have to notice them manually.
 //
 // Enabled by an explicit `plugins.github-new-issues` slice in config —
 // empty object is fine. `bin/roost init` writes one for new projects;

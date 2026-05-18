@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-// Bumped to 3 in #116 — split GitHub plugin into Prs/Issues, each owns its
+// Schema version 3: GitHub plugin split into Prs/Issues; each owns its
 // own state slice. Schema bumps trigger a one-time re-seed via loadState().
 export const SCHEMA_VERSION = 3
 
@@ -140,8 +140,8 @@ export async function writeHeartbeat(stateDir: string): Promise<void> {
 // Dispatcher PID file. JSON `{pid, started_at_ms, cmdline}`. Only `pid` is
 // contractual today — `bin/start-dispatcher` reads it for the front-door
 // liveness check. `started_at_ms` and `cmdline` are written for operator
-// inspection and as the substrate for future readers (e.g. #302 shutdown
-// helper) — extend with care once a consumer lands.
+// inspection and as the substrate for future tooling (e.g. a shutdown helper)
+// — extend with care once a consumer lands.
 export const DISPATCHER_PID_FILE = 'dispatcher.pid'
 
 export interface DispatcherPidInfo {
