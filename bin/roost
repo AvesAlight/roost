@@ -867,7 +867,7 @@ cmd_spawn() {
     case "${shell_basename}" in
       fish)    inner_cmd="${inner_cmd} --"' (string collect <$ROOST_PROMPT_FILE)' ;;
       sh|dash) inner_cmd="${inner_cmd} --"' "$(cat "$ROOST_PROMPT_FILE")"' ;;
-      *)       inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
+      bash|zsh) inner_cmd="${inner_cmd} --"' "$(< "$ROOST_PROMPT_FILE")"' ;;
     esac
     tmux_env+=(-e "ROOST_PROMPT_FILE=${prompt_file}")
   fi
