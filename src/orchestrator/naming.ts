@@ -61,10 +61,6 @@ export function apmNick(project: string): string {
   return `${project}-apm`
 }
 
-export function watcherNick(project: string): string {
-  return `${project}-watcher`
-}
-
 export function dispatcherNick(project: string): string {
   return `${project}-dispatcher`
 }

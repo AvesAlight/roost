@@ -139,7 +139,7 @@ Options:
                              session: \`5m\` for one-shot agents (reviewers,
                              single-prompt workers); \`1h\` for anything with
                              multi-turn work (workers awaiting human
-                             review, lead-pm, APM, dispatcher, watcher).
+                             review, lead-pm, APM, dispatcher).
                              1h cache writes cost 2x the 5m rate.
   --steer-compact            Opt in to roost's auto-compact intercept.
                              Wires a PreCompact hook that, on

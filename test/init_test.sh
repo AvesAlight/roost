@@ -268,8 +268,7 @@ setup "https://github.com/TestOwner/myproject.git"
 cd "$TDIR"
 if roost_init >/dev/null 2>&1 \
     && [ -f "${TDIR}/.claude/commands/worker.md" ] \
-    && [ -f "${TDIR}/.claude/commands/reviewer.md" ] \
-    && [ -f "${TDIR}/.claude/commands/watcher.md" ]; then
+    && [ -f "${TDIR}/.claude/commands/reviewer.md" ]; then
   ok "prompts: fresh copy to .claude/commands/"
 else
   fail "prompts: fresh copy to .claude/commands/"

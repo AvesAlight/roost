@@ -3,7 +3,7 @@
 #
 # Starts the roost dispatcher daemon for the given config directory, or
 # reports an existing running daemon as ok. Idempotent — safe to call from
-# multiple agents (APM, watcher) at the same time.
+# multiple agents (APM, dispatcher) at the same time.
 #
 # Lifecycle:
 #   1. Take a mkdir lock at <config-dir>/.dispatcher.start.lock. Loser polls

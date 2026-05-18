@@ -1,1 +1,0 @@
-../../prompts/watcher.md
