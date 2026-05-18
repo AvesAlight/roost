@@ -186,11 +186,10 @@ Options:
 Agent class guidance:
   PM agents (lead-pm, associate-pm) — long-running, need compact steering:
     --steer-compact --cache-ttl 1h
-  Workers awaiting review — multi-turn:
+  Workers (post-PR, waiting through reviewer + human review cycles):
     --cache-ttl 1h
   One-shot agents (reviewers, single-prompt workers):
     --cache-ttl 5m
-  (1h cache writes cost 2x the 5m rate; don't use it for ephemeral spawns.)
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
@@ -500,6 +499,7 @@ cmd_init() {
   printf '  roost spawn %s-lead-pm \\\n' "$project"
   printf '    --agent lead-pm \\\n'
   printf "    --channels '#%s-leads' \\\n" "$project"
+  printf '    --steer-compact --cache-ttl 1h \\\n'
   printf "    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'\n"
 }
 
