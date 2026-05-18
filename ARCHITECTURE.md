@@ -226,6 +226,22 @@ restart, outage), it queries the dispatcher for actionable state
 flags as needing interpretation. Don't scroll history — it burns
 context on routine event volume.
 
+For auto-compaction specifically: claude code's auto-compact fires
+event-driven (not at a fixed token count) and without a directive.
+Long-running roost agents opt in to an intercept with the
+`--steer-compact` flag at spawn — that wires `bin/roost-compact-hook`
+as a PreCompact handler. On `trigger="auto"` the hook returns
+`{"decision":"block"}` to halt the directive-less auto-compact, then
+backgrounded-shells a `tmux send-keys` of `/compact <directive>`
+into its own pane. That re-fires PreCompact with `trigger="manual"`
+and `custom_instructions` populated; the hook passes through, and
+the manual `/compact` actually steers the compactor with our
+directive. The directive is a single-line constant inside the hook
+script (one place to edit; covers the roost agent set generically).
+Short-lived agents (workers, reviewers) skip the flag — auto-compact
+is unlikely to fire in their lifetime and the default behavior is
+fine.
+
 For per-project PO specifically, rejoin is a fresh-instance
 respawn from the senior PO. Senior orients the new instance from:
 runbook + project artifacts (current `worker_conventions`,

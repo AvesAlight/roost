@@ -548,11 +548,12 @@ async function runOwnerMcp(args: {
   process.on('SIGINT', () => shutdown(130))
   process.on('SIGTERM', () => shutdown(143))
 
-  // SIGUSR1: PreCompact hook fires this to clear the seen-set. Next backfill
-  // after reconnect re-delivers messages compacted out of the agent's context.
+  // SIGUSR1: PreCompact hook fires this on the pass-through path (manual /compact
+  // or auto-without-directive) to clear the seen-set. Next backfill after
+  // reconnect re-delivers messages compacted out of the agent's context.
   process.on('SIGUSR1', () => {
     clearDedupeCache()
-    process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction reset)\n`)
+    process.stderr.write(`roost-irc[${NICK}]: SIGUSR1 — seen-set cleared (compaction)\n`)
   })
 
   process.on('SIGUSR2', emitUnreadSummary)

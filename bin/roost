@@ -141,6 +141,20 @@ Options:
                              multi-turn work (workers awaiting human
                              review, lead-pm, APM, dispatcher, watcher).
                              1h cache writes cost 2x the 5m rate.
+  --steer-compact            Opt in to roost's auto-compact intercept.
+                             Wires a PreCompact hook that, on
+                             \`trigger=auto\`, blocks the directive-less
+                             auto-compact and queues
+                             \`/compact <directive>\` into the agent's
+                             own tmux pane — so the compactor runs with
+                             our directive instead of the empty default.
+                             Use this for long-running agents whose
+                             runtime state would be lost across a
+                             directive-less auto-compact (lead-pm,
+                             associate-pm). Short-lived agents
+                             (workers, reviewers) should omit the flag
+                             and let claude code's native auto-compact
+                             run unmodified.
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -534,6 +548,7 @@ cmd_spawn() {
   local ask_target=""
   local permission_mode=""
   local cache_ttl=""
+  local steer_compact=0
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -560,6 +575,7 @@ cmd_spawn() {
       --ask-target)     ask_target="$2"; shift 2 ;;
       --permission-mode) permission_mode="$2"; shift 2 ;;
       --cache-ttl)      cache_ttl="$2"; shift 2 ;;
+      --steer-compact)  steer_compact=1; shift ;;
 
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -613,17 +629,17 @@ cmd_spawn() {
     echo "error: --ask-irc requires --ask-target NICK (or --perm-target when also using --perm-irc)" >&2
     exit 1
   fi
+  local _agent_path=""
   if [ -n "${agent}" ]; then
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
     # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
     local _agent_found=0
     local _search_root
-    local _found_path=""
     for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
       if [ -d "${_search_root}" ]; then
-        _found_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
-        if [ -n "${_found_path}" ]; then
+        _agent_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
+        if [ -n "${_agent_path}" ]; then
           _agent_found=1
           break
         fi
@@ -693,24 +709,19 @@ cmd_spawn() {
     prompt_file="${ROOST_DATA_DIR}/prompt.txt"
     printf '%s' "${prompt_text}" > "${prompt_file}"
   fi
-  # On any failure before the tmux session is created, clean up the data dir.
-  trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
-
-  require_tmux
-  require_ircd
-
-  if tmux has-session -t "${session_name}" 2>/dev/null; then
-    echo "error: tmux session '${session_name}' already exists" >&2
-    echo "  shutdown first: roost shutdown ${nick}" >&2
-    exit 3
+  if [ "${steer_compact}" -eq 1 ]; then
+    # Tell the PreCompact hook which tmux session to inject into. Without
+    # this the hook would have to guess from ROOST_IRC_NICK + the default
+    # ${SESSION_PREFIX}${nick} convention — and would silently miss when
+    # the operator passed -s/--session NAME with a non-default name.
+    printf '%s' "${session_name}" > "${ROOST_DATA_DIR}/session-name.txt"
   fi
-
-  # Write per-session roost-settings.json with hooks that need to be active
-  # for all roost sessions. PreCompact, PostCompact, and SessionStart-compact
-  # are always present; PermissionRequest and PreToolUse:Bash are added when
-  # --perm-irc is passed; PreToolUse:AskUserQuestion is added when --ask-irc
-  # or --ask-target is set. Cleaned up implicitly when data_dir is rm -rf'd
-  # on shutdown. ROOST_DATA_DIR is mktemp-derived (no spaces/backslashes).
+  # Per-session roost-settings.json. Written before the tmux/ircd preflight
+  # so test seams can read it on preflight failure. PostCompact + SessionStart
+  # matcher=compact are always wired; PreCompact is opt-in via --steer-compact;
+  # PermissionRequest and PreToolUse:Bash are added when --perm-irc is passed;
+  # PreToolUse:AskUserQuestion is added when --ask-irc or --ask-target is set.
+  # Cleaned up implicitly when data_dir is rm -rf'd on shutdown.
   local perm_sock=""
   local perm_hook_json=""
   local pretooluse_hook_json=""
@@ -721,18 +732,23 @@ cmd_spawn() {
   if [ "${perm_irc}" -eq 1 ] || [ "${ask_routing}" -eq 1 ]; then
     perm_sock="${ROOST_DATA_DIR}/permbot.sock"
   fi
-  # Write resolver shims to ROOST_DATA_DIR. Shims re-resolve the plugin root
-  # via `roost root` at exec time so Cellar-dir rotation (brew upgrade roost)
-  # doesn't invalidate hook paths baked at spawn time.
-  _write_shim roost-compact-hook "${ROOST_DATA_DIR}"
+  # Resolver shims re-resolve the plugin root via `roost root` at exec time so
+  # Cellar-dir rotation (brew upgrade roost) doesn't invalidate hook paths
+  # baked at spawn time.
   _write_shim roost-post-compact-hook "${ROOST_DATA_DIR}"
   _write_shim roost-session-start-hook "${ROOST_DATA_DIR}"
+  local precompact_hook_json=""
+  if [ "${steer_compact}" -eq 1 ]; then
+    _write_shim roost-compact-hook "${ROOST_DATA_DIR}"
+    precompact_hook_json="\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],"
+  fi
   if [ "${perm_irc}" -eq 1 ]; then
     _write_shim irc-permission-prompt "${ROOST_DATA_DIR}"
     perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-permission-prompt\"}]}]"
   fi
-  # PreToolUse may hold up to two matcher entries: Bash (--perm-irc; closes the
-  # safety-analyzer bypass from #276) and AskUserQuestion (--ask-irc / --ask-target).
+  # PreToolUse may hold up to two matcher entries: Bash (when --perm-irc, so
+  # the safety-analyzer can't bypass the operator's review) and
+  # AskUserQuestion (when --ask-irc / --ask-target routes questions to IRC).
   local pretooluse_entries=()
   if [ "${perm_irc}" -eq 1 ]; then
     _write_shim irc-pretooluse-prompt "${ROOST_DATA_DIR}"
@@ -752,7 +768,26 @@ cmd_spawn() {
     pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
+  # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
+  # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
+  # written above after a preflight failure exits the spawn. Prod operators
+  # never set this — the success path prints "data dir: ..." after tmux comes up.
+  if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
+    echo "  data dir (preflight): ${ROOST_DATA_DIR}"
+  else
+    # On any failure before the tmux session is created, clean up the data dir.
+    trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
+  fi
+
+  require_tmux
+  require_ircd
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "error: tmux session '${session_name}' already exists" >&2
+    echo "  shutdown first: roost shutdown ${nick}" >&2
+    exit 3
+  fi
 
   # bash/zsh: login shell loads the user's profile before claude, required for
   # RVM / nvm / asdf toolchains. sh/dash: no -l, no profile load. Env vars

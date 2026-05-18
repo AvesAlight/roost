@@ -58,3 +58,6 @@ jobs:
 
       - name: Shell tests — spawn
         run: bash test/spawn_test.sh
+
+      - name: Shell tests — compact-hook
+        run: bash test/compact-hook_test.sh

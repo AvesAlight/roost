@@ -32,6 +32,7 @@ a tool surface.
 roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
+                   [--steer-compact] \
                    [--perm-irc --perm-target NICK]
 roost shutdown <nick>
 roost list
@@ -60,6 +61,14 @@ Defaults:
 - cwd: current directory at spawn time
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)
+- `--steer-compact`: opt-in. Wires a PreCompact hook that intercepts
+  claude code's auto-compact and redirects it as a manual `/compact`
+  with a directive (so the compactor runs with `custom_instructions`
+  rather than its empty default). Pass on long-running PM-class
+  agents (lead-pm, associate-pm) whose runtime state would otherwise
+  be lost across a directive-less auto-compact. Workers and
+  reviewers are short-lived enough that the default behavior is
+  fine — omit the flag.
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the

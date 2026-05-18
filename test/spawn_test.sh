@@ -251,6 +251,45 @@ else
 fi
 teardown
 
+# -- Test 19: --steer-compact wires PreCompact + writes session-name.txt -----
+# ROOST_SPAWN_KEEP_DATA_DIR=1 keeps the data-dir alive after a preflight
+# failure (tmux session not actually created), so we can inspect what the
+# spawn wrote into roost-settings.json before it bailed.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --steer-compact 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"PreCompact"' "$data_dir/roost-settings.json" \
+    && grep -qF 'roost-compact-hook' "$data_dir/roost-settings.json" \
+    && [ -f "$data_dir/session-name.txt" ] \
+    && [ "$(cat "$data_dir/session-name.txt")" = "roost-testnick" ]; then
+  ok "--steer-compact: PreCompact entry wired + session-name.txt written"
+else
+  fail "--steer-compact: PreCompact entry wired + session-name.txt written" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 20: no --steer-compact → no PreCompact entry, no session-name.txt --
+# Default behavior: claude code's native auto-compact runs unmodified.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"PreCompact"' "$data_dir/roost-settings.json" \
+    && ! grep -qF 'roost-compact-hook' "$data_dir/roost-settings.json" \
+    && [ ! -f "$data_dir/session-name.txt" ]; then
+  ok "no flag: PreCompact omitted from settings, no session-name.txt"
+else
+  fail "no flag: PreCompact omitted from settings, no session-name.txt" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

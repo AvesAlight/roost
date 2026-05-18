@@ -50,7 +50,7 @@ When you spawn an agent, always pass the namespaced nick + the matching `--chann
 Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the dispatcher daemon, creating worktrees, DMing the dispatcher to watch issues, spawning workers and reviewers, marking PRs ready, merging, and cleaning up. You drive judgment.
 
 ```bash
-roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --channels '#<project>-leads' \
+roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --steer-compact --channels '#<project>-leads' \
   --prompt 'human=<human> gh-login=<gh-login>' \
   --perm-irc --perm-target <project>-lead-pm
 ```
@@ -60,6 +60,8 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM will start the dispatcher daemon if it isn't already running, then post a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
 Cache-TTL is explicit at the call site — no wrapper default. Heuristic: **one-shot agents (reviewers, single-prompt workers) → `--cache-ttl 5m`; anything with multi-turn work (the APM, workers awaiting human review, you) → `--cache-ttl 1h`.** Workers in particular wait through review cycles that routinely exceed 5 minutes, so they need 1h to avoid paying a fresh cache-write per wake. 1h writes cost 2x the 5m rate, so don't reach for it on truly ephemeral spawns.
+
+`--steer-compact` opts the APM (and you, when you spawn yourself) into roost's auto-compact intercept: claude code's auto-compact gets blocked and redirected to a manual `/compact` with a directive that asks the compactor to retain role + nick, channels joined, in-flight issue/PR state, recent decisions, and pending work. Long-running PM-class agents need it. Workers and reviewers spawned by the APM do NOT pass it — they're short-lived enough that auto-compact is unlikely to fire, and the default behavior is fine.
 
 ## Working In Channels
 
@@ -147,16 +149,3 @@ Some changes are small enough that spawning a worker is overhead — a doc tweak
 Post a message in #<project>-leads with your starting strategy. Wait until the human pressure tests and approves your plan before beginning the first wave. Once you begin you may proceed autonomously and spawn new workers as needed.
 
 Post in #<project>-leads each time you start work on a new issue.
-
-## Things that come up in the work
-
-You may be asked to "self compact". That means using `roost send` to deliver a `/compact` prompt to your own session with instructions about what to retain. Your agent definition persists through compaction automatically. What you must preserve in the compact directive:
-
-- `project=<project> milestone=<milestone> human=<irc-nick> gh-login=<gh-login>`
-- In-flight issue numbers and their current state (worker spawned, draft PR up, PR number, reviewer done, etc.)
-- Any blockers or decisions made in `#<project>-leads` that aren't obvious from channel history
-
-Minimum compact directive:
-```
-Retain: project=<project> milestone=<milestone> human=<irc-nick> gh-login=<gh-login>. In-flight: [list issues + state]. Post in #<project>-leads on restart.
-```
