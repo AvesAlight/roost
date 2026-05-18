@@ -144,18 +144,28 @@ export async function fetchRateLimit(
   }
 }
 
-// Pure trajectory computation. Returns a warning string when the current
+// Rolling window for rate computation — 5 minutes gives a stable average
+// across ticks while still catching genuine sustained spikes.
+export const RATE_LIMIT_WINDOW_MS = 5 * 60_000
+
+// Pure trajectory computation. Returns a warning string when the rolling
 // consumption rate predicts exhaustion before the reset boundary; null otherwise.
-// `prev` carries (remaining, ts) from the previous tick for the delta.
+// `history` is a time-ordered (oldest first) array of past observations, already
+// pruned to the rolling window by the caller. Uses history[0] as the anchor so
+// the rate is smoothed across the full window rather than tick-to-tick.
 export function computeRateLimitWarning(
   current: RateLimitInfo,
-  prev: { remaining: number; ts: number },
+  history: ReadonlyArray<{ remaining: number; ts: number }>,
   now: number
 ): string | null {
-  const consumed = prev.remaining - current.remaining
+  if (history.length === 0) return null
+  const anchor = history[0]
+  const consumed = anchor.remaining - current.remaining
   if (consumed <= 0) return null
-  const intervalMs = now - prev.ts
+  const intervalMs = now - anchor.ts
   if (intervalMs <= 0) return null
+  // Require at least half the window of history before trusting the rate estimate.
+  if (intervalMs < RATE_LIMIT_WINDOW_MS / 2) return null
   const ratePerMin = consumed / (intervalMs / 60_000)
   const minToReset = (current.resetAt * 1000 - now) / 60_000
   if (minToReset <= 0) return null

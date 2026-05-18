@@ -3,7 +3,7 @@ import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
-import { GhClient, fetchRateLimit, computeRateLimitWarning } from './github-api.js'
+import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
 
 // Thin shared base for any plugin that needs GhClient but not watch-list
 // scaffolding. GhBase extends this; non-watching plugins (e.g.
@@ -12,8 +12,8 @@ export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
   protected readonly log: PluginLogger
 
-  // Per-instance: tracks the previous tick's rate limit snapshot for Δ/trajectory.
-  private _prevRateLimit: { remaining: number; ts: number } | null = null
+  // Per-instance: rolling history of rate limit observations (oldest first).
+  private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
   // Shared across instances — one warning per 10 min regardless of which plugin fires.
   // 10 min: enough signals in a 60-min reset window without spamming.
@@ -37,22 +37,29 @@ export abstract class GhPluginBase extends BasePlugin {
   //
   // Runs even when the tick's own scraping failed — we want to observe the budget
   // through failures since a failing tick is often a symptom of exhaustion.
-  protected async observeRateLimit(projectChannel: string): Promise<TaggedEvent[]> {
-    const info = await fetchRateLimit(this.log)
+  protected async observeRateLimit(
+    projectChannel: string,
+    _fetch: (log: PluginLogger) => Promise<RateLimitInfo | null> = fetchRateLimit,
+  ): Promise<TaggedEvent[]> {
+    const info = await _fetch(this.log)
     if (!info) return []
 
     const now = Date.now()
-    const prev = this._prevRateLimit
+
+    // Prune history to the rolling window before computing rate.
+    const cutoff = now - RATE_LIMIT_WINDOW_MS
+    this._rateLimitHistory = this._rateLimitHistory.filter(h => h.ts >= cutoff)
+
+    const prev = this._rateLimitHistory.length > 0
+      ? this._rateLimitHistory[this._rateLimitHistory.length - 1]
+      : null
     const delta = prev != null ? prev.remaining - info.remaining : null
-    const deltaStr = delta != null ? ` (Δ=${delta} since last tick)` : ''
+    const deltaStr = delta != null ? ` (Δ=${delta} since prev sample)` : ''
     const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
     this.log(`[ratelimit] remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
 
-    this._prevRateLimit = { remaining: info.remaining, ts: now }
-
-    if (prev == null) return []
-
-    const warning = computeRateLimitWarning(info, prev, now)
+    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now)
+    this._rateLimitHistory.push({ remaining: info.remaining, ts: now })
     if (!warning) return []
 
     const cooldownElapsed = GhPluginBase._warnedAt == null || now - GhPluginBase._warnedAt > GhPluginBase.WARN_COOLDOWN_MS

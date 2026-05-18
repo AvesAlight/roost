@@ -2,6 +2,7 @@ import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubPrsPlugin } from '../prs-plugin.js'
 import { GitHubIssuesPlugin } from '../issues-plugin.js'
 import { GhPluginBase } from '../base.js'
+import { RATE_LIMIT_WINDOW_MS } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import { GhScraper } from '../scraper.js'
@@ -390,5 +391,66 @@ describe('GhPluginBase.observeRateLimit integration', () => {
       scrapeSpy.mockRestore()
       observeSpy.mockRestore()
     }
+  })
+})
+
+describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () => {
+  function observe(plugin: GitHubPrsPlugin, remaining: number, resetInMs = 60 * 60_000) {
+    const fetch = async () => ({
+      remaining,
+      limit: 5000,
+      resetAt: Math.floor((Date.now() + resetInMs) / 1000),
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (plugin as any).observeRateLimit('#proj', fetch)
+  }
+
+  it('no warning on cold-start (first call)', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    expect(await observe(plugin, 5000)).toEqual([])
+  })
+
+  it('no warning when nothing consumed', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    await observe(plugin, 5000)
+    expect(await observe(plugin, 5000)).toEqual([])
+  })
+
+  it('prunes stale history and cold-starts after a long gap', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    // Inject a stale entry that would trigger a warning if used as anchor.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [
+      { remaining: 5000, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
+    ]
+    // After pruning the stale entry, history is empty → cold-start → no warning.
+    expect(await observe(plugin, 100, 60 * 60_000)).toEqual([])
+  })
+
+  it('warns when rolling window rate predicts exhaustion before reset', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    // Inject history entry 160 seconds ago (> half-window threshold) with 5000 remaining.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [
+      { remaining: 5000, ts: Date.now() - 160_000 },
+    ]
+    // Now 100 remaining, reset in 60 min. 4900 consumed in 160s → very high rate → warns.
+    const result = await observe(plugin, 100, 60 * 60_000)
+    expect(result).toHaveLength(1)
+    expect(result[0].payload.text).toMatch(/rate limit warning/)
+  })
+
+  it('uses oldest entry as anchor, diluting mid-window bursts', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const now = Date.now()
+    // History: oldest=300s ago (5000), mid=10s ago (4800) — burst between mid and now would be 0.
+    // Anchor is oldest: 5000 - 4800 = 200 consumed in 300s → 40/min.
+    // 4800 remaining at 40/min → 120 min to exhaust. Reset in 60 min. 120 >= 60 → no warning.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [
+      { remaining: 5000, ts: now - 300_000 },
+      { remaining: 4800, ts: now - 10_000 },
+    ]
+    expect(await observe(plugin, 4800, 60 * 60_000)).toEqual([])
   })
 })
