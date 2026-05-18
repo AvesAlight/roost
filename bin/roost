@@ -97,7 +97,7 @@ Usage: roost spawn <nick> [options]
 
 Bring up a Claude Code session on the roost. Joins the specified channels
 and dismisses the dev-channels prompt automatically. Sessions launch under
-the user's login shell (from \$SHELL) so .bash_profile / .zprofile / fish config.fish loads — required for RVM, nvm, asdf, and similar toolchains.
+the user's login shell (from \$SHELL) so .bash_profile / .zprofile / ~/.config/fish/config.fish loads — required for RVM, nvm, asdf, and similar toolchains.
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
@@ -782,18 +782,12 @@ cmd_spawn() {
     trap 'rm -rf "${ROOST_DATA_DIR}"' EXIT
   fi
 
-  require_tmux
-  require_ircd
-
-  if tmux has-session -t "${session_name}" 2>/dev/null; then
-    echo "error: tmux session '${session_name}' already exists" >&2
-    echo "  shutdown first: roost shutdown ${nick}" >&2
-    exit 3
-  fi
-
-  # bash/zsh/fish: login shell loads the user's profile before claude, required
-  # for RVM / nvm / asdf toolchains. sh/dash: no -l, no profile load. Env vars
-  # go through tmux -e so the inner command stays a clean string.
+  # bash/zsh: -l loads .bash_profile / .zprofile before claude. fish loads
+  # config.fish on every invocation regardless of --login (the flag only flips
+  # `status is-login`); we still pass --login so any profile config gated on it
+  # runs. sh/dash: no -l, no profile load. All three populate the env that
+  # RVM / nvm / asdf etc. require. Env vars go through tmux -e so the inner
+  # command stays a clean string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
   tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
   case "${cache_ttl}" in
@@ -829,6 +823,9 @@ cmd_spawn() {
   # we use unquoted `(string collect <$ROOST_PROMPT_FILE)` (fish 3.1+) — string
   # collect emits a single argument with newlines preserved, which fish hands
   # to claude as one arg even unquoted.
+  #
+  # Done before require_tmux/require_ircd so the ROOST_SPAWN_KEEP_DATA_DIR=1
+  # test seam can surface the assembled command without an IRC daemon running.
   local mcp_flag=""
   local channel_server="server:plugin:roost:roost-irc"
   if [ -n "${mcp_config}" ]; then
@@ -863,10 +860,22 @@ cmd_spawn() {
   fi
   # Same test seam as the data-dir echo above: surface the assembled inner
   # command so the spawn_test.sh shell-flavor regressions can grep for the
-  # prompt-read syntax that matches the resolved shell.
+  # prompt-read syntax that matches the resolved shell. Stage it to a file
+  # too so tests can read it deterministically without parsing stdout.
   if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
     echo "  inner cmd (preflight): ${inner_cmd}"
+    printf '%s' "${inner_cmd}" > "${ROOST_DATA_DIR}/inner-cmd.txt"
   fi
+
+  require_tmux
+  require_ircd
+
+  if tmux has-session -t "${session_name}" 2>/dev/null; then
+    echo "error: tmux session '${session_name}' already exists" >&2
+    echo "  shutdown first: roost shutdown ${nick}" >&2
+    exit 3
+  fi
+
   tmux new-session -d -s "${session_name}" -x 200 -y 50 -c "${cwd}" \
     "${tmux_env[@]}" \
     "exec ${shell_invoke} $(printf '%q' "${inner_cmd}")"

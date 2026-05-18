@@ -271,20 +271,23 @@ fi
 teardown
 
 # -- Test 18b: fish picks the fish-flavored prompt-read syntax ----------------
-# inner_cmd (preflight) is surfaced under ROOST_SPAWN_KEEP_DATA_DIR=1. fish
-# must use `(string collect <$ROOST_PROMPT_FILE)` — `$(< file)` is bash/zsh
-# shorthand fish doesn't grok.
+# inner-cmd.txt is staged to the data dir under ROOST_SPAWN_KEEP_DATA_DIR=1,
+# before require_tmux/require_ircd — so the assertion works in CI where no
+# IRC daemon is listening. fish must use `(string collect <$ROOST_PROMPT_FILE)`
+# — `$(< file)` is bash/zsh shorthand fish doesn't grok.
 
 setup
 out="$(SHELL=/usr/local/bin/fish ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
 # Unquoted (string collect ...) is required: fish treats bare (...) inside
 # double quotes as a literal, so quoting would silently disable substitution.
-if echo "$out" | grep -qF -- '-- (string collect <$ROOST_PROMPT_FILE)' \
-    && ! echo "$out" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- '-- (string collect <$ROOST_PROMPT_FILE)' \
+    && ! echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")'; then
   ok "SHELL=fish + --prompt: inner_cmd uses unquoted string-collect, not \$(<file)"
 else
-  fail "SHELL=fish + --prompt: inner_cmd uses unquoted string-collect, not \$(<file)" "out=$out"
+  fail "SHELL=fish + --prompt: inner_cmd uses unquoted string-collect, not \$(<file)" "inner_cmd=$inner_cmd"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
@@ -294,11 +297,13 @@ teardown
 setup
 out="$(SHELL=/bin/bash ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" --prompt hello 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
-if echo "$out" | grep -qF '$(< "$ROOST_PROMPT_FILE")' \
-    && ! echo "$out" | grep -qF '(string collect <$ROOST_PROMPT_FILE)'; then
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF '$(< "$ROOST_PROMPT_FILE")' \
+    && ! echo "$inner_cmd" | grep -qF '(string collect <$ROOST_PROMPT_FILE)'; then
   ok "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect"
 else
-  fail "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect" "out=$out"
+  fail "SHELL=bash + --prompt: inner_cmd uses \$(<file), not string-collect" "inner_cmd=$inner_cmd"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
