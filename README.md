@@ -41,6 +41,7 @@ roost init                          # writes .orchestrator/config.json + copies 
 roost spawn myproject-lead-pm \
   --agent lead-pm \
   --channels '#myproject-leads' \
+  --steer-compact --cache-ttl 1h \
   --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 ```
 

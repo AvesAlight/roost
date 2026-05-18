@@ -50,6 +50,7 @@ Quick start:
   roost spawn <project>-lead-pm \\
     --agent lead-pm \\
     --channels '#<project>-leads' \\
+    --steer-compact --cache-ttl 1h \\
     --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'
 
 Run 'roost <command> --help' for per-command usage.
@@ -181,6 +182,15 @@ Options:
                              --prompt.
   -- <args...>               Pass remaining args directly to claude.
                              Use for --chrome, --system-prompt, etc.
+
+Agent class guidance:
+  PM agents (lead-pm, associate-pm) — long-running, need compact steering:
+    --steer-compact --cache-ttl 1h
+  Workers awaiting review — multi-turn:
+    --cache-ttl 1h
+  One-shot agents (reviewers, single-prompt workers):
+    --cache-ttl 5m
+  (1h cache writes cost 2x the 5m rate; don't use it for ephemeral spawns.)
 
 Examples:
   roost spawn worker-1 -c '#my-channel' --cwd ~/Dev/myproject
