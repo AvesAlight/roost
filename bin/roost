@@ -109,6 +109,10 @@ Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
   -m, --model MODEL          Override --model. Default: opus.
+                             Use bare aliases (opus, sonnet, haiku) — full
+                             ids (claude-opus-4-5 etc.) pin the session to
+                             that exact dated variant instead of tracking
+                             the latest version at spawn time.
   --perm-irc                 Run an in-process permbot inside the worker's
                              MCP server. It surfaces this worker's
                              tool-permission prompts as DMs to --perm-target.
@@ -676,6 +680,13 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  # Warn rather than block — pin uses (rollback, A/B, repro) stay valid;
+  # warning makes accidental pins visible.
+  case "${model}" in
+    claude-*)
+      echo "warning: --model '${model}': use bare aliases (opus, sonnet, haiku) — full ids (claude-opus-4-5 etc.) pin the session to that exact dated variant instead of tracking the latest version at spawn time" >&2
+      ;;
+  esac
   if [ -n "${cache_ttl}" ]; then
     case "${cache_ttl}" in
       5m|1h) ;;
