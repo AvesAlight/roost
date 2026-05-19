@@ -31,6 +31,9 @@ interface CommitsPluginConfig {
   watched?: CommitWatchEntry[]
 }
 
+// `commits` is carried forward across ticks intentionally — an entry removed
+// from config keeps its watermark in state, so removing-then-readding doesn't
+// re-announce historical commits. No prune.
 export interface CommitsPluginState {
   commits: Record<string, { last_sha: string }>
 }
@@ -56,9 +59,10 @@ function firstLine(message: string): string {
   return (message.split('\n')[0] ?? '').trim()
 }
 
-function formatCommit(entry: CommitWatchEntry, commit: GhCommit): string {
+// Caller (emission loop) guards `commit.sha` before formatting, so sha is
+// passed in narrowed — no fallback to mask a missing value.
+function formatCommit(entry: CommitWatchEntry, commit: GhCommit, sha: string): string {
   const branch = entry.branch ?? DEFAULT_BRANCH
-  const sha = commit.sha ?? '0000000'
   const subject = firstLine(commit.commit?.message ?? '(no message)')
   const pathSuffix = entry.path ? ` [${entry.path}]` : ''
   const url = commit.html_url ?? ''
@@ -137,7 +141,7 @@ export class GitHubCommitsPlugin extends GhPluginBase {
             `${commits.length} commits (cap=${PER_PAGE}); some commits may have been missed\n`
           )
         }
-        newCommits = [...commits]
+        newCommits = commits
       } else {
         newCommits = commits.slice(0, idx)
       }
@@ -145,11 +149,12 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       if (newCommits.length === 0) continue
 
       // Reverse to chronological order so a multi-commit batch reads top-down.
-      for (const commit of newCommits.slice().reverse()) {
+      for (const commit of [...newCommits].reverse()) {
+        if (!commit.sha) continue
         taggedEvents.push({
           // Per-event copy so a downstream mutation can't leak across sibling events.
           channels: [...channels],
-          payload: { kind: 'oneline', text: formatCommit(entry, commit) },
+          payload: { kind: 'oneline', text: formatCommit(entry, commit, commit.sha) },
         })
       }
       state.commits[key] = { last_sha: newest.sha }
