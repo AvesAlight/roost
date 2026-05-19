@@ -92,10 +92,10 @@ describe('name helpers', () => {
     expect(dispatcherNick('roost')).toBe('roost-dispatcher')
   })
 
-  it('thread the slug segment when set (multi-repo)', () => {
+  it('thread the slug segment when set (multi-repo) — slug sits between project and role', () => {
     expect(issueChannel('roost', 196, 'foo')).toBe('#roost-foo-issue-196')
-    expect(workerNick('roost', 196, 'foo')).toBe('roost-worker-foo-196')
-    expect(reviewerNick('roost', 200, 'foo')).toBe('roost-reviewer-foo-200')
+    expect(workerNick('roost', 196, 'foo')).toBe('roost-foo-worker-196')
+    expect(reviewerNick('roost', 200, 'foo')).toBe('roost-foo-reviewer-200')
   })
 
   it('keep the single-repo shape when slug is undefined', () => {

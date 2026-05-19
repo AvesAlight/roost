@@ -86,7 +86,7 @@ On confirmation, for each issue N:
    - issue-channel = `#<project>-issue-<N>`
 
    In **multi-repo mode** (no `config.repo`), `<slug>` is the repo's lowercased basename (`Owner/Foo` → `foo`):
-   - worker-nick = `<project>-worker-<slug>-<N>`
+   - worker-nick = `<project>-<slug>-worker-<N>`
    - issue-channel = `#<project>-<slug>-issue-<N>`
 
    Then spawn:
@@ -126,7 +126,7 @@ Trigger: a worker posts a draft PR link in an issue channel you're in.
      - issue-channel = `#<project>-issue-<I>`
 
      Multi-repo mode (same `<slug>` you used for the worker, the repo basename lowercased):
-     - reviewer-nick = `<project>-reviewer-<slug>-<N>`
+     - reviewer-nick = `<project>-<slug>-reviewer-<N>`
      - issue-channel = `#<project>-<slug>-issue-<I>`
 
      Then spawn:
@@ -306,7 +306,7 @@ Every per-project artifact carries a `<project>-` prefix:
 - Dispatcher nick: `<project>-dispatcher`
 - Your own nick: `<project>-apm`
 
-Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment into every per-issue artifact: `#<project>-<slug>-issue-<N>`, `<project>-worker-<slug>-<N>`, `<project>-reviewer-<slug>-<N>`. The slug is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
+Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment into every per-issue artifact: `#<project>-<slug>-issue-<N>`, `<project>-<slug>-worker-<N>`, `<project>-<slug>-reviewer-<N>`. The slug is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
 
 Bare `watch <N>` DMs are rejected in multi-repo mode — the cross-repo DM grammar is a known followup.
 

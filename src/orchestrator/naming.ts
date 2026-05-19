@@ -8,11 +8,13 @@
 // together in irssi/weechat `/list`, which is the dogfooding ergonomic.
 //
 // Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment
-// into every per-issue artifact: `#<project>-<slug>-issue-<N>`,
-// `<project>-worker-<slug>-<N>`, `<project>-reviewer-<slug>-<N>`. The slug
-// is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name
-// overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode
-// (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
+// between project and role in every per-issue artifact:
+// `#<project>-<slug>-issue-<N>`, `<project>-<slug>-worker-<N>`,
+// `<project>-<slug>-reviewer-<N>`. The slug is the lowercased repo basename
+// (`Owner/Foo` → `foo`). Slug-after-project groups every artifact for one
+// repo together in `/list`. Cross-org name overlap (`Org1/foo` + `Org2/foo`)
+// is a known footgun. Single-repo mode (with `config.repo` set) keeps the
+// bare `<project>-issue-<N>` shape.
 
 import type { OrchestratorConfig } from './config.js'
 
@@ -84,11 +86,11 @@ export function leadsChannel(project: string): string {
 }
 
 export function workerNick(project: string, n: number, slug?: string): string {
-  return slug ? `${project}-worker-${slug}-${n}` : `${project}-worker-${n}`
+  return slug ? `${project}-${slug}-worker-${n}` : `${project}-worker-${n}`
 }
 
 export function reviewerNick(project: string, n: number, slug?: string): string {
-  return slug ? `${project}-reviewer-${slug}-${n}` : `${project}-reviewer-${n}`
+  return slug ? `${project}-${slug}-reviewer-${n}` : `${project}-reviewer-${n}`
 }
 
 export function leadPmNick(project: string): string {
