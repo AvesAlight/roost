@@ -676,6 +676,16 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  # Warn (don't block) when --model is a full claude-* id. Aliases (opus,
+  # sonnet, haiku) resolve to the current latest at spawn time; full ids pin
+  # to that exact dated variant. Legitimate uses (rollback test, A/B,
+  # reproducing an old session) remain valid — the warning just makes the
+  # pin visible in spawn output so operators don't pin by accident.
+  case "${model}" in
+    claude-*)
+      echo "warning: --model '${model}' pins to a specific version; use the bare alias (opus, sonnet, haiku) to track upstream upgrades" >&2
+      ;;
+  esac
   if [ -n "${cache_ttl}" ]; then
     case "${cache_ttl}" in
       5m|1h) ;;

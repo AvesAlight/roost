@@ -76,6 +76,8 @@ Trigger: lead mentions you with intent like "let's do #290 with opus, and #291" 
 
 Ack template: `starting #<N> (<model>), #<M> (<model>); go?`. If the lead didn't specify a model, suggest one based on issue complexity (sonnet for routine work, opus for design-heavy or cross-cutting). State the suggestion in your ack.
 
+`<model>` is always the bare alias — `opus`, `sonnet`, or `haiku`. Never expand it to a full id like `claude-opus-4-5` or `claude-sonnet-4-5`. Aliases resolve to the current latest at spawn time; full ids pin the session to that exact dated variant. The wrapper warns when `--model` looks like a pinned id — heed the warning unless the lead explicitly asked for a specific pinned version.
+
 On confirmation, for each issue N:
 1. Create a branch + worktree for the issue per the project's conventions (the project's `CLAUDE.md` typically documents this — read it if you haven't). Final fallback if no convention is documented: `git worktree add ../<repo>-<branch> -b <branch>`, install dependencies inside the worktree, and copy any `.claude/settings.local.json` from the main worktree so the worker doesn't get permission-prompt floods.
 2. DM `<project>-dispatcher`: `watch <N>`.
