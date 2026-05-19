@@ -100,6 +100,65 @@ Relative `plugin_paths` resolve against `.orchestrator/` (the directory containi
 
 These crash the dispatcher loudly rather than silently dropping events. Fix the path / publish the module / correct the config, then retry.
 
+## Development workflow
+
+A day-1 loop for a fresh external plugin repo:
+
+1. **Bootstrap the repo.** `bun init` (or pnpm/npm equivalent). Add roost via one of the [install patterns](#installing-roostplugin-in-an-external-project) below — `bun link` from a roost checkout for tight dev loops, git-dep for stable consumption.
+
+2. **Write the module.** A single file, top-level `registerPlugin(name, factory)`, no default export. See [Minimal example](#minimal-example).
+
+3. **Wire into a target project's `.orchestrator/config.json`.** `plugin_paths` points at the module file (relative to the config dir, or absolute):
+
+   ```json
+   {
+     "project": "demo",
+     "plugin_paths": ["/abs/path/to/my-plugin-repo/src/my-plugin.ts"],
+     "plugins": { "my-plugin": { /* your slice */ } }
+   }
+   ```
+
+4. **Dry-run the dispatcher.** Prints the `TaggedEvent` JSON to stdout — no IRC connection, no state written:
+
+   ```sh
+   "$(roost root)/bin/dispatcher" --dry-run --config-dir .orchestrator
+   ```
+
+   (From a roost checkout: `bin/dispatcher --dry-run --config-dir .orchestrator`.)
+
+5. **Iterate.** Edit the plugin file, re-run step 4. The loader re-imports each boot; for a continuously running daemon, restart it (`bin/stop-dispatcher` + `bin/start-dispatcher`).
+
+## Testing
+
+**Unit tests.** Construct the plugin directly and drive its methods. Use `bun:test`'s `spyOn(...).mockImplementation(...)` to stub network calls. Canonical reference: `src/orchestrator/plugins/github/__tests__/commits-plugin.test.ts`.
+
+The shape:
+
+```ts
+import { describe, it, expect } from 'bun:test'
+import { MyPlugin } from '../my-plugin.js'
+import type { PluginConfig } from 'roost/plugin'
+
+const config: PluginConfig = { plugins: { 'my-plugin': { rooms: ['#x'] } } }
+
+describe('MyPlugin.runTick', () => {
+  it('seeds without emitting on first run', async () => {
+    const result = await new MyPlugin('#proj-leads').runTick(config, null)
+    expect(result.taggedEvents).toHaveLength(0)
+  })
+
+  it('emits on the second tick when state changes', async () => {
+    const prev = { /* ... */ }
+    const result = await new MyPlugin('#proj-leads').runTick(config, prev)
+    expect(result.taggedEvents[0]?.channels).toEqual(['#x'])
+  })
+})
+```
+
+Two ticks (seed + normal) cover the common case. Mock external IO at the boundary the plugin owns; assert on `state` and `taggedEvents`.
+
+**Integration tests** are optional — a running dispatcher against a test IRC server with only your plugin loaded. Worth it only if your plugin's correctness depends on the dispatch layer (channel sync, DM handling). Most plugins don't.
+
 ## Installing `roost/plugin` in an external project
 
 Roost ships via Homebrew tap, not npm, so the import path `'roost/plugin'` doesn't resolve out of the box. Two patterns work today:
