@@ -209,15 +209,35 @@ Trigger: the lead posts a message in `#<project>-leads` starting with `postmorte
    EOF
    )"
    ```
-3. If the postmortem contains a reusable lesson (something that would change how the next issue gets executed — not just "we touched file X"), propose it in `#<project>-leads`: `learning candidate from #<I>: <extracted insight> — file or skip?`. If no extractable insight, skip this step silently.
-4. On `file` or corrected text from lead: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file or directory doesn't exist, create them in the same commit:
+3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If no extractable insight, skip this step silently.
+4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Lead responds with one of:
+   - `file as-is` — commit the draft verbatim
+   - `file with: <new text>` — lead provides edited version, commit that
+   - `drop` — no learning from this postmortem
+   - Critique (e.g., "too vague" or "make it about X") — revise and re-propose
+5. On `file as-is` or `file with:`: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file or directory doesn't exist, create them in the same commit:
    ```
    mkdir -p .claude/rules
    git add .claude/rules/project-learnings.md
    git commit -m "add learning from #<I>"
    git push origin main
    ```
-5. On `skip`: proceed without filing.
+6. On `drop`: proceed without filing.
+
+**What makes a good learning:**
+
+- **Actionable** — tells the next worker/APM/lead what to DO differently, not just what to notice
+- **Process-shaped** — about how we work (planning, review, sequencing, handoff), not codebase facts (workers already read code)
+- **Generalizable** — applies to a class of future issues, not just the one that surfaced it
+- **Concrete** — specific enough to recognize the next time the situation arises
+- **Earned** — comes from a real mistake or surprise this session, not theoretical risk
+
+**Anti-examples (don't file):**
+
+- Restates code or repo structure
+- One-shot fix ("don't use `cat` in script X")
+- Vague platitude ("be careful with refactors")
+- Process theater (rules nobody will follow)
 
 Learning file shape (`.claude/rules/project-learnings.md`):
 
