@@ -38,7 +38,7 @@ Fields:
 | `plugin_paths` | Optional `[path, ...]` of external plugin modules to load before the registry is walked. Relative paths resolve against `.orchestrator/`. See [PLUGINS.md](./PLUGINS.md). |
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
-| `plugins.github-new-issues` | Repo-wide new-issue feed: `{"repo"?: "OWNER/NAME", "channels"?: [...]}` (both optional; default = `repo` at top level + project channel). |
+| `plugins.github-new-issues.watched` | `[{"repo": "OWNER/NAME", "channels"?: [...]}]`. Multi-repo new-issue feed — `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
@@ -51,10 +51,10 @@ fallback. The first-party set shipped in this repo is `github-prs`,
 loaded via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the registry
 is walked, so their names become available alongside the built-ins.
 
-`github-new-issues` needs an explicit `plugins.github-new-issues`
-entry to run. `bin/roost init` writes one for new projects; for existing
-projects, add `"github-new-issues": {}` to enable the repo-wide new-issue
-feed on the project channel.
+`github-new-issues` needs an explicit `plugins.github-new-issues` entry with
+at least one `watched` entry to run. `bin/roost init` writes one for new
+projects; for existing projects add a `watched` list naming each repo to
+watch.
 
 ## Running
 
