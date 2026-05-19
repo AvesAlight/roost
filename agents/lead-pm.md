@@ -115,7 +115,7 @@ For each issue:
 
 8. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
 
-9. **Post a postmortem in `#<project>-leads`** starting with `postmortem #<I>:` on the first line, then the narrative. The APM scribes it to the closed issue for durable history.
+9. **Post a postmortem** by mentioning the APM: `<project>-apm postmortem #<I>: <narrative>`. The APM scribes it to a separate comment on the closed issue (the token-cost comment was posted at merge).
 
    **Question seeds** (not mandatory, but help surface learnable material):
    - What surprised you about how this issue went?
@@ -124,20 +124,7 @@ For each issue:
    - Did you push back mid-flight? Would you do the same next time?
    - Does this pattern apply to future issues, or was it one-shot?
 
-   If your postmortem contains a learnable insight, the APM proposes a draft: `learning candidate from #<I>: <draft text>`. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts affecting all future work. Reply with:
-   - `file as-is` — commit the draft verbatim
-   - `file with: <new text>` — you provide edited version
-   - `drop` — no learning from this postmortem
-   - Critique (e.g., "too vague") — APM revises and re-proposes
-
-   **What makes a good learning:**
-   - **Actionable** — tells the next worker/APM/lead what to DO differently
-   - **Process-shaped** — about how we work, not codebase facts
-   - **Generalizable** — applies to a class of future issues
-   - **Concrete** — specific enough to recognize next time
-   - **Earned** — from a real mistake or surprise, not theoretical risk
-
-   Filed learnings go to `.claude/rules/project-learnings.md` and auto-load into future worker/reviewer sessions.
+   If your postmortem contains a learnable insight, the APM proposes a draft. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts. See "What makes a good learning" in associate-pm.md historian dance for criteria and the file/drop/critique vocabulary. Filed learnings go to `.claude/rules/project-learnings.md` and auto-load into future worker/reviewer sessions.
 
 10. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
 

@@ -158,15 +158,17 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
      (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
      ```
-     Retain `$cost_block` for the historian dance — the durable issue comment (postmortem + token cost) is posted there after the lead's postmortem arrives.
-     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning in the IRC post — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
+     Post the token-cost comment on the closed issue for durable history:
+     ```
+     printf '%s\n' "$cost_block" | gh issue comment <I> --repo <owner>/<repo> --body-file -
+     ```
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning in both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
    - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running across issues; full shutdown is the milestone teardown dance below.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
-4. **Wait for the lead's postmortem** in `#<project>-leads`. The lead writes the narrative; you're the scribe. When it arrives, proceed to the historian dance.
 
 ### Follow-up dance
 
@@ -191,38 +193,30 @@ Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick 
 
 ### Historian dance
 
-Trigger: the lead posts a message in `#<project>-leads` starting with `postmortem #<I>:` after you announced `#<N> merged, cleanup done`.
+Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem #<I>: <narrative>`.
 
-1. Capture the lead's postmortem verbatim.
-2. Post the extended issue comment on the closed issue — postmortem + token cost:
+1. Strip the trigger prefix (`<project>-apm postmortem #<I>:`) and capture the narrative.
+2. Post the postmortem comment on the closed issue (separate from token cost, which was posted at merge):
    ```
-   gh issue comment <I> --repo <owner>/<repo> --body "$(cat <<EOF
-   ## Postmortem
-
-   $postmortem_text
-
-   ## Token cost (estimate)
-
-   \`\`\`
-   $cost_block
-   \`\`\`
-   EOF
-   )"
+   printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
    ```
 3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If no extractable insight, skip this step silently.
-4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Lead responds with one of:
-   - `file as-is` — commit the draft verbatim
-   - `file with: <new text>` — lead provides edited version, commit that
-   - `drop` — no learning from this postmortem
-   - Critique (e.g., "too vague" or "make it about X") — revise and re-propose
-5. On `file as-is` or `file with:`: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file or directory doesn't exist, create them in the same commit:
-   ```
-   mkdir -p .claude/rules
-   git add .claude/rules/project-learnings.md
-   git commit -m "add learning from #<I>"
-   git push origin main
-   ```
-6. On `drop`: proceed without filing.
+4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
+   - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim
+   - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version
+   - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
+   - Anything else (critique, question) → revise and re-propose
+5. When filing a learning:
+   - Write the formatted learning block to `.claude/rules/project-learnings.md` using Edit/Write. If the file or directory doesn't exist, create them. Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
+   - Commit and push:
+     ```
+     mkdir -p .claude/rules
+     git add .claude/rules/project-learnings.md
+     git commit -m "add learning from #<I>"
+     git push origin main
+     ```
+   - Append a forward-reference to the postmortem comment on the closed issue: `→ filed learning: <commit-sha-short>` (link to the commit on main).
+6. On drop: proceed without filing.
 
 **What makes a good learning:**
 
@@ -246,7 +240,7 @@ Learning file shape (`.claude/rules/project-learnings.md`):
 
 Patterns extracted from postmortems. Auto-loaded into worker/reviewer sessions.
 
-## <date>: <one-line lesson> (from #<I>)
+## YYYY-MM-DD: <one-line lesson> (from #<I>)
 
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
