@@ -184,6 +184,13 @@ CONFIG_DIR="$(pwd)/.orchestrator"
 "$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
 ```
 
+To manage multiple repos from a shared directory instead:
+
+```bash
+mkdir ~/Dev/shared && cd ~/Dev/shared
+roost init --project myapp --repo Owner/myapp
+```
+
 DM the dispatcher (`<project>-dispatcher`) to manage the watch list:
 `watch <N>`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`,
 `watch list`, `help`. The dispatcher's allowlist defaults to

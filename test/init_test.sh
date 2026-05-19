@@ -235,17 +235,51 @@ fi
 cd - >/dev/null
 teardown
 
-# --- error: not a git repo ---
+# --- outside-git + --repo: succeeds ---
 
 TDIR="$(mktemp -d /tmp/roost-test-XXXXXXXX)"
 STUBS="${TDIR}/.stubs"
 mkdir -p "$STUBS"
-# gh stub not needed — should fail before gh is called
+cat > "${STUBS}/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  "auth status")  exit 0 ;;
+  "api user")     echo "testuser" ;;
+  "repo view")    exit 0 ;;
+  *)              echo "gh-stub: unhandled: $*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "${STUBS}/gh"
 cd "$TDIR"
-if ! "${ROOST_BIN}" init >/dev/null 2>&1; then
-  ok "error: not a git repo"
+if PATH="${STUBS}:${PATH}" "${ROOST_BIN}" init --repo "SomeOwner/cross-repo" >/dev/null 2>&1 \
+    && grep -q '"repo": "SomeOwner/cross-repo"' "${TDIR}/.orchestrator/config.json"; then
+  ok "outside-git + --repo: succeeds"
 else
-  fail "error: not a git repo"
+  fail "outside-git + --repo: succeeds"
+fi
+cd - >/dev/null
+rm -rf "$TDIR"
+
+# --- error: outside git and no --repo ---
+
+TDIR="$(mktemp -d /tmp/roost-test-XXXXXXXX)"
+STUBS="${TDIR}/.stubs"
+mkdir -p "$STUBS"
+cat > "${STUBS}/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  "auth status")  exit 0 ;;
+  *)              echo "gh-stub: unhandled: $*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "${STUBS}/gh"
+cd "$TDIR"
+err_out="$(PATH="${STUBS}:${PATH}" "${ROOST_BIN}" init 2>&1)"
+exit_code=$?
+if [ "$exit_code" -ne 0 ] && echo "$err_out" | grep -q "not inside a git repo and"; then
+  ok "error: outside git and no --repo"
+else
+  fail "error: outside git and no --repo"
 fi
 cd - >/dev/null
 rm -rf "$TDIR"

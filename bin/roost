@@ -68,7 +68,8 @@ Autodetects project name, repo, and GitHub user; each value can be overridden.
 
 Options:
   --project NAME         Project name (default: basename of cwd, lowercased).
-  --repo OWNER/REPO      GitHub repo (default: parsed from git origin remote).
+  --repo OWNER/REPO      GitHub repo. Required outside a git repo; inside one
+                         defaults to the origin remote URL.
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
   --force                Overwrite everything: config.json, .gitignore,
@@ -337,11 +338,6 @@ cmd_init() {
     esac
   done
 
-  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    echo "error: not inside a git repo — run \`git init\` first or \`cd\` to a git repo" >&2
-    exit 1
-  fi
-
   if ! gh auth status &>/dev/null; then
     echo "error: gh is not authenticated — run \`gh auth login\` first" >&2
     exit 1
@@ -358,15 +354,20 @@ cmd_init() {
   fi
 
   if [ -z "$repo" ]; then
-    local url
-    if ! url="$(git remote get-url origin 2>/dev/null)"; then
-      echo "error: no \`origin\` remote and no \`--repo\` flag — pass \`--repo Owner/repo\` or run \`git remote add origin ...\`" >&2
-      exit 1
-    fi
-    url="${url%.git}"
-    repo="$(printf '%s' "$url" | sed -E 's|.*[:/]([^/:]+/[^/]+)$|\1|')"
-    if [ "$repo" = "$url" ]; then
-      echo "error: could not parse Owner/repo from remote URL: ${url} — pass \`--repo Owner/repo\` explicitly" >&2
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+      local url
+      if ! url="$(git remote get-url origin 2>/dev/null)"; then
+        echo "error: no \`origin\` remote and no \`--repo\` flag — pass \`--repo Owner/repo\` or run \`git remote add origin ...\`" >&2
+        exit 1
+      fi
+      url="${url%.git}"
+      repo="$(printf '%s' "$url" | sed -E 's|.*[:/]([^/:]+/[^/]+)$|\1|')"
+      if [ "$repo" = "$url" ]; then
+        echo "error: could not parse Owner/repo from remote URL: ${url} — pass \`--repo Owner/repo\` explicitly" >&2
+        exit 1
+      fi
+    else
+      echo "error: not inside a git repo and \`--repo\` not provided — pass \`--repo Owner/repo\` to set the watched repo explicitly" >&2
       exit 1
     fi
   fi
