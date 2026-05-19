@@ -12,7 +12,7 @@
   "plugins": {
     "github-prs": { "watched": [] },
     "github-issues": { "watched": [] },
-    "github-new-issues": {},
+    "github-new-issues": { "watched": [{ "repo": "AvesAlight/roost", "channels": ["#roost-leads"] }] },
     "github-commits": { "watched": [] }
   }
 }
