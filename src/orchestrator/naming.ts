@@ -7,12 +7,12 @@
 // `<project>-worker-N`). Project-first groups every channel for one project
 // together in irssi/weechat `/list`, which is the dogfooding ergonomic.
 //
-// Multi-repo mode: when a dispatcher watches PRs/issues across multiple repos
-// it sets no top-level `config.repo`. In that mode every per-issue artifact
-// carries an additional `<slug>` segment derived from the entry's repo, so
-// `#<project>-<slug>-issue-N` and `<project>-worker-<slug>-N`. Single-mode
-// (with `config.repo` set) keeps the bare `<project>-issue-N` shape for
-// backward compatibility.
+// Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment
+// into every per-issue artifact: `#<project>-<slug>-issue-<N>`,
+// `<project>-worker-<slug>-<N>`, `<project>-reviewer-<slug>-<N>`. The slug
+// is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name
+// overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode
+// (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
 
 import type { OrchestratorConfig } from './config.js'
 

@@ -439,14 +439,14 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
 })
 
 describe('GhBase.handleCommand — multi-repo mode rejection', () => {
-  it('rejects bare watch in multi-repo mode with a hint at #433', () => {
+  it('rejects bare watch in multi-repo mode and points at the known followup', () => {
     const config: OrchestratorConfig = { project: 'p' }
     const out = new GitHubIssuesPlugin('#proj').handleCommand!(
       config,
       { kind: 'watch', target: null, number: 5, channels: [] },
     )
     expect(out).toMatch(/multi-repo mode/)
-    expect(out).toMatch(/#433/)
+    expect(out).toMatch(/cross-repo DM grammar/)
     expect(config.plugins?.['github-issues']).toBeUndefined()
   })
 

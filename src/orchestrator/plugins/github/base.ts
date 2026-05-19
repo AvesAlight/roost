@@ -140,10 +140,10 @@ export abstract class GhBase extends GhPluginBase {
 
   private applyWatch(config: OrchestratorConfig, number: number, channels: string[]): string {
     // Multi-repo mode has no inherit target for entry.repo — the bare DM
-    // grammar can't disambiguate, so reject it with a hint at the
-    // cross-repo grammar landing separately.
+    // grammar can't disambiguate, so reject it. A cross-repo DM grammar is
+    // a known followup; until then, edit the watched list in config.json.
     if (isMultiRepo(config)) {
-      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`watch <N>\` has no repo; cross-repo DM grammar is in progress (#433)`
+      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`watch <N>\` has no repo; cross-repo DM grammar is a known followup`
     }
     const slice = this.slice(config)
     slice.watched ??= []
@@ -170,7 +170,7 @@ export abstract class GhBase extends GhPluginBase {
     // Same multi-repo restriction as applyWatch: bare `unwatch <N>` is
     // ambiguous when N can live in multiple repos.
     if (isMultiRepo(config)) {
-      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`unwatch <N>\` has no repo; cross-repo DM grammar is in progress (#433)`
+      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`unwatch <N>\` has no repo; cross-repo DM grammar is a known followup`
     }
     const slice = this.slice(config)
     const watched = slice.watched ?? []

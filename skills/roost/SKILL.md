@@ -158,18 +158,12 @@ The prefix is for IRC nick uniqueness and GitHub comment attribution
 when agents share one GH account. It is not an in-chat speaker label —
 IRC nicks already show who said what.
 
-**Multi-repo mode**: when a dispatcher watches PRs/issues across more
-than one repo (`config.repo` left unset), the per-issue artifacts pick
-up an extra `<slug>` segment derived from the entry's repo (lowercased
-basename — `Owner/Foo` → `foo`):
-
-- Worker nick: `<project>-worker-<slug>-<N>`, e.g. `myproj-worker-foo-196`.
-- Reviewer nick: `<project>-reviewer-<slug>-<N>`.
-- Issue/PR channel: `#<project>-<slug>-issue-<N>`.
-
-Same-name repos in different orgs (`Org1/foo` + `Org2/foo`) collide on
-the slug — a known footgun. Single-repo mode (with `config.repo` set)
-keeps the bare names for backward compatibility.
+Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment
+into every per-issue artifact: `#<project>-<slug>-issue-<N>`,
+`<project>-worker-<slug>-<N>`, `<project>-reviewer-<slug>-<N>`. The slug
+is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name
+overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode
+(with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
 
 Ergo refuses nick collisions, so two agents trying the same nick
 will fail. The wrapper doesn't enforce uniqueness for you — pick
