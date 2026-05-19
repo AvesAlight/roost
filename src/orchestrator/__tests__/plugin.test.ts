@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import {
   BasePlugin,
   type PluginTickResult,
   type TaggedEvent,
   registerPlugin,
+  unregisterPlugin,
   getPluginFactory,
 } from '../plugin.js'
 import { resolveRepoEntry, type OrchestratorConfig } from '../config.js'
@@ -95,9 +96,16 @@ class StubPlugin extends BasePlugin {
 }
 
 describe('registry + plugin-owned events + per-plugin config (end-to-end)', () => {
-  it('builds a stub plugin from config, ticks, and dispatches to its channels', async () => {
+  // registerPlugin throws on duplicate, so register the stub once for the
+  // whole describe block and clean up after.
+  beforeAll(() => {
     registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
+  })
+  afterAll(() => {
+    unregisterPlugin('stub')
+  })
 
+  it('builds a stub plugin from config, ticks, and dispatches to its channels', async () => {
     const factory = getPluginFactory('stub')
     expect(factory).toBeTypeOf('function')
     const plugin = factory!('#default-leads', () => {})
@@ -132,7 +140,6 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
   })
 
   it('passes prevState through under the plugin name slice across ticks', async () => {
-    registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
     const plugin = getPluginFactory('stub')!('#default-leads', () => {})
     const config: OrchestratorConfig = { plugins: { stub: { rooms: ['#room'] } } }
 
@@ -153,7 +160,6 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
   // state silently disappears across ticks. These assertions are the cheap
   // guard against that drift.
   it('couples class name to registry key for the stub plugin', () => {
-    registerPlugin('stub', (defaultChannel) => new StubPlugin(defaultChannel))
     expect(getPluginFactory('stub')!('#x', () => {}).name).toBe('stub')
   })
 
@@ -161,5 +167,27 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
     await import('../registry.js')
     expect(getPluginFactory('github-prs')!('#x', () => {}).name).toBe('github-prs')
     expect(getPluginFactory('github-issues')!('#x', () => {}).name).toBe('github-issues')
+  })
+})
+
+describe('registerPlugin collision guard', () => {
+  it('throws when a name is registered twice', () => {
+    registerPlugin('collide', (dc) => new StubPlugin(dc))
+    try {
+      expect(() => registerPlugin('collide', (dc) => new StubPlugin(dc))).toThrow(/already registered: collide/)
+    } finally {
+      unregisterPlugin('collide')
+    }
+  })
+
+  it('rejects an external attempt to shadow a built-in name', async () => {
+    await import('../registry.js')
+    expect(() => registerPlugin('github-prs', (dc) => new StubPlugin(dc))).toThrow(/already registered: github-prs/)
+  })
+
+  it('unregisterPlugin returns true when present, false when absent', () => {
+    registerPlugin('ephemeral', (dc) => new StubPlugin(dc))
+    expect(unregisterPlugin('ephemeral')).toBe(true)
+    expect(unregisterPlugin('ephemeral')).toBe(false)
   })
 })

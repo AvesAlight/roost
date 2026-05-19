@@ -22,6 +22,7 @@ import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js
 import { defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
+import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
 import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
@@ -112,6 +113,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const port = ircCfg.port ?? 6667
   const interval = Math.max(5, ircCfg.interval_seconds ?? 60) * 1000
 
+  await loadExternalPlugins(stateDir, config.plugin_paths)
   const plugins = buildPlugins(config, projectChannel, log)
   const initialChannels = bootChannels(plugins, config, projectChannel)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
@@ -247,6 +249,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const server = ircCfg.server ?? '127.0.0.1'
   const port = ircCfg.port ?? 6667
 
+  await loadExternalPlugins(stateDir, config.plugin_paths)
   const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
   const channels = bootChannels(plugins, config, projectChannel)
 
@@ -304,6 +307,7 @@ async function main(): Promise<void> {
     // One-shot: fetch + diff, print events JSON
     const config = await loadConfig(stateDir)
     const projectChannel = resolveProjectChannel(config)
+    await loadExternalPlugins(stateDir, config.plugin_paths)
     const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,

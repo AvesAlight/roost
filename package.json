@@ -3,6 +3,9 @@
   "version": "0.6.2",
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    "./plugin": "./src/orchestrator/plugin-api.ts"
+  },
   "scripts": {
     "test": "bun test",
     "lint": "eslint src/ test/ && shellcheck bin/*",

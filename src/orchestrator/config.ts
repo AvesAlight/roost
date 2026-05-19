@@ -36,6 +36,12 @@ export interface OrchestratorConfig {
   // of enabled plugins is `Object.keys(plugins)`. Each slice is shaped by
   // the owning plugin — typed locally via BasePlugin.pluginConfig.
   plugins?: Record<string, unknown>
+  // External plugin modules to load before `buildPlugins`. Each entry is a
+  // path to a module that calls `registerPlugin(name, factory)` at top
+  // level. Relative paths resolve against the config directory
+  // (`.orchestrator/`); absolute paths pass through unchanged. A failing
+  // import is fatal — see docs/PLUGINS.md.
+  plugin_paths?: string[]
 }
 
 export interface OrchestratorState {

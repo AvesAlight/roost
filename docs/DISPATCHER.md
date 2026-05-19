@@ -35,6 +35,7 @@ Fields:
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
 | `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
 | `plugins.<name>` | Per-plugin config slice. Keys list the enabled plugins (in emission order). |
+| `plugin_paths` | Optional `[path, ...]` of external plugin modules to load before the registry is walked. Relative paths resolve against `.orchestrator/`. See [PLUGINS.md](./PLUGINS.md). |
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
 | `plugins.github-new-issues` | Repo-wide new-issue feed: `{"repo"?: "OWNER/NAME", "channels"?: [...]}` (both optional; default = `repo` at top level + project channel). |
@@ -45,9 +46,10 @@ destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
 to `#<project>-issue-N` for each linked issue).
 
 A plugin not listed under `plugins` is not instantiated — there is no top-level
-fallback. The supported set is the first-party plugins shipped in this repo
-(`github-prs`, `github-issues`, `github-new-issues`, `github-commits`); external
-plugin discovery is not yet supported.
+fallback. The first-party set shipped in this repo is `github-prs`,
+`github-issues`, `github-new-issues`, `github-commits`. External plugins are
+loaded via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the registry
+is walked, so their names become available alongside the built-ins.
 
 `github-new-issues` needs an explicit `plugins.github-new-issues`
 entry to run. `bin/roost init` writes one for new projects; for existing

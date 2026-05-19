@@ -11,6 +11,16 @@
 import type { Command } from './dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from './config.js'
 
+// Narrow view of the orchestrator config that the plugin seam exposes
+// publicly. External plugins type their method parameters with this so they
+// only see their own slice path — never the wider OrchestratorConfig shape
+// (project/repo/irc/etc.). OrchestratorConfig is structurally assignable to
+// PluginConfig, so internal callers passing OrchestratorConfig still satisfy
+// external implementations that declare PluginConfig.
+export interface PluginConfig {
+  plugins?: Record<string, unknown>
+}
+
 // Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
 // the dispatcher only knows how to write each variant to IRC.
 export type TaggedEventPayload =
@@ -96,8 +106,24 @@ export type PluginFactory = (defaultChannel: string, log: PluginLogger) => Plugi
 
 const REGISTRY = new Map<string, PluginFactory>()
 
+// Throws on duplicate name — silent overwrite would let one plugin
+// shadow another's state slice (registry key === state.plugins[name] key)
+// and cause hours of "where did my events go" debugging. Built-ins register
+// once at process boot via side-effect import of `registry.ts`; external
+// plugins register at top level of their module when loaded by the loader.
+// Test cleanup uses `unregisterPlugin`.
 export function registerPlugin(name: string, factory: PluginFactory): void {
+  if (REGISTRY.has(name)) {
+    throw new Error(`plugin already registered: ${name}`)
+  }
   REGISTRY.set(name, factory)
+}
+
+// Test-only escape hatch. Not exported from `plugin-api.ts` — external
+// plugins have no reason to deregister themselves. Returns true if the name
+// was registered, false if absent.
+export function unregisterPlugin(name: string): boolean {
+  return REGISTRY.delete(name)
 }
 
 export function getPluginFactory(name: string): PluginFactory | undefined {
