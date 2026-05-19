@@ -38,6 +38,7 @@ Fields:
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
 | `plugins.github-new-issues` | Repo-wide new-issue feed: `{"repo"?: "OWNER/NAME", "channels"?: [...]}` (both optional; default = `repo` at top level + project channel). |
+| `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
 
 For watched entries, `repo` defaults to the top-level value. `channels` adds
 destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
@@ -45,8 +46,8 @@ to `#<project>-issue-N` for each linked issue).
 
 A plugin not listed under `plugins` is not instantiated — there is no top-level
 fallback. The supported set is the first-party plugins shipped in this repo
-(`github-prs`, `github-issues`, `github-new-issues`); external plugin discovery
-is not yet supported.
+(`github-prs`, `github-issues`, `github-new-issues`, `github-commits`); external
+plugin discovery is not yet supported.
 
 `github-new-issues` needs an explicit `plugins.github-new-issues`
 entry to run. `bin/roost init` writes one for new projects; for existing

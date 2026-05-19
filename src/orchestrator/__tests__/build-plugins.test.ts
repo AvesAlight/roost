@@ -62,4 +62,24 @@ describe('buildPlugins', () => {
     }
     expect(() => buildPlugins(cfg, '#proj-leads', NOOP_LOG)).toThrow(/available:.*github-issues/)
   })
+
+  it('instantiates github-commits when listed in config.plugins', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      repo: 'org/repo',
+      plugins: { 'github-commits': { watched: [] } },
+    }
+    const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
+    expect(names).toEqual(['github-commits'])
+  })
+
+  it('does not instantiate github-commits when absent from config.plugins (default-off)', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      repo: 'org/repo',
+      plugins: { 'github-prs': { watched: [] } },
+    }
+    const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
+    expect(names).toEqual(['github-prs'])
+  })
 })

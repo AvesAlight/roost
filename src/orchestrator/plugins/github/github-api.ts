@@ -242,6 +242,17 @@ export interface GhRepoIssue {
   pull_request?: Record<string, unknown>
 }
 
+// Repo-commits feed shape. `/repos/{owner}/{repo}/commits` returns newest-first.
+// We only consume sha, html_url, and the message subject; the rest of the
+// payload is intentionally untyped to keep us insulated from GH schema drift.
+export interface GhCommit {
+  sha?: string
+  html_url?: string
+  commit?: {
+    message?: string
+  }
+}
+
 export interface FetchedPr {
   title: string | null
   url: string | null
@@ -388,5 +399,20 @@ export class GhClient {
   async fetchRepoOpenIssues(repo: string): Promise<GhRepoIssue[]> {
     const raw = (await this.api(`repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
     return raw.filter(i => !i.pull_request)
+  }
+
+  // Lists commits on `branch` (and optionally restricted to a single `path`).
+  // Single page, capped at `perPage` — the caller's poll cadence + the cap
+  // bound the watermark; pagination would only matter on multi-page bursts,
+  // which the caller logs (see GitHubCommitsPlugin).
+  async fetchRepoCommits(
+    repo: string,
+    branch: string,
+    path: string | undefined,
+    perPage: number,
+  ): Promise<GhCommit[]> {
+    const params: string[] = [`sha=${encodeURIComponent(branch)}`, `per_page=${perPage}`]
+    if (path) params.push(`path=${encodeURIComponent(path)}`)
+    return (await this.api(`repos/${repo}/commits?${params.join('&')}`) ?? []) as GhCommit[]
   }
 }
