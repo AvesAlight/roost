@@ -17,3 +17,15 @@ When the same invariant lives in 3+ surfaces (operator help, agent prompts, lear
 ## 2026-05-19: Always spawn with bare model aliases, never full ids (from #422)
 
 Use bare aliases (`opus`, `sonnet`, `haiku`) — full ids (`claude-opus-4-5` etc.) pin the session to that exact dated variant instead of tracking the latest version at spawn time. The APM was filling `<model>` placeholders in its templates with full ids and silently shipping work on stale models. Stick to aliases unless the lead explicitly asked for a pinned version (rollback test, regression repro, A/B). The wrapper now warns when `--model` looks like a full id — heed it. Next escalation if a warning is cited as ignored: hard error + `--pin-version` opt-in.
+
+## 2026-05-19: Verify GitHub APPROVED review before saying go on merge (from #414)
+
+Before merging, confirm GitHub shows a formal APPROVED review — don't infer approval from a PR comment. A comment saying "let's file followups" is not a review submission. The GitHub ruleset is now a backstop; the PM check comes first.
+
+## 2026-05-19: When removing a guard, audit tests that passed because of it (from #415)
+
+When you delete a guard (error check, validation, early-return), scan tests for ones that asserted the guard's error. Those tests will still pass if the new code triggers a different error — assert the new error verbatim, not just "some error."
+
+## 2026-05-19: Write docs in IRC-conversational voice from the first draft (from #255)
+
+Prose in this project needs one idea per sentence, no em-dashes, no jargon without a concrete instruction that follows. Writing "claudey" the first time costs a full extra review round. Quick self-check: read it aloud — if a sentence has more than one connector, split it.
