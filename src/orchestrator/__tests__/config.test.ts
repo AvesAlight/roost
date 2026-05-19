@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig, writeConfig, mutateConfig } from '../config.js'
+import { loadConfig, writeConfig, mutateConfig, validateRepoConsistency } from '../config.js'
 
 let dir: string
 
@@ -73,6 +73,23 @@ describe('mutateConfig', () => {
     expect(firstEnd).toBeLessThan(secondStart)
   })
 
+  it('rejects mixed-repo configs at load time (single mode + watched pinning a different repo)', async () => {
+    await writeConfig(dir, {
+      project: 'p',
+      repo: 'org/main',
+      plugins: { 'github-prs': { watched: [{ number: 1, repo: 'org/other' }] } },
+    })
+    await expect(loadConfig(dir)).rejects.toThrow(/single-repo mode.*pins repo=org\/other/)
+  })
+
+  it('rejects multi-mode entries missing repo at load time', async () => {
+    await writeConfig(dir, {
+      project: 'p',
+      plugins: { 'github-prs': { watched: [{ number: 1 }] } },
+    })
+    await expect(loadConfig(dir)).rejects.toThrow(/multi-repo mode.*requires repo/)
+  })
+
   it('does not write on fn error and the queue advances for next caller', async () => {
     await expect(
       mutateConfig(dir, () => { throw new Error('boom') })
@@ -82,5 +99,49 @@ describe('mutateConfig', () => {
     // Queue not poisoned: next mutate succeeds
     await mutateConfig(dir, (c) => { c.project = 'after-error' })
     expect((await loadConfig(dir)).project).toBe('after-error')
+  })
+})
+
+describe('validateRepoConsistency', () => {
+  it('accepts a single-repo config with entries omitting repo', () => {
+    expect(() => validateRepoConsistency({
+      project: 'p',
+      repo: 'org/main',
+      plugins: { 'github-prs': { watched: [{ number: 1 }, { number: 2 }] } },
+    })).not.toThrow()
+  })
+
+  it('accepts a single-repo config with entries that pin the matching repo', () => {
+    expect(() => validateRepoConsistency({
+      project: 'p',
+      repo: 'org/main',
+      plugins: { 'github-issues': { watched: [{ number: 7, repo: 'org/main' }] } },
+    })).not.toThrow()
+  })
+
+  it('accepts a multi-repo config when every entry carries a repo', () => {
+    expect(() => validateRepoConsistency({
+      project: 'p',
+      plugins: {
+        'github-prs': { watched: [{ number: 1, repo: 'org/a' }] },
+        'github-issues': { watched: [{ number: 9, repo: 'org/b' }] },
+      },
+    })).not.toThrow()
+  })
+
+  it('rejects a single-repo config where github-new-issues pins a different slice.repo', () => {
+    expect(() => validateRepoConsistency({
+      project: 'p',
+      repo: 'org/main',
+      plugins: { 'github-new-issues': { repo: 'org/other' } },
+    })).toThrow(/single-repo mode.*pins repo=org\/other/)
+  })
+
+  it('skips non-object plugin slices', () => {
+    expect(() => validateRepoConsistency({
+      project: 'p',
+      repo: 'org/main',
+      plugins: { 'weird': null as unknown as Record<string, unknown> },
+    })).not.toThrow()
   })
 })

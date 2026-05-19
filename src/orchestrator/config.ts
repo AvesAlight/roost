@@ -65,7 +65,56 @@ export async function loadConfig(stateDir: string): Promise<OrchestratorConfig> 
   const path = join(stateDir, 'config.json')
   const file = Bun.file(path)
   if (!(await file.exists())) throw new Error(`config missing: ${path}`)
-  return file.json() as Promise<OrchestratorConfig>
+  const config = (await file.json()) as OrchestratorConfig
+  validateRepoConsistency(config)
+  return config
+}
+
+// Mode invariants:
+//   single-repo (config.repo set):   every watched entry's repo must either
+//     be absent (inherits config.repo) or equal config.repo.
+//   multi-repo  (config.repo unset): every watched entry must carry its own
+//     repo — there is no inherit target.
+//
+// Walks `config.plugins[*].watched` arrays (the WatchedEntry shape every
+// gh-base plugin uses) plus `slice.repo` on slices that pin a repo
+// (github-new-issues). Slices whose shape doesn't match this convention
+// (third-party plugins, fake-plugin test fixtures) pass through untouched —
+// the validator only enforces invariants on the canonical shape it knows.
+export function validateRepoConsistency(config: OrchestratorConfig): void {
+  const topRepo = config.repo
+  const plugins = config.plugins ?? {}
+  for (const [name, sliceUnknown] of Object.entries(plugins)) {
+    if (sliceUnknown == null || typeof sliceUnknown !== 'object') continue
+    const slice = sliceUnknown as { watched?: unknown; repo?: unknown }
+
+    if (typeof slice.repo === 'string' && topRepo && slice.repo !== topRepo) {
+      throw new Error(
+        `single-repo mode (config.repo=${topRepo}) but ${name} pins repo=${slice.repo}; remove or align`
+      )
+    }
+
+    if (!Array.isArray(slice.watched)) continue
+    for (const entryUnknown of slice.watched) {
+      if (entryUnknown == null || typeof entryUnknown !== 'object') continue
+      const entry = entryUnknown as { repo?: unknown; number?: unknown }
+      const entryRepo = typeof entry.repo === 'string' ? entry.repo : undefined
+      const id = typeof entry.number === 'number' ? `#${entry.number}` : '(unknown)'
+      if (topRepo) {
+        if (entryRepo != null && entryRepo !== topRepo) {
+          throw new Error(
+            `single-repo mode (config.repo=${topRepo}) but ${name} entry ${id} pins repo=${entryRepo}; remove or align`
+          )
+        }
+      } else {
+        if (!entryRepo) {
+          throw new Error(
+            `multi-repo mode (no config.repo) requires repo on every entry — ${name} entry ${id} is missing one`
+          )
+        }
+      }
+    }
+  }
 }
 
 export async function loadState(stateDir: string): Promise<OrchestratorState | null> {

@@ -35,11 +35,16 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 Every per-project artifact carries a `<project>-` prefix:
 
 - Leads channel: `#<project>-leads`
-- Issue channel: `#<project>-issue-<N>`
-- Worker nick: `<project>-worker-<N>`
-- Reviewer nick: `<project>-reviewer-<N>`
+- Issue channel: `#<project>-issue-<N>`           — single-repo mode
+                  `#<project>-<slug>-issue-<N>`   — multi-repo mode
+- Worker nick: `<project>-worker-<N>`             — single-repo
+                `<project>-worker-<slug>-<N>`     — multi-repo
+- Reviewer nick: `<project>-reviewer-<N>`         — single-repo
+                  `<project>-reviewer-<slug>-<N>` — multi-repo
 - Associate-pm nick: `<project>-apm`
 - Dispatcher nick: `<project>-dispatcher` (set in `.orchestrator/config.json`)
+
+**Modes**: a dispatcher with `config.repo` set is single-repo; without it, multi-repo. In multi-repo mode every per-issue artifact carries an extra `<slug>` segment (lowercased repo basename — `Owner/Roost` → `roost`) so two repos with the same issue/PR number don't collide on one channel. Cross-org name overlap (`Org1/foo` + `Org2/foo`) is a known footgun — pick disjoint repo names per project.
 
 The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[<project>-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
 

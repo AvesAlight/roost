@@ -268,35 +268,123 @@ describe('desiredChannels', () => {
     expect(new GitHubPrsPlugin('#proj').desiredChannels({})).toEqual([])
     expect(new GitHubIssuesPlugin('#proj').desiredChannels({})).toEqual([])
   })
+
+  it('threads the slug for multi-repo entries (PRs)', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }, { number: 7, repo: 'org/bar' }] } },
+    }
+    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort())
+      .toEqual(['#proj-bar-issue-7', '#proj-foo-issue-25'])
+  })
+
+  it('threads the slug for multi-repo entries (issues)', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'github-issues': { watched: [{ number: 14, repo: 'org/foo' }] } },
+    }
+    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg)).toEqual(['#proj-foo-issue-14'])
+  })
+})
+
+describe('multi-repo runTick — slug-aware channel routing', () => {
+  it('PR event routes to the slugged linked-issue channel', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/foo', pr: 25, url: 'u',
+      author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'cu',
+      linked_issues: [14],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [14] }),
+      events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-foo-issue-14'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('issue event routes to its slugged channel', async () => {
+    const issueEv: OrchestratorEvent = {
+      kind: 'issue_comment',
+      repo: 'org/bar', issue: 50, url: 'u',
+      author: 'a', body: 'y', body_preview: 'y', is_worker_reply: false,
+      comment_id: 2, comment_url: 'cu',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+      snap: fakeIssueSnap({ repo: 'org/bar' }), events: [issueEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-issues': { watched: [{ number: 50, repo: 'org/bar' }] } },
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-bar-issue-50'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('single-repo path is unchanged when config.repo is set and entry repo matches', async () => {
+    const issueEv: OrchestratorEvent = {
+      kind: 'issue_comment',
+      repo: 'org/main', issue: 50, url: 'u',
+      author: 'a', body: 'y', body_preview: 'y', is_worker_reply: false,
+      comment_id: 2, comment_url: 'cu',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+      snap: fakeIssueSnap({ repo: 'org/main' }), events: [issueEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/main',
+        plugins: { 'github-issues': { watched: [{ number: 50, repo: 'org/main' }] } },
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-50'])
+    } finally { spy.mockRestore() }
+  })
 })
 
 describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   const issues = () => new GitHubIssuesPlugin('#proj')
+  // Single-repo mode: bare watch/unwatch DMs are only valid here. Multi-mode
+  // rejection is covered in its own describe block below.
+  const singleRepo = (extra: Partial<OrchestratorConfig> = {}): OrchestratorConfig =>
+    ({ repo: 'org/r', ...extra })
 
   it('claims bare watch (target=null)', () => {
-    const config: OrchestratorConfig = {}
+    const config = singleRepo()
     const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: [] })
     expect(out).toMatch(/watching issue #5/)
     expect((config.plugins?.['github-issues'] as { watched: unknown[] }).watched).toEqual([{ number: 5 }])
   })
 
   it('ignores `watch pr` (returns null)', () => {
-    const config: OrchestratorConfig = {}
+    const config = singleRepo()
     const out = issues().handleCommand!(config, { kind: 'watch', target: 'pr', number: 5, channels: [] })
     expect(out).toBeNull()
     expect(config.plugins?.['github-issues']).toBeUndefined()
   })
 
   it('is idempotent on duplicate watch', () => {
-    const config: OrchestratorConfig = { plugins: { 'github-issues': { watched: [{ number: 5 }] } } }
+    const config = singleRepo({ plugins: { 'github-issues': { watched: [{ number: 5 }] } } })
     const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: [] })
     expect(out).toMatch(/already watching/)
   })
 
   it('appends + dedupes channels onto existing entry', () => {
-    const config: OrchestratorConfig = {
+    const config = singleRepo({
       plugins: { 'github-issues': { watched: [{ number: 5, channels: ['#a'] }] } },
-    }
+    })
     issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: ['#a', '#b'] })
     const entry = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0]
     expect(entry.channels).toEqual(['#a', '#b'])
@@ -304,9 +392,9 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
 
   it('no-op channel add does not dirty entry.channels', () => {
     const before = ['#a', '#b']
-    const config: OrchestratorConfig = {
+    const config = singleRepo({
       plugins: { 'github-issues': { watched: [{ number: 5, channels: before }] } },
-    }
+    })
     const out = issues().handleCommand!(config, { kind: 'watch', target: null, number: 5, channels: ['#a', '#b'] })
     expect(out).toMatch(/channels unchanged/)
     const after = (config.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0].channels
@@ -314,22 +402,22 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   })
 
   it('removes an entry on unwatch', () => {
-    const config: OrchestratorConfig = {
+    const config = singleRepo({
       plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6 }] } },
-    }
+    })
     issues().handleCommand!(config, { kind: 'unwatch', target: null, number: 5 })
     expect((config.plugins!['github-issues'] as { watched: { number: number }[] }).watched).toEqual([{ number: 6 }])
   })
 
   it('reports not-watching on unwatch of unknown entry', () => {
-    const out = issues().handleCommand!({}, { kind: 'unwatch', target: null, number: 5 })
+    const out = issues().handleCommand!(singleRepo(), { kind: 'unwatch', target: null, number: 5 })
     expect(out).toMatch(/not watching/)
   })
 
   it('list returns the github-issues section', () => {
-    const config: OrchestratorConfig = {
+    const config = singleRepo({
       plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6, channels: ['#a'] }] } },
-    }
+    })
     const out = issues().handleCommand!(config, { kind: 'list' })
     expect(out).toContain('github-issues (2):')
     expect(out).toContain('  #5')
@@ -337,11 +425,11 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   })
 
   it('list reports (none) for empty slice', () => {
-    expect(issues().handleCommand!({}, { kind: 'list' })).toContain('(none)')
+    expect(issues().handleCommand!(singleRepo(), { kind: 'list' })).toContain('(none)')
   })
 
   it('help returns this plugin\'s usage block', () => {
-    const out = issues().handleCommand!({}, { kind: 'help' })!
+    const out = issues().handleCommand!(singleRepo(), { kind: 'help' })!
     expect(out).toContain('github-issues commands')
     expect(out).toMatch(/watch <N>/)
     expect(out).toMatch(/unwatch <N>/)
@@ -350,11 +438,47 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   })
 })
 
+describe('GhBase.handleCommand — multi-repo mode rejection', () => {
+  it('rejects bare watch in multi-repo mode with a hint at #433', () => {
+    const config: OrchestratorConfig = { project: 'p' }
+    const out = new GitHubIssuesPlugin('#proj').handleCommand!(
+      config,
+      { kind: 'watch', target: null, number: 5, channels: [] },
+    )
+    expect(out).toMatch(/multi-repo mode/)
+    expect(out).toMatch(/#433/)
+    expect(config.plugins?.['github-issues']).toBeUndefined()
+  })
+
+  it('rejects unwatch in multi-repo mode', () => {
+    const config: OrchestratorConfig = {
+      project: 'p',
+      plugins: { 'github-issues': { watched: [{ number: 5, repo: 'org/a' }] } },
+    }
+    const out = new GitHubIssuesPlugin('#proj').handleCommand!(
+      config,
+      { kind: 'unwatch', target: null, number: 5 },
+    )
+    expect(out).toMatch(/multi-repo mode/)
+    // Slice untouched on rejection.
+    expect((config.plugins!['github-issues'] as { watched: unknown[] }).watched).toHaveLength(1)
+  })
+
+  it('rejects `watch pr` in multi-repo mode', () => {
+    const config: OrchestratorConfig = { project: 'p' }
+    const out = new GitHubPrsPlugin('#proj').handleCommand!(
+      config,
+      { kind: 'watch', target: 'pr', number: 10, channels: [] },
+    )
+    expect(out).toMatch(/multi-repo mode/)
+  })
+})
+
 describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
   const prs = () => new GitHubPrsPlugin('#proj')
 
   it('claims `watch pr` (target=pr)', () => {
-    const config: OrchestratorConfig = {}
+    const config: OrchestratorConfig = { repo: 'org/r' }
     const out = prs().handleCommand!(config, { kind: 'watch', target: 'pr', number: 10, channels: ['#x'] })
     expect(out).toMatch(/watching pr #10 \+ #x/)
     expect(config.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, channels: ['#x'] }] })
@@ -362,12 +486,12 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
   })
 
   it('ignores bare watch (returns null)', () => {
-    const out = prs().handleCommand!({}, { kind: 'watch', target: null, number: 10, channels: [] })
+    const out = prs().handleCommand!({ repo: 'org/r' }, { kind: 'watch', target: null, number: 10, channels: [] })
     expect(out).toBeNull()
   })
 
   it('help mentions `pr <N>` form', () => {
-    const out = prs().handleCommand!({}, { kind: 'help' })!
+    const out = prs().handleCommand!({ repo: 'org/r' }, { kind: 'help' })!
     expect(out).toContain('github-prs commands')
     expect(out).toMatch(/watch pr <N>/)
     expect(out).toMatch(/unwatch pr <N>/)

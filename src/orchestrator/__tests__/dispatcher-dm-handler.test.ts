@@ -382,7 +382,7 @@ describe('handleDm — routing', () => {
   it('pure-read batches do not call mutateConfig (snapshot path)', async () => {
     // Seed a watched entry. After `watch list`, config on disk is unchanged
     // — proves we didn't re-serialize via mutateConfig.
-    await writeConfig(dir, { project: 'roost', plugins: { issues: { watched: [{ number: 99 }] } } })
+    await writeConfig(dir, { project: 'roost', repo: 'org/r', plugins: { issues: { watched: [{ number: 99 }] } } })
     const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
     // Small delay so a write would show a different mtime.
     await new Promise(r => setTimeout(r, 20))

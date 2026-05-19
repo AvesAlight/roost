@@ -1,7 +1,7 @@
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
-import { defaultProject, issueChannel } from '../../naming.js'
+import { channelSlug, defaultProject, isMultiRepo, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
 import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
 
@@ -100,8 +100,8 @@ export abstract class GhBase extends GhPluginBase {
     const project = defaultProject(config)
     const chans = new Set<string>()
     for (const entry of entries) {
-      const { number, channels } = resolveRepoEntry(entry, config.repo)
-      chans.add(issueChannel(project, number))
+      const { repo, number, channels } = resolveRepoEntry(entry, config.repo)
+      chans.add(issueChannel(project, number, channelSlug(config, repo)))
       for (const c of channels) chans.add(c)
     }
     return [...chans]
@@ -139,6 +139,12 @@ export abstract class GhBase extends GhPluginBase {
   }
 
   private applyWatch(config: OrchestratorConfig, number: number, channels: string[]): string {
+    // Multi-repo mode has no inherit target for entry.repo — the bare DM
+    // grammar can't disambiguate, so reject it with a hint at the
+    // cross-repo grammar landing separately.
+    if (isMultiRepo(config)) {
+      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`watch <N>\` has no repo; cross-repo DM grammar is in progress (#433)`
+    }
     const slice = this.slice(config)
     slice.watched ??= []
     const watched = slice.watched
@@ -161,6 +167,11 @@ export abstract class GhBase extends GhPluginBase {
   }
 
   private applyUnwatch(config: OrchestratorConfig, number: number): string {
+    // Same multi-repo restriction as applyWatch: bare `unwatch <N>` is
+    // ambiguous when N can live in multiple repos.
+    if (isMultiRepo(config)) {
+      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`unwatch <N>\` has no repo; cross-repo DM grammar is in progress (#433)`
+    }
     const slice = this.slice(config)
     const watched = slice.watched ?? []
     const idx = watched.findIndex(e => e.number === number)
