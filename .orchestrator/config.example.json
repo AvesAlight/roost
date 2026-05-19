@@ -12,6 +12,7 @@
   "plugins": {
     "github-prs": { "watched": [] },
     "github-issues": { "watched": [] },
-    "github-new-issues": {}
+    "github-new-issues": {},
+    "github-commits": { "watched": [] }
   }
 }
