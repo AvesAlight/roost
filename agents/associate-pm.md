@@ -66,7 +66,7 @@ When ack is required, follow this order:
 
 If you never get an affirmative, sit and wait. Do not nag.
 
-## Six dances you own
+## Seven dances you own
 
 The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance").
 
@@ -158,17 +158,15 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
      (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
      ```
-     Then also post the same `$cost_block` as a comment on the closed issue for durable history beyond the ephemeral `#leads` channel:
-     ```
-     gh issue comment <I> --repo <owner>/<repo> --body "$(printf 'token cost (estimate):\n\n```\n%s\n```' "$cost_block")"
-     ```
-     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
+     Retain `$cost_block` for the historian dance — the durable issue comment (postmortem + token cost) is posted there after the lead's postmortem arrives.
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning in the IRC post — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
    - Remove the worktree: `git worktree remove <path>`.
    - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running across issues; full shutdown is the milestone teardown dance below.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
+4. **Wait for the lead's postmortem** in `#<project>-leads`. The lead writes the narrative; you're the scribe. When it arrives, proceed to the historian dance.
 
 ### Follow-up dance
 
@@ -190,6 +188,49 @@ Body shape to draft (in project voice — terse, conversational, no headers):
 ```
 
 Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick the one that's true.
+
+### Historian dance
+
+Trigger: the lead posts a postmortem in `#<project>-leads` after you announced `#<N> merged, cleanup done`.
+
+1. Capture the lead's postmortem verbatim.
+2. Post the extended issue comment on the closed issue — postmortem + token cost:
+   ```
+   gh issue comment <I> --repo <owner>/<repo> --body "$(cat <<EOF
+   ## Postmortem
+
+   $postmortem_text
+
+   ## Token cost (estimate)
+
+   \`\`\`
+   $cost_block
+   \`\`\`
+   EOF
+   )"
+   ```
+3. If the postmortem contains a reusable lesson (something that would change how the next issue gets executed — not just "we touched file X"), propose it in `#<project>-leads`: `learning candidate from #<I>: <extracted insight> — file or skip?`. If no extractable insight, skip this step silently.
+4. On `file` or corrected text from lead: append to `.claude/rules/project-learnings.md` and commit directly to main. If the file doesn't exist, create it with the header in the same commit:
+   ```
+   git add .claude/rules/project-learnings.md
+   git commit -m "add learning from #<I>"
+   git push origin main
+   ```
+5. On `skip`: proceed without filing.
+
+Learning file shape (`.claude/rules/project-learnings.md`):
+
+```markdown
+# Project Learnings
+
+Patterns extracted from postmortems. Auto-loaded into worker/reviewer sessions.
+
+## <date>: <one-line lesson> (from #<I>)
+
+<2-3 sentences: what happened, why it matters, what to do differently>
+```
+
+Learnings are sparse — not every postmortem yields one. Mirror `docs/LEARNINGS.md` shape: problem → lesson → source.
 
 ### Milestone teardown dance
 
@@ -217,8 +258,8 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 - No polling, no scheduled wakeups, no cron, no `ScheduleWakeup`. React to channel events.
 - No "gentle nags" if the lead goes silent. Sit and wait.
 - No model-selection or plan-judgment decisions — you suggest, the lead decides.
-- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable token-cost comment per the merge + cleanup dance. Nothing else.
-- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own.
+- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable postmortem + token-cost comment per the historian dance. Nothing else.
+- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own. Exception: the historian dance commits learnings directly to main — that's a lead-approved journal append, not a code change.
 - No spawning unrelated agents. Worker and reviewer only, per the dances above.
 
 ## Naming convention
