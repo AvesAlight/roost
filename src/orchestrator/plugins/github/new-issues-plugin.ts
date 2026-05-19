@@ -5,18 +5,18 @@
 // one surfaces brand-new issues so the team doesn't have to notice them
 // manually.
 //
-// Enabled by an explicit `plugins.github-new-issues` slice in config with at
-// least one `watched` entry. `bin/roost init` writes one for new projects;
-// existing projects need an operator edit (or the example.json refresh) to
-// pick this up.
+// Enabled by an explicit `plugins.github-new-issues` slice in config.
+// Empty or absent `watched` is a no-op (matches commits-plugin). `bin/roost
+// init` writes one for new projects; existing projects need an operator edit
+// (or the example.json refresh) to pick this up.
 //
 // State slice: `{ repos: Record<string, number[]> }` keyed by repo slug.
 // Seeding (`prev===null`) and first-observation of a new repo entry
 // (`prev.repos[repo]===undefined`) both capture the current open set without
-// emitting — only ticks after seed announce. Closed issues that re-open will
-// re-announce only if they were pruned from `seen` (we don't prune today, so
-// closed-then-reopened is silently suppressed; the operator can `watch <N>`
-// for it).
+// emitting — only ticks after seed announce. Removed entries are carried
+// forward in state (matches commits-plugin) so remove-then-readd doesn't
+// replay history. Closed issues that re-open will re-announce only if pruned
+// from `seen` (we don't prune today; the operator can `watch <N>` for it).
 import type { OrchestratorConfig } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
@@ -53,7 +53,9 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     const watchEntries = slice.watched ?? []
-    if (!watchEntries.length) throw new Error('github-new-issues: watched list is empty (add at least one {repo} entry)')
+    // Empty or absent watched is a no-op — matches commits-plugin semantics so
+    // an init-stub `{ "watched": [] }` is harmless.
+    if (!watchEntries.length) return { state: prevState ?? { repos: {} }, taggedEvents: [], channels: [] }
 
     // State migration: old flat format (`seen_issue_numbers` present, `repos` absent) re-seeds cleanly.
     const prev = (prevState != null && typeof prevState === 'object' && 'repos' in prevState)
@@ -61,7 +63,9 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       : null
 
     const taggedEvents: TaggedEvent[] = []
-    const nextRepos: Record<string, number[]> = {}
+    // Carry forward all repos from prev (matches commits-plugin state retention:
+    // remove-then-readd doesn't replay history).
+    const nextRepos: Record<string, number[]> = prev ? { ...prev.repos } : {}
 
     for (const entry of watchEntries) {
       const { repo, channels } = entry

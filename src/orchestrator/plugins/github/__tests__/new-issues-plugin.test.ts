@@ -110,20 +110,22 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('throws when watched list is empty', async () => {
+  it('no-ops when watched list is empty — matches commits-plugin empty-list semantics', async () => {
     const config: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'github-new-issues': { watched: [] } },
     }
-    await expect(new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)).rejects.toThrow(/watched list is empty/)
+    const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)
+    expect(result.taggedEvents).toHaveLength(0)
   })
 
-  it('throws when watched is absent', async () => {
+  it('no-ops when watched is absent', async () => {
     const config: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'github-new-issues': {} },
     }
-    await expect(new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)).rejects.toThrow(/watched list is empty/)
+    const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)
+    expect(result.taggedEvents).toHaveLength(0)
   })
 
   it('orders announcements by issue number', async () => {
@@ -208,6 +210,21 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       expect(texts.some(t => t.includes('org/new'))).toBe(false)
       // org/new numbers should be seeded into state
       expect((result.state as NewIssuesPluginState).repos['org/new']).toEqual([10, 11])
+    } finally { spy.mockRestore() }
+  })
+
+  it('carries forward removed-entry state — remove-then-readd does not replay history', async () => {
+    const spy = spyOn(GhClient.prototype, 'fetchRepoOpenIssues').mockResolvedValue([issue(5)])
+    try {
+      // org/gone is no longer in watched, but was in prev state
+      const config = baseConfig()
+      const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(
+        config,
+        { repos: { 'org/repo': [], 'org/gone': [10, 11] } },
+      )
+      const state = result.state as NewIssuesPluginState
+      // org/gone watermarks carried forward even though not in watched
+      expect(state.repos['org/gone']).toEqual([10, 11])
     } finally { spy.mockRestore() }
   })
 
