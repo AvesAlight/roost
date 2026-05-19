@@ -36,10 +36,10 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 PRs start as draft and go through a reviewer pass *before* anyone flips them ready.
 
 1. **After your initial draft push:** post the PR link in the channel and stop. Lead-pm spawns a reviewer (opus) against the draft. Do not say "ready to flip" — there's no flip yet.
-2. **After reviewer findings post:** address them (batch into one push if there are several), then signal "addressed reviewer findings" in the channel. APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
-3. **Human review loop:** the PR stays ready throughout — no draft/ready toggling. If the human leaves changes-requested or comment feedback, address it and signal again ("addressed feedback"); APM re-requests review.
+2. **After reviewer findings post:** address them in logical commits — group by theme (see Commits below), split when themes diverge. Push, then signal in the channel naming what *structurally* changed ("tightened X validation, dropped Y helper"), not "addressed reviewer feedback". APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
+3. **Human review loop:** the PR stays ready throughout — no draft/ready toggling. If the human leaves changes-requested or comment feedback, address it the same way — logical commits, structural signal — and APM re-requests review.
 
-Batch multiple changes-requested items into one push before signaling — don't ping the lead after each individual fix.
+Batch multiple changes-requested items into one push so you don't ping the lead after each individual fix; inside that push, the commits still split by theme.
 
 ## Commits
 
