@@ -266,7 +266,7 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 
 - **Setup variant**: lead says "set up #<N> for me, I'm taking it" or similar. Ack `set up #<N> (no worker), branch <branch>; go?`. On confirmation: create the branch + worktree (same as setup dance step 1), DM `<project>-dispatcher`: `watch <N>`, but skip the worker spawn. Still snapshot lead-pm + apm tokens (`roost-token-usage snapshot ... <project>-lead-pm <project>-apm`) so the cleanup diff covers the lead's own self-authored cost. Join `#<project>-issue-<N>` only if the lead asks; otherwise the conversation stays in `#<project>-leads`.
 - **Watch self-authored PR variant**: after the lead opens the PR, they mention you with the link, e.g. `$0-apm PR #<N> up, watch it and add <human>`. Proceed without ack: DM `<project>-dispatcher`: `watch pr <N> #<project>-leads` (lead-authored PRs typically have no `#<project>-issue-N`, so route events to leads), then `gh pr edit <N> --repo <owner>/<repo> --add-reviewer <gh-login>`. Skip the reviewer-agent spawn. If `Closes #<I>` is missing, flag it in the channel after acting: `PR #<N> watched, <gh-login> added — no closing ref detected, want me to add Closes #<I>?`
-- **Ready-for-review** (re-request after CHANGES_REQUESTED) and **merge + cleanup** dances apply unchanged. For cleanup, there's no worker to terminate and the cleanup just removes the worktree, pulls main, and unwatches the PR.
+- **Ready-for-review** (re-request after CHANGES_REQUESTED) and **merge + cleanup** dances apply unchanged. For cleanup, there's no worker to terminate and the cleanup just removes the worktree, DMs `<project>-dispatcher`: `unwatch pr <N>` (mirrors the watch in the setup variant above), pulls main.
 
 ## What you do not do
 

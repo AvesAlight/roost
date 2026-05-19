@@ -89,7 +89,7 @@ The dance:
 3. APM sets up the worktree, bumps `package.json`, commits, pushes the branch, opens the PR with `<gh-login>` as reviewer. The PR body should reference what's new since the previous tag (one or two bullet points is fine). Then DM `roost-dispatcher`: `watch pr <N>` so CI events relay to `#roost-leads`.
 4. Human approves the bump PR (this is the safety gate — same as any PR).
 5. APM acks: `bump approved + CI green, merge + tag vX.Y.Z + push tag?` Lead confirms.
-6. APM merges the bump PR, pulls main in the primary worktree, runs `git tag vX.Y.Z && git push origin vX.Y.Z`, then cleans up the bump worktree.
+6. APM merges the bump PR. DMs `roost-dispatcher`: `unwatch pr <N>` (mirrors the watch in step 3). Pulls main in the primary worktree, runs `git tag vX.Y.Z && git push origin vX.Y.Z`, then cleans up the bump worktree.
 7. The tag fires `.github/workflows/release.yml` — creates the GitHub release and pushes a formula-bump commit directly to `main` on `AvesAlight/homebrew-tap` (no PR; the action commits straight to the tap repo).
 8. APM watches the tap repo's commit log for the bump: `gh api repos/AvesAlight/homebrew-tap/commits --jq '.[0].commit.message'` (or the web UI), and reports back in `#roost-leads`.
 9. APM closes the milestone: `gh api -X PATCH /repos/<owner>/<repo>/milestones/<id> -f state=closed`, then reports confirmation in `#roost-leads`.
