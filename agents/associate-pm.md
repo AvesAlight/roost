@@ -66,7 +66,7 @@ When ack is required, follow this order:
 
 If you never get an affirmative, sit and wait. Do not nag.
 
-## Six dances you own
+## Seven dances you own
 
 The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance").
 
@@ -158,11 +158,11 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      token cost for #<I> (estimate — pricing table per-release, see src/pricing.ts):
      (worker/reviewer blocks are full per-issue totals; lead-pm/apm blocks are post-snapshot in-window only — when issues overlap the windows overlap too, so don't sum the four head-line dollars and call it a per-issue total)
      ```
-     Then also post the same `$cost_block` as a comment on the closed issue for durable history beyond the ephemeral `#leads` channel:
+     Post the token-cost comment on the closed issue for durable history:
      ```
-     gh issue comment <I> --repo <owner>/<repo> --body "$(printf 'token cost (estimate):\n\n```\n%s\n```' "$cost_block")"
+     printf '%s\n' "$cost_block" | gh issue comment <I> --repo <owner>/<repo> --body-file -
      ```
-     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning under both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
+     If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning in both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
    - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
@@ -191,6 +191,62 @@ Body shape to draft (in project voice — terse, conversational, no headers):
 
 Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick the one that's true.
 
+### Historian dance
+
+Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem #<I>: <narrative>`.
+
+1. Strip the trigger prefix (`<project>-apm postmortem #<I>:`) and capture the narrative.
+2. Post the postmortem comment on the closed issue (separate from token cost, which was posted at merge):
+   ```
+   printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
+   ```
+3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If no extractable insight, skip this step silently.
+4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
+   - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim
+   - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version
+   - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
+   - Anything else (critique, question) → revise and re-propose
+5. When filing a learning:
+   - Write the formatted learning block to `.claude/rules/project-learnings.md` using Edit/Write. If the file or directory doesn't exist, create them. Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
+   - Commit and push:
+     ```
+     mkdir -p .claude/rules
+     git add .claude/rules/project-learnings.md
+     git commit -m "add learning from #<I>"
+     git push origin main
+     ```
+   - Append a forward-reference to the postmortem comment on the closed issue: `→ filed learning: <commit-sha-short>` (link to the commit on main).
+6. On drop: proceed without filing.
+
+**What makes a good learning:**
+
+- **Actionable** — tells the next worker/APM/lead what to DO differently, not just what to notice
+- **Process-shaped** — about how we work (planning, review, sequencing, handoff), not codebase facts (workers already read code)
+- **Generalizable** — applies to a class of future issues, not just the one that surfaced it
+- **Concrete** — specific enough to recognize the next time the situation arises
+- **Earned** — comes from a real mistake or surprise this session, not theoretical risk
+
+**Anti-examples (don't file):**
+
+- Restates code or repo structure
+- One-shot fix ("don't use `cat` in script X")
+- Vague platitude ("be careful with refactors")
+- Process theater (rules nobody will follow)
+
+Learning file shape (`.claude/rules/project-learnings.md`):
+
+```markdown
+# Project Learnings
+
+Patterns extracted from postmortems. Auto-loaded into worker/reviewer sessions.
+
+## YYYY-MM-DD: <one-line lesson> (from #<I>)
+
+<2-3 sentences: what happened, why it matters, what to do differently>
+```
+
+Learnings are sparse — not every postmortem yields one.
+
 ### Milestone teardown dance
 
 Trigger: lead mentions you with intent like "milestone done, stand down" or "all done, tear it down".
@@ -217,8 +273,8 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 - No polling, no scheduled wakeups, no cron, no `ScheduleWakeup`. React to channel events.
 - No "gentle nags" if the lead goes silent. Sit and wait.
 - No model-selection or plan-judgment decisions — you suggest, the lead decides.
-- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable token-cost comment per the merge + cleanup dance. Nothing else.
-- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own.
+- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable postmortem + token-cost comment per the historian dance. Nothing else.
+- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own. Exception: the historian dance commits learnings directly to main — that's a lead-approved journal append, not a code change.
 - No spawning unrelated agents. Worker and reviewer only, per the dances above.
 
 ## Naming convention
