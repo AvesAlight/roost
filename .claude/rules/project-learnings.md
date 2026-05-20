@@ -60,6 +60,14 @@ When a milestone pairs a survey/audit issue with specific cleanup issues, run th
 
 Concrete: #457 (orchestrator rereview) paired with #473 (lock primitives) and #475 (tmux buffer-chain). Running the survey first confirmed both specifics were still valid and gave a concrete LOC baseline; running specifics-first would have risked work the survey then re-scoped.
 
+## 2026-05-20: Add arg validation when extracting N inline copies into one shared helper (from #475)
+
+When extracting N inline copies into one shared helper, add arg validation to the new helper even if the originals had none. The helper is now load-bearing across all callers, and a silent failure in one caller becomes everyone's problem.
+
+## 2026-05-20: When migrating call sites to a new helper, scan within-function retry branches (from #473)
+
+When migrating N call sites to a new helper, scan each migrated function for *every* invocation of the old primitive — including within-function retry/fallback branches that weren't the initial migration target. The #473 worker migrated `writeDispatcherPid`'s initial `wx` attempt to `exclusiveCreate` but left the function's stale-retry path on raw `writeFile(wx)`. Distinct from §#419 (adjacent files): same file, same function, different code branch. Migration is incomplete until every callsite of the old primitive within migrated scope uses the new helper.
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
