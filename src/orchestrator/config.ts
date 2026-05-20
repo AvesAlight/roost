@@ -1,4 +1,4 @@
-import { mkdir, rename, unlink, writeFile, readFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -279,7 +279,12 @@ export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPi
     if (existing) throw new Error(`dispatcher already running (pid ${existing.pid})`)
     // Stale file with no live owner — remove and try once more.
     try { await unlink(path) } catch { /* race with another cleaner */ }
-    await writeFile(path, payload, { flag: 'wx' })
+    const retry = await exclusiveCreate(path, payload)
+    if (!retry.created) {
+      // Lost retry race — a concurrent dispatcher just claimed this dir.
+      const winner = await readDispatcherPid(stateDir)
+      if (winner) throw new Error(`dispatcher already running (pid ${winner.pid})`)
+    }
   }
   return info
 }

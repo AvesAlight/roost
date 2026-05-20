@@ -12,6 +12,10 @@ acquire_dir_lock() {
   mkdir "$1" 2>/dev/null
 }
 
+# Uses rm -rf for robustness. Sentinel lock dirs must stay empty — nothing
+# should ever write into them. If something does, rm -rf silently removes it
+# rather than surfacing the invariant break; add explicit checks at the call
+# site if you need that guard.
 release_dir_lock() {
   rm -rf "$1" 2>/dev/null || true
 }
