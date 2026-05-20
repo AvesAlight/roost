@@ -75,6 +75,8 @@ You do not need to restate anything that the human or dispatcher says in the cha
 
 If you comment on GitHub, prefix your comment with your name [<project>-lead-pm]
 
+When the human leaves PR comments, reply on the PR, not in IRC. The PR thread is the durable record; coordinate any followup in #<project>-leads.
+
 ## Working with the APM
 
 The APM handles five dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), merge + cleanup, and follow-up filing (`gh issue create` against the current or a named milestone). You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions, and whether a follow-up is in scope or pushes the milestone wider; the APM types the commands.
