@@ -2,8 +2,9 @@ import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
-import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
+import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
+import { tryClaimPerN, type PerNCommand } from '../grammar.js'
 import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
@@ -84,8 +85,9 @@ function effectiveRepo(entryRepo: string | undefined, defaultRepo: string | unde
 // Owns the `{ watched?: WatchedEntry[] }` slice convention and the
 // watch/unwatch/list/help command surface.
 export abstract class GhBase extends GhPluginBase {
-  // Target keyword for watch/unwatch — `null` = bare `watch <N>`. The parser
-  // is target-agnostic; subclasses declare what they claim.
+  // Target keyword for watch/unwatch — `null` = bare `watch <N>`. Each
+  // subclass declares what it claims; `parseCommand` below delegates to
+  // `tryClaimPerN(this.target, line)`.
   protected abstract readonly target: string | null
   // Singular noun in reply lines (e.g. "issue", "pr").
   protected abstract readonly label: string
@@ -118,16 +120,17 @@ export abstract class GhBase extends GhPluginBase {
 
   // ---- DM command handling --------------------------------------------
 
+  parseCommand(line: string): ParseResult | null {
+    return tryClaimPerN(this.target, line)
+  }
+
   handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
     if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
-    if (cmd.kind === 'watch') {
-      if (cmd.target !== this.target) return null
-      return this.applyWatch(merged, local, cmd.number, cmd.repo, cmd.channels)
-    }
-    if (cmd.kind === 'unwatch') {
-      if (cmd.target !== this.target) return null
-      return this.applyUnwatch(merged, local, cmd.number, cmd.repo)
+    if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
+      const c = cmd.cmd as PerNCommand
+      if (c.verb === 'watch') return this.applyWatch(merged, local, c.number, c.repo, c.channels)
+      return this.applyUnwatch(merged, local, c.number, c.repo)
     }
     return null
   }

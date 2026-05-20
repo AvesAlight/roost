@@ -12,7 +12,7 @@ import {
   type HandlerDeps,
 } from '../dispatcher-dm-handler.js'
 import { loadConfig, loadConfigBase, loadLocalOverlay, writeConfig, type OrchestratorConfig } from '../config.js'
-import type { Plugin, PluginTickResult } from '../plugin.js'
+import type { ParseResult, Plugin, PluginTickResult } from '../plugin.js'
 
 let dir: string
 
@@ -34,219 +34,162 @@ describe('splitCommands', () => {
   })
 })
 
-describe('parseCommand', () => {
-  it('parses bare watch as target=null', () => {
-    expect(parseCommand('watch 5')).toEqual({ kind: 'watch', target: null, number: 5, repo: null, channels: [] })
-  })
-
-  it('parses watch with channels', () => {
-    expect(parseCommand('watch 5 #foo #bar')).toEqual({
-      kind: 'watch', target: null, number: 5, repo: null, channels: ['#foo', '#bar'],
+// A minimal Plugin that claims a target keyword via a per-N parser. Records
+// every handleCommand call so tests can assert routing precisely.
+class StubPlugin implements Plugin {
+  readonly name: string
+  readonly grammarPriority?: number
+  readonly handled: Array<{ cmd: Command; mergedSnapshot: OrchestratorConfig; localSnapshot: OrchestratorConfig }> = []
+  constructor(
+    name: string,
+    private readonly target: string | null,
+    private readonly behavior?: (cmd: Command, merged: OrchestratorConfig, local: OrchestratorConfig) => string | null,
+    grammarPriority?: number,
+  ) {
+    this.name = name
+    this.grammarPriority = grammarPriority
+  }
+  desiredChannels(): string[] { return [] }
+  async runTick(): Promise<PluginTickResult> {
+    return { state: null, taggedEvents: [], channels: [] }
+  }
+  parseCommand(line: string): ParseResult | null {
+    const tokens = line.split(/\s+/).filter(Boolean)
+    const verb = tokens[0]?.toLowerCase()
+    if (verb !== 'watch' && verb !== 'unwatch') return null
+    let i = 1
+    if (this.target !== null) {
+      if (tokens[i]?.toLowerCase() !== this.target) return null
+      i++
+    } else if (tokens[i] !== undefined && !/^\d+$/.test(tokens[i])) {
+      return null
+    }
+    const numTok = tokens[i]
+    if (numTok === undefined || !/^\d+$/.test(numTok)) return null
+    const number = parseInt(numTok, 10)
+    const channels = tokens.slice(i + 1).filter(t => t.startsWith('#'))
+    if (tokens.slice(i + 1).some(t => !t.startsWith('#'))) {
+      return { kind: 'error', message: 'channels must match channel sigil' }
+    }
+    return { kind: 'ok', cmd: { verb, number, channels } }
+  }
+  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+    this.handled.push({
+      cmd,
+      mergedSnapshot: JSON.parse(JSON.stringify(merged)) as OrchestratorConfig,
+      localSnapshot: JSON.parse(JSON.stringify(local)) as OrchestratorConfig,
     })
-  })
+    if (this.behavior) return this.behavior(cmd, merged, local)
+    if (cmd.kind === 'list') return `${this.name}: list-section`
+    if (cmd.kind === 'help') return `${this.name}: help-section`
+    if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
+      const c = cmd.cmd as { verb: 'watch' | 'unwatch'; number: number }
+      if (c.verb === 'watch') {
+        local.plugins ??= {}
+        local.plugins[this.name] = { watched: c.number }
+        return `${this.name}: watched ${c.number}`
+      }
+      return `${this.name}: unwatched ${c.number}`
+    }
+    return null
+  }
+}
 
-  it('parses unwatch with target=null', () => {
-    expect(parseCommand('unwatch 5')).toEqual({ kind: 'unwatch', target: null, number: 5, repo: null })
-  })
-
-  it('parses target keyword from any non-numeric first token', () => {
-    expect(parseCommand('watch pr 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, repo: null, channels: [] })
-    expect(parseCommand('watch linear 99')).toEqual({ kind: 'watch', target: 'linear', number: 99, repo: null, channels: [] })
-    expect(parseCommand('unwatch pr 10')).toEqual({ kind: 'unwatch', target: 'pr', number: 10, repo: null })
-  })
-
-  it('lowercases the target keyword', () => {
-    expect(parseCommand('watch PR 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, repo: null, channels: [] })
+describe('parseCommand (central — global verbs)', () => {
+  it('parses help', () => {
+    expect(parseCommand('help', [], {})).toEqual({ kind: 'help' })
   })
 
   it('parses watch list', () => {
-    expect(parseCommand('watch list')).toEqual({ kind: 'list' })
-  })
-
-  it('parses help', () => {
-    expect(parseCommand('help')).toEqual({ kind: 'help' })
+    expect(parseCommand('watch list', [], {})).toEqual({ kind: 'list' })
   })
 
   it('is case-insensitive on verbs', () => {
-    expect(parseCommand('WATCH 5')).toEqual({ kind: 'watch', target: null, number: 5, repo: null, channels: [] })
-    expect(parseCommand('Help')).toEqual({ kind: 'help' })
-  })
-
-  it('rejects bareword channel arguments', () => {
-    const cmd = parseCommand('watch 5 foo') as Extract<Command, { kind: 'unknown' }>
-    expect(cmd.kind).toBe('unknown')
-    expect(cmd.error).toMatch(/channels must match/)
-  })
-
-  it('rejects malformed channel arguments', () => {
-    for (const bad of ['#', '##foo']) {
-      const cmd = parseCommand(`watch 5 ${bad}`) as Extract<Command, { kind: 'unknown' }>
-      expect(cmd.kind).toBe('unknown')
-      expect(cmd.error).toMatch(/channels must match/)
-    }
+    expect(parseCommand('Help', [], {})).toEqual({ kind: 'help' })
   })
 
   it('rejects trailing tokens after `watch list`', () => {
-    const cmd = parseCommand('watch list foo') as Extract<Command, { kind: 'unknown' }>
+    const cmd = parseCommand('watch list foo', [], {}) as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
     expect(cmd.error).toMatch(/watch list takes no arguments/)
   })
 
   it('rejects trailing tokens after `help`', () => {
-    const cmd = parseCommand('help me') as Extract<Command, { kind: 'unknown' }>
+    const cmd = parseCommand('help me', [], {}) as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
     expect(cmd.error).toMatch(/help takes no arguments/)
   })
 
-  it('rejects a reserved verb in the target slot', () => {
-    // `watch unwatch 5` is almost certainly a typo, not "target=unwatch";
-    // surface the reserved-verb collision rather than silently routing.
-    const cmd = parseCommand('watch unwatch 5') as Extract<Command, { kind: 'unknown' }>
+  it('rejects a reserved verb in the target slot before consulting plugins', () => {
+    const cmd = parseCommand('watch unwatch 5', [new StubPlugin('issues', null)], {}) as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
     expect(cmd.error).toMatch(/reserved verb/)
   })
 
-  it('rejects non-positive integers', () => {
-    expect(parseCommand('watch foo bar').kind).toBe('unknown')
-    expect(parseCommand('watch 5.5').kind).toBe('unknown')
-    expect(parseCommand('watch -1').kind).toBe('unknown')
-  })
-
-  it('rejects unwatch with channel args', () => {
-    const cmd = parseCommand('unwatch 5 #x') as Extract<Command, { kind: 'unknown' }>
-    expect(cmd.kind).toBe('unknown')
-    expect(cmd.error).toMatch(/no channel arguments/)
-  })
-
-  it('rejects unknown verb', () => {
-    const cmd = parseCommand('foo bar') as Extract<Command, { kind: 'unknown' }>
+  it('rejects an unknown top-level verb', () => {
+    const cmd = parseCommand('foo bar', [], {}) as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
     expect(cmd.error).toMatch(/unknown command/)
   })
 
-  it('requires a number or repo-shape spec for watch/unwatch', () => {
-    expect(parseCommand('watch').kind).toBe('unknown')
-    expect(parseCommand('watch pr').kind).toBe('unknown')
+  it('surfaces "no plugin handles" when no plugin claims', () => {
+    const cmd = parseCommand('watch linear 99', [new StubPlugin('issues', null)], {}) as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toMatch(/no plugin handles `watch linear 99`/)
+    expect(cmd.error).toMatch(/enabled plugins: issues/)
+  })
+})
+
+describe('parseCommand (plugin claims)', () => {
+  it('routes claims to the matching plugin', () => {
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const cmd = parseCommand('watch pr 10', [issues, prs], {}) as Extract<Command, { kind: 'plugin' }>
+    expect(cmd.kind).toBe('plugin')
+    expect(cmd.plugin).toBe('prs')
   })
 
-  describe('repo positional on per-N grammar', () => {
-    // Regression for the load-bearing disambiguation: `#chan` after a number
-    // must NOT be misread as a repo positional. Channel sigil is `#`; repo
-    // positional requires `/`. Keep this paired with the `org/repo #chan`
-    // case below — both shapes are the entire reason the repo positional is
-    // safe to add unannotated.
-    it('does NOT grab a #channel as a repo positional', () => {
-      expect(parseCommand('watch pr 5 #chan')).toEqual({
-        kind: 'watch', target: 'pr', number: 5, repo: null, channels: ['#chan'],
-      })
-    })
-
-    it('parses bare <owner>/<repo> after the number', () => {
-      expect(parseCommand('watch pr 5 org/repo')).toEqual({
-        kind: 'watch', target: 'pr', number: 5, repo: 'org/repo', channels: [],
-      })
-    })
-
-    it('parses <owner>/<repo> before channels', () => {
-      expect(parseCommand('watch pr 5 org/repo #chan #other')).toEqual({
-        kind: 'watch', target: 'pr', number: 5, repo: 'org/repo', channels: ['#chan', '#other'],
-      })
-    })
-
-    it('attaches repo to unwatch', () => {
-      expect(parseCommand('unwatch pr 5 org/repo')).toEqual({
-        kind: 'unwatch', target: 'pr', number: 5, repo: 'org/repo',
-      })
-    })
-
-    it('accepts repo without a target keyword', () => {
-      expect(parseCommand('watch 5 org/repo #chan')).toEqual({
-        kind: 'watch', target: null, number: 5, repo: 'org/repo', channels: ['#chan'],
-      })
-    })
-
-    it('only one repo positional allowed; second token is treated as a (malformed) channel', () => {
-      const cmd = parseCommand('watch pr 5 org/a org/b') as Extract<Command, { kind: 'unknown' }>
-      expect(cmd.kind).toBe('unknown')
-      expect(cmd.error).toMatch(/channels must match/)
-    })
-
-    it('rejects a channel before the repo positional (positional must precede channels)', () => {
-      // `#chan` in the repo slot is a #-prefixed token that doesn't match
-      // OWNER_REPO_RE; it falls through to channels and the trailing
-      // `org/r` then fails CHANNEL_RE. Locks in the "repo before channels"
-      // ordering so a future loosening doesn't accidentally accept both.
-      const cmd = parseCommand('watch pr 5 #chan org/r') as Extract<Command, { kind: 'unknown' }>
-      expect(cmd.kind).toBe('unknown')
-      expect(cmd.error).toMatch(/channels must match/)
-    })
-
-    it('rejects unwatch with a trailing channel even when a repo positional is present', () => {
-      // Without repo: `unwatch pr 5 #x` already errors. The repo positional
-      // mustn't carve a loophole that lets channels sneak in.
-      const cmd = parseCommand('unwatch pr 5 org/r #x') as Extract<Command, { kind: 'unknown' }>
-      expect(cmd.kind).toBe('unknown')
-      expect(cmd.error).toMatch(/no channel arguments/)
-    })
+  it('honors grammarPriority (higher wins on overlap)', () => {
+    const lo = new StubPlugin('lo', 'pr', undefined, 0)
+    const hi = new StubPlugin('hi', 'pr', undefined, 10)
+    const cmd = parseCommand('watch pr 5', [lo, hi], {}) as Extract<Command, { kind: 'plugin' }>
+    expect(cmd.plugin).toBe('hi')
   })
 
-  describe('repo-shape grammar (watch/unwatch <target> <owner>/<repo>[@branch[:path]])', () => {
-    it('parses bare <owner>/<repo>', () => {
-      expect(parseCommand('watch repo org/r')).toEqual({
-        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: null, channels: [],
-      })
-    })
+  it('config.plugin_priorities overrides static grammarPriority outright', () => {
+    const a = new StubPlugin('a', 'pr', undefined, 10)
+    const b = new StubPlugin('b', 'pr', undefined, 0)
+    // Static order would pick a (10>0). Override flips it.
+    const cmd = parseCommand('watch pr 5', [a, b], { plugin_priorities: { a: 0, b: 100 } }) as Extract<Command, { kind: 'plugin' }>
+    expect(cmd.plugin).toBe('b')
+  })
 
-    it('parses @branch', () => {
-      expect(parseCommand('watch repo org/r@develop')).toEqual({
-        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: null, channels: [],
-      })
-    })
-
-    it('parses :path without branch', () => {
-      expect(parseCommand('watch repo org/r:Formula/x.rb')).toEqual({
-        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: 'Formula/x.rb', channels: [],
-      })
-    })
-
-    it('parses @branch:path', () => {
-      expect(parseCommand('watch repo org/r@develop:Formula/x.rb #chan')).toEqual({
-        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: 'Formula/x.rb', channels: ['#chan'],
-      })
-    })
-
-    it('parses unwatch-repo with the same shape', () => {
-      expect(parseCommand('unwatch repo org/r@develop:Formula/x.rb')).toEqual({
-        kind: 'unwatch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: 'Formula/x.rb',
-      })
-    })
-
-    it('accepts non-`repo` target (new-issues style)', () => {
-      expect(parseCommand('watch new-issues org/r #chan')).toEqual({
-        kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null, channels: ['#chan'],
-      })
-    })
-
-    it('accepts target=null repo-shape (no plugin will claim it but parser is generic)', () => {
-      expect(parseCommand('watch org/r')).toEqual({
-        kind: 'watch-repo', target: null, repo: 'org/r', branch: null, path: null, channels: [],
-      })
-    })
-
-    it('rejects unwatch-repo with channel args', () => {
-      const cmd = parseCommand('unwatch repo org/r #x') as Extract<Command, { kind: 'unknown' }>
-      expect(cmd.kind).toBe('unknown')
-      expect(cmd.error).toMatch(/no channel arguments/)
-    })
+  it('plugin error claims terminate iteration (no second crack at the same line)', () => {
+    // First plugin in priority order claims-with-error; second plugin would
+    // succeed if it got the chance — it must not.
+    class ErrPlugin implements Plugin {
+      readonly name = 'first'
+      readonly grammarPriority = 100
+      desiredChannels(): string[] { return [] }
+      async runTick(): Promise<PluginTickResult> { return { state: null, taggedEvents: [], channels: [] } }
+      parseCommand(): ParseResult { return { kind: 'error', message: 'first-plugin malformed' } }
+      handleCommand(): string | null { return null }
+    }
+    const second = new StubPlugin('second', null)
+    const cmd = parseCommand('watch 5', [new ErrPlugin(), second], {}) as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toBe('first-plugin malformed')
   })
 })
 
 describe('parseCommands', () => {
   it('parses multi-line input', () => {
-    expect(parseCommands('watch 5; unwatch pr 10')).toEqual([
-      { kind: 'watch', target: null, number: 5, repo: null, channels: [] },
-      { kind: 'unwatch', target: 'pr', number: 10, repo: null },
-    ])
+    const issues = new StubPlugin('issues', null)
+    const prs = new StubPlugin('prs', 'pr')
+    const cmds = parseCommands('watch 5; unwatch pr 10', [issues, prs], {})
+    expect(cmds).toHaveLength(2)
+    expect(cmds[0]).toMatchObject({ kind: 'plugin', plugin: 'issues' })
+    expect(cmds[1]).toMatchObject({ kind: 'plugin', plugin: 'prs' })
   })
 })
 
@@ -280,39 +223,6 @@ interface FakeIrc {
   dms: Array<{ nick: string; text: string }>
   errors: string[]
   logs: string[]
-}
-
-// A minimal Plugin that claims a target keyword. Records every call so
-// tests can assert routing precisely without depending on slice schemas.
-class StubPlugin implements Plugin {
-  readonly name: string
-  readonly handled: Array<{ cmd: Command; mergedSnapshot: OrchestratorConfig; localSnapshot: OrchestratorConfig }> = []
-  constructor(name: string, private readonly target: string | null, private readonly behavior?: (cmd: Command, merged: OrchestratorConfig, local: OrchestratorConfig) => string | null) {
-    this.name = name
-  }
-  desiredChannels(): string[] { return [] }
-  async runTick(): Promise<PluginTickResult> {
-    return { state: null, taggedEvents: [], channels: [] }
-  }
-  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
-    this.handled.push({
-      cmd,
-      mergedSnapshot: JSON.parse(JSON.stringify(merged)) as OrchestratorConfig,
-      localSnapshot: JSON.parse(JSON.stringify(local)) as OrchestratorConfig,
-    })
-    if (this.behavior) return this.behavior(cmd, merged, local)
-    if (cmd.kind === 'list') return `${this.name}: list-section`
-    if (cmd.kind === 'help') return `${this.name}: help-section`
-    if (cmd.kind === 'watch' && cmd.target === this.target) {
-      local.plugins ??= {}
-      local.plugins[this.name] = { watched: cmd.number }
-      return `${this.name}: watched ${cmd.number}`
-    }
-    if (cmd.kind === 'unwatch' && cmd.target === this.target) {
-      return `${this.name}: unwatched ${cmd.number}`
-    }
-    return null
-  }
 }
 
 function makeDeps(stateDir: string, plugins: Plugin[] = []): { deps: HandlerDeps; irc: FakeIrc } {
@@ -356,15 +266,14 @@ describe('handleDm — routing', () => {
     expect(issues.handled).toHaveLength(1)
   })
 
-  it('routes target=null commands only to the matching plugin', async () => {
+  it('routes a bare watch only to the matching plugin', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
-    // Both plugins are invoked, only issues claims it.
     expect(issues.handled).toHaveLength(1)
-    expect(prs.handled).toHaveLength(1)
+    expect(prs.handled).toHaveLength(0)
     expect(irc.dms[0].text).toBe('issues: watched 5')
   })
 
@@ -375,6 +284,7 @@ describe('handleDm — routing', () => {
     const { deps, irc } = makeDeps(dir, [issues, prs])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch pr 10' })
     expect(irc.dms[0].text).toBe('prs: watched 10')
+    expect(issues.handled).toHaveLength(0)
   })
 
   it('broadcasts `watch list` to every plugin and joins replies with \\n\\n', async () => {
@@ -387,7 +297,7 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toBe('issues: list-section\n\nprs: list-section')
   })
 
-  it('broadcasts `help` to every plugin and joins with \\n\\n, prepending the dispatcher synopsis', async () => {
+  it('broadcasts `help` and prepends the dispatcher synopsis', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
@@ -397,30 +307,14 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toContain('issues: help-section\n\nprs: help-section')
   })
 
-  it('surfaces "no plugin handles" when no plugin claims a target', async () => {
+  it('surfaces "no plugin handles" with the raw line + enabled plugins', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const { deps, irc } = makeDeps(dir, [issues])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch linear 99' })
     expect(irc.dms).toHaveLength(1)
-    expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear <N>/)
+    expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear 99`/)
     expect(irc.dms[0].text).toMatch(/enabled plugins: issues/)
-  })
-
-  it('surfaces "no plugin handles" with the repo positional in the grammar shape', async () => {
-    await writeConfig(dir, { project: 'roost', plugins: {} })
-    const issues = new StubPlugin('issues', null)
-    const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch linear 99 org/r' })
-    expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear <N> <owner>\/<repo>/)
-  })
-
-  it('surfaces "no plugin handles" for a watch-repo when no plugin claims it', async () => {
-    await writeConfig(dir, { project: 'roost', plugins: {} })
-    const issues = new StubPlugin('issues', null)
-    const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch repo org/r' })
-    expect(irc.dms[0].text).toMatch(/no plugin handles `watch repo <owner>\/<repo>/)
   })
 
   it('any parse error aborts the batch — no plugin called', async () => {
@@ -470,23 +364,29 @@ describe('handleDm — routing', () => {
 
   it('re-merges base+local before each cmd so in-batch dedup sees prior writes', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
-    // A plugin that appends a number to its local watched list and refuses
-    // duplicates against the merged view — mimicking GhBase semantics.
     class ListishPlugin implements Plugin {
       readonly name = 'listish'
       desiredChannels(): string[] { return [] }
       async runTick(): Promise<PluginTickResult> {
         return { state: null, taggedEvents: [], channels: [] }
       }
+      parseCommand(line: string): ParseResult | null {
+        const tokens = line.split(/\s+/).filter(Boolean)
+        if (tokens[0]?.toLowerCase() !== 'watch') return null
+        const numTok = tokens[1]
+        if (!numTok || !/^\d+$/.test(numTok)) return null
+        return { kind: 'ok', cmd: { number: parseInt(numTok, 10) } }
+      }
       handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
-        if (cmd.kind !== 'watch' || cmd.target !== null) return null
+        if (cmd.kind !== 'plugin' || cmd.plugin !== 'listish') return null
+        const c = cmd.cmd as { number: number }
         const mergedWatched = (merged.plugins?.['listish'] as { watched?: number[] } | undefined)?.watched ?? []
-        if (mergedWatched.includes(cmd.number)) return `already watching ${cmd.number}`
+        if (mergedWatched.includes(c.number)) return `already watching ${c.number}`
         local.plugins ??= {}
         const slice = (local.plugins['listish'] as { watched?: number[] } | undefined) ?? {}
-        slice.watched = [...(slice.watched ?? []), cmd.number]
+        slice.watched = [...(slice.watched ?? []), c.number]
         local.plugins['listish'] = slice
-        return `watching ${cmd.number}`
+        return `watching ${c.number}`
       }
     }
     const { deps, irc } = makeDeps(dir, [new ListishPlugin()])
@@ -552,11 +452,8 @@ describe('handleDm — routing', () => {
   })
 
   it('pure-read batches do not call mutateConfig (snapshot path)', async () => {
-    // Seed a watched entry. After `watch list`, config on disk is unchanged
-    // — proves we didn't re-serialize via mutateConfig.
     await writeConfig(dir, { project: 'roost', repo: 'org/r', plugins: { issues: { watched: [{ number: 99 }] } } })
     const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
-    // Small delay so a write would show a different mtime.
     await new Promise(r => setTimeout(r, 20))
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })

@@ -6,10 +6,26 @@ import { GitHubCommitsPlugin } from '../commits-plugin.js'
 import { GhPluginBase } from '../base.js'
 import { RATE_LIMIT_WINDOW_MS } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
+import type { Command } from '../../../dispatcher-dm-handler.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import { GhScraper } from '../scraper.js'
 import type { OrchestratorEvent } from '../diff.js'
 import { stubRateLimit } from './gh-test-helpers.js'
+
+// Test helpers — wrap the plugin-owned shapes in the dispatcher's
+// `{kind:'plugin'}` envelope so test call sites stay readable.
+function watchCmd(plugin: string, number: number, repo: string | null, channels: string[]): Command {
+  return { kind: 'plugin', plugin, cmd: { verb: 'watch', number, repo, channels } }
+}
+function unwatchCmd(plugin: string, number: number, repo: string | null): Command {
+  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', number, repo, channels: [] } }
+}
+function watchRepoCmd(plugin: string, repo: string, branch: string | null, path: string | null, channels: string[]): Command {
+  return { kind: 'plugin', plugin, cmd: { verb: 'watch', repo, branch, path, channels } }
+}
+function unwatchRepoCmd(plugin: string, repo: string, branch: string | null, path: string | null): Command {
+  return { kind: 'plugin', plugin, cmd: { verb: 'unwatch', repo, branch, path, channels: [] } }
+}
 
 function fakePrSnap(overrides: Partial<PrSnap> = {}): PrSnap {
   return {
@@ -566,7 +582,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   it('claims bare watch (target=null) and writes to local', () => {
     const merged: OrchestratorConfig = singleRepo()
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 5, repo: null, channels: [] })
+    const out = issues().handleCommand!(merged, local, watchCmd('github-issues', 5, null, []))
     expect(out).toMatch(/watching issue #5/)
     expect((local.plugins?.['github-issues'] as { watched: unknown[] }).watched).toEqual([{ number: 5 }])
     expect(merged.plugins?.['github-issues']).toBeUndefined()
@@ -574,7 +590,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
 
   it('ignores `watch pr` (returns null)', () => {
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(singleRepo(), local, { kind: 'watch', target: 'pr', number: 5, repo: null, channels: [] })
+    const out = issues().handleCommand!(singleRepo(), local, watchCmd('github-prs', 5, null, []))
     expect(out).toBeNull()
     expect(local.plugins?.['github-issues']).toBeUndefined()
   })
@@ -582,7 +598,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   it('is idempotent on duplicate watch (entry visible via merged)', () => {
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': { watched: [{ number: 5 }] } } })
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 5, repo: null, channels: [] })
+    const out = issues().handleCommand!(merged, local, watchCmd('github-issues', 5, null, []))
     expect(out).toMatch(/already watching/)
     expect(local.plugins?.['github-issues']).toBeUndefined()
   })
@@ -591,7 +607,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
     const slice = { watched: [{ number: 5, channels: ['#a'] }] }
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': slice } })
     const local: OrchestratorConfig = { plugins: { 'github-issues': slice } }
-    issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 5, repo: null, channels: ['#a', '#b'] })
+    issues().handleCommand!(merged, local, watchCmd('github-issues', 5, null, ['#a', '#b']))
     const entry = (local.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0]
     expect(entry.channels).toEqual(['#a', '#b'])
   })
@@ -599,7 +615,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
   it('refuses to add channels to a tracked-only entry', () => {
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': { watched: [{ number: 5 }] } } })
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 5, repo: null, channels: ['#x'] })
+    const out = issues().handleCommand!(merged, local, watchCmd('github-issues', 5, null, ['#x']))
     expect(out).toBe('issue #5 in tracked config.json — hand-edit to add channels')
     expect(local.plugins?.['github-issues']).toBeUndefined()
   })
@@ -609,7 +625,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
     const slice = { watched: [{ number: 5, channels: before }] }
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': slice } })
     const local: OrchestratorConfig = { plugins: { 'github-issues': slice } }
-    const out = issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 5, repo: null, channels: ['#a', '#b'] })
+    const out = issues().handleCommand!(merged, local, watchCmd('github-issues', 5, null, ['#a', '#b']))
     expect(out).toMatch(/channels unchanged/)
     const after = (local.plugins!['github-issues'] as { watched: { channels: string[] }[] }).watched[0].channels
     expect(after).toBe(before)
@@ -620,19 +636,19 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
       plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6 }] } },
     }
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': { watched: [{ number: 5 }, { number: 6 }] } } })
-    issues().handleCommand!(merged, local, { kind: 'unwatch', target: null, number: 5, repo: null })
+    issues().handleCommand!(merged, local, unwatchCmd('github-issues', 5, null))
     expect((local.plugins!['github-issues'] as { watched: { number: number }[] }).watched).toEqual([{ number: 6 }])
   })
 
   it('refuses to unwatch a tracked-only entry', () => {
     const merged: OrchestratorConfig = singleRepo({ plugins: { 'github-issues': { watched: [{ number: 5 }] } } })
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(merged, local, { kind: 'unwatch', target: null, number: 5, repo: null })
+    const out = issues().handleCommand!(merged, local, unwatchCmd('github-issues', 5, null))
     expect(out).toBe('issue #5 in tracked config.json — hand-edit to remove')
   })
 
   it('reports not-watching on unwatch of unknown entry', () => {
-    const out = issues().handleCommand!(singleRepo(), {}, { kind: 'unwatch', target: null, number: 5, repo: null })
+    const out = issues().handleCommand!(singleRepo(), {}, unwatchCmd('github-issues', 5, null))
     expect(out).toMatch(/not watching/)
   })
 
@@ -684,7 +700,7 @@ describe('GhBase.handleCommand — multi-repo mode (bare watch only)', () => {
     const out = new GitHubIssuesPlugin('#proj').handleCommand!(
       merged,
       local,
-      { kind: 'watch', target: null, number: 5, repo: null, channels: [] },
+      watchCmd('github-issues', 5, null, []),
     )
     expect(out).toMatch(/multi-repo mode/)
     expect(out).toMatch(/<owner>\/<repo>/)
@@ -702,7 +718,7 @@ describe('GhBase.handleCommand — multi-repo mode (bare watch only)', () => {
     const out = new GitHubIssuesPlugin('#proj').handleCommand!(
       merged,
       local,
-      { kind: 'unwatch', target: null, number: 5, repo: null },
+      unwatchCmd('github-issues', 5, null),
     )
     expect(out).toMatch(/multi-repo mode/)
     expect((local.plugins!['github-issues'] as { watched: unknown[] }).watched).toHaveLength(1)
@@ -713,7 +729,7 @@ describe('GhBase.handleCommand — multi-repo mode (bare watch only)', () => {
     const out = new GitHubPrsPlugin('#proj').handleCommand!(
       merged,
       {},
-      { kind: 'watch', target: 'pr', number: 10, repo: null, channels: [] },
+      watchCmd('github-prs', 10, null, []),
     )
     expect(out).toMatch(/multi-repo mode/)
   })
@@ -724,7 +740,7 @@ describe('GhBase.handleCommand — multi-repo mode (bare watch only)', () => {
     const out = new GitHubPrsPlugin('#proj').handleCommand!(
       merged,
       local,
-      { kind: 'watch', target: 'pr', number: 10, repo: 'org/a', channels: [] },
+      watchCmd('github-prs', 10, 'org/a', []),
     )
     expect(out).toMatch(/watching pr org\/a#10/)
     expect((local.plugins!['github-prs'] as { watched: { number: number; repo: string }[] }).watched)
@@ -738,14 +754,14 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
   it('claims `watch pr` (target=pr) and writes to local', () => {
     const merged: OrchestratorConfig = { repo: 'org/r' }
     const local: OrchestratorConfig = {}
-    const out = prs().handleCommand!(merged, local, { kind: 'watch', target: 'pr', number: 10, repo: null, channels: ['#x'] })
+    const out = prs().handleCommand!(merged, local, watchCmd('github-prs', 10, null, ['#x']))
     expect(out).toMatch(/watching pr #10 \+ #x/)
     expect(local.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, channels: ['#x'] }] })
     expect(local.plugins?.['github-issues']).toBeUndefined()
   })
 
   it('ignores bare watch (returns null)', () => {
-    const out = prs().handleCommand!({ repo: 'org/r' }, {}, { kind: 'watch', target: null, number: 10, repo: null, channels: [] })
+    const out = prs().handleCommand!({ repo: 'org/r' }, {}, watchCmd('github-issues', 10, null, []))
     expect(out).toBeNull()
   })
 
@@ -764,7 +780,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
   it('creates a cross-repo entry, displays repo prefix, pins repo on the stored entry', () => {
     const merged: OrchestratorConfig = { repo: 'org/main' }
     const local: OrchestratorConfig = {}
-    const out = prs().handleCommand!(merged, local, { kind: 'watch', target: 'pr', number: 10, repo: 'org/other', channels: [] })
+    const out = prs().handleCommand!(merged, local, watchCmd('github-prs', 10, 'org/other', []))
     expect(out).toBe('watching pr org/other#10')
     expect(local.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, repo: 'org/other' }] })
   })
@@ -772,7 +788,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
   it('explicit repo that matches config.repo is equivalent to bare — no entry.repo, no prefix', () => {
     const merged: OrchestratorConfig = { repo: 'org/main' }
     const local: OrchestratorConfig = {}
-    const out = prs().handleCommand!(merged, local, { kind: 'watch', target: 'pr', number: 10, repo: 'org/main', channels: [] })
+    const out = prs().handleCommand!(merged, local, watchCmd('github-prs', 10, 'org/main', []))
     expect(out).toBe('watching pr #10')
     expect(local.plugins?.['github-prs']).toEqual({ watched: [{ number: 10 }] })
   })
@@ -783,7 +799,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
       plugins: { 'github-prs': { watched: [{ number: 10 }] } },
     }
     const local: OrchestratorConfig = {}
-    const out = prs().handleCommand!(merged, local, { kind: 'watch', target: 'pr', number: 10, repo: 'org/other', channels: [] })
+    const out = prs().handleCommand!(merged, local, watchCmd('github-prs', 10, 'org/other', []))
     expect(out).toBe('watching pr org/other#10')
     expect(local.plugins?.['github-prs']).toEqual({ watched: [{ number: 10, repo: 'org/other' }] })
   })
@@ -791,7 +807,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
   it('idempotent on duplicate cross-repo watch', () => {
     const slice = { watched: [{ number: 10, repo: 'org/other' }] }
     const merged: OrchestratorConfig = { repo: 'org/main', plugins: { 'github-prs': slice } }
-    const out = prs().handleCommand!(merged, { plugins: { 'github-prs': slice } }, { kind: 'watch', target: 'pr', number: 10, repo: 'org/other', channels: [] })
+    const out = prs().handleCommand!(merged, { plugins: { 'github-prs': slice } }, watchCmd('github-prs', 10, 'org/other', []))
     expect(out).toBe('already watching pr org/other#10')
   })
 
@@ -801,7 +817,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
       plugins: { 'github-prs': { watched: [{ number: 10, repo: 'org/other' }] } },
     }
     const local: OrchestratorConfig = {}
-    const out = prs().handleCommand!(merged, local, { kind: 'watch', target: 'pr', number: 10, repo: 'org/other', channels: ['#x'] })
+    const out = prs().handleCommand!(merged, local, watchCmd('github-prs', 10, 'org/other', ['#x']))
     expect(out).toBe('pr org/other#10 in tracked config.json — hand-edit to add channels')
   })
 
@@ -813,7 +829,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
       repo: 'org/main',
       plugins: { 'github-prs': { watched: [{ number: 10, repo: 'org/other' }, { number: 10 }] } },
     }
-    const out = prs().handleCommand!(merged, local, { kind: 'unwatch', target: 'pr', number: 10, repo: 'org/other' })
+    const out = prs().handleCommand!(merged, local, unwatchCmd('github-prs', 10, 'org/other'))
     expect(out).toBe('unwatched pr org/other#10')
     expect((local.plugins!['github-prs'] as { watched: unknown[] }).watched).toEqual([{ number: 10 }])
   })
@@ -837,7 +853,7 @@ describe('GhBase.handleCommand — cross-repo watch/unwatch (single-repo mode)',
   it('multi-repo mode + repo arg creates a cross-repo entry (parser-clean local)', () => {
     const merged: OrchestratorConfig = { project: 'p' }
     const local: OrchestratorConfig = {}
-    const out = issues().handleCommand!(merged, local, { kind: 'watch', target: null, number: 7, repo: 'org/a', channels: [] })
+    const out = issues().handleCommand!(merged, local, watchCmd('github-issues', 7, 'org/a', []))
     expect(out).toBe('watching issue org/a#7')
     expect(local.plugins?.['github-issues']).toEqual({ watched: [{ number: 7, repo: 'org/a' }] })
   })
@@ -848,9 +864,7 @@ describe('github-commits handleCommand', () => {
 
   it('writes a watch-repo entry to local with explicit branch+path', () => {
     const local: OrchestratorConfig = {}
-    const out = commits().handleCommand!({}, local, {
-      kind: 'watch-repo', target: 'repo', repo: 'AvesAlight/homebrew-tap', branch: 'main', path: 'Formula/roost.rb', channels: [],
-    })
+    const out = commits().handleCommand!({}, local, watchRepoCmd('github-commits', 'AvesAlight/homebrew-tap', 'main', 'Formula/roost.rb', []))
     expect(out).toBe('watching repo AvesAlight/homebrew-tap@main:Formula/roost.rb')
     expect(local.plugins?.['github-commits']).toEqual({ watched: [{
       repo: 'AvesAlight/homebrew-tap', branch: 'main', path: 'Formula/roost.rb',
@@ -859,9 +873,7 @@ describe('github-commits handleCommand', () => {
 
   it('writes a watch-repo entry with implicit branch (omits entry.branch)', () => {
     const local: OrchestratorConfig = {}
-    const out = commits().handleCommand!({}, local, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: null, channels: ['#chan'],
-    })
+    const out = commits().handleCommand!({}, local, watchRepoCmd('github-commits', 'org/r', null, null, ['#chan']))
     expect(out).toBe('watching repo org/r@main + #chan')
     expect(local.plugins?.['github-commits']).toEqual({ watched: [{ repo: 'org/r', channels: ['#chan'] }] })
   })
@@ -870,27 +882,21 @@ describe('github-commits handleCommand', () => {
     const slice = { watched: [{ repo: 'org/r' }] }
     const merged: OrchestratorConfig = { plugins: { 'github-commits': slice } }
     const local: OrchestratorConfig = { plugins: { 'github-commits': slice } }
-    const out = commits().handleCommand!(merged, local, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'main', path: null, channels: [],
-    })
+    const out = commits().handleCommand!(merged, local, watchRepoCmd('github-commits', 'org/r', 'main', null, []))
     expect(out).toBe('already watching repo org/r@main')
   })
 
   it('different branches are distinct entries', () => {
     const merged: OrchestratorConfig = { plugins: { 'github-commits': { watched: [{ repo: 'org/r' }] } } }
     const local: OrchestratorConfig = {}
-    const out = commits().handleCommand!(merged, local, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: null, channels: [],
-    })
+    const out = commits().handleCommand!(merged, local, watchRepoCmd('github-commits', 'org/r', 'develop', null, []))
     expect(out).toBe('watching repo org/r@develop')
     expect(local.plugins?.['github-commits']).toEqual({ watched: [{ repo: 'org/r', branch: 'develop' }] })
   })
 
   it('refuses to add channels to a tracked-only entry', () => {
     const merged: OrchestratorConfig = { plugins: { 'github-commits': { watched: [{ repo: 'org/r', branch: 'main', path: 'x.rb' }] } } }
-    const out = commits().handleCommand!(merged, {}, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'main', path: 'x.rb', channels: ['#c'],
-    })
+    const out = commits().handleCommand!(merged, {}, watchRepoCmd('github-commits', 'org/r', 'main', 'x.rb', ['#c']))
     expect(out).toBe('repo org/r@main:x.rb in tracked config.json — hand-edit to add channels')
   })
 
@@ -898,9 +904,7 @@ describe('github-commits handleCommand', () => {
     const slice = { watched: [{ repo: 'org/r', channels: ['#a'] }] }
     const merged: OrchestratorConfig = { plugins: { 'github-commits': slice } }
     const local: OrchestratorConfig = { plugins: { 'github-commits': slice } }
-    const out = commits().handleCommand!(merged, local, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: null, channels: ['#a', '#b'],
-    })
+    const out = commits().handleCommand!(merged, local, watchRepoCmd('github-commits', 'org/r', null, null, ['#a', '#b']))
     expect(out).toBe('repo org/r@main + #b')
     expect((local.plugins!['github-commits'] as { watched: { channels: string[] }[] }).watched[0].channels)
       .toEqual(['#a', '#b'])
@@ -909,9 +913,7 @@ describe('github-commits handleCommand', () => {
   it('removes a local entry on unwatch', () => {
     const local: OrchestratorConfig = { plugins: { 'github-commits': { watched: [{ repo: 'org/r' }, { repo: 'org/s' }] } } }
     const merged: OrchestratorConfig = { plugins: { 'github-commits': { watched: [{ repo: 'org/r' }, { repo: 'org/s' }] } } }
-    const out = commits().handleCommand!(merged, local, {
-      kind: 'unwatch-repo', target: 'repo', repo: 'org/r', branch: null, path: null,
-    })
+    const out = commits().handleCommand!(merged, local, unwatchRepoCmd('github-commits', 'org/r', null, null))
     expect(out).toBe('unwatched repo org/r@main')
     expect((local.plugins!['github-commits'] as { watched: { repo: string }[] }).watched)
       .toEqual([{ repo: 'org/s' }])
@@ -919,26 +921,18 @@ describe('github-commits handleCommand', () => {
 
   it('refuses to unwatch a tracked-only entry', () => {
     const merged: OrchestratorConfig = { plugins: { 'github-commits': { watched: [{ repo: 'org/r' }] } } }
-    const out = commits().handleCommand!(merged, {}, {
-      kind: 'unwatch-repo', target: 'repo', repo: 'org/r', branch: null, path: null,
-    })
+    const out = commits().handleCommand!(merged, {}, unwatchRepoCmd('github-commits', 'org/r', null, null))
     expect(out).toBe('repo org/r@main in tracked config.json — hand-edit to remove')
   })
 
   it('reports not-watching on unknown entry', () => {
-    const out = commits().handleCommand!({}, {}, {
-      kind: 'unwatch-repo', target: 'repo', repo: 'org/r', branch: null, path: null,
-    })
+    const out = commits().handleCommand!({}, {}, unwatchRepoCmd('github-commits', 'org/r', null, null))
     expect(out).toBe('not watching repo org/r@main')
   })
 
   it('ignores commands with target!=repo', () => {
-    expect(commits().handleCommand!({}, {}, {
-      kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null, channels: [],
-    })).toBeNull()
-    expect(commits().handleCommand!({}, {}, {
-      kind: 'watch', target: null, number: 5, repo: null, channels: [],
-    })).toBeNull()
+    expect(commits().handleCommand!({}, {}, watchRepoCmd('github-new-issues', 'org/r', null, null, []))).toBeNull()
+    expect(commits().handleCommand!({}, {}, watchCmd('github-issues', 5, null, []))).toBeNull()
   })
 
   it('list returns the entry list in canonical form', () => {
@@ -964,41 +958,31 @@ describe('github-new-issues handleCommand', () => {
 
   it('writes a new-issues entry to local', () => {
     const local: OrchestratorConfig = {}
-    const out = plugin().handleCommand!({}, local, {
-      kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null, channels: ['#chan'],
-    })
+    const out = plugin().handleCommand!({}, local, watchRepoCmd('github-new-issues', 'org/r', null, null, ['#chan']))
     expect(out).toBe('watching new-issues org/r + #chan')
     expect(local.plugins?.['github-new-issues']).toEqual({ watched: [{ repo: 'org/r', channels: ['#chan'] }] })
   })
 
   it('rejects @branch/:path — new-issues entries are repo-only', () => {
-    const out = plugin().handleCommand!({}, {}, {
-      kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: 'main', path: null, channels: [],
-    })
+    const out = plugin().handleCommand!({}, {}, watchRepoCmd('github-new-issues', 'org/r', 'main', null, []))
     expect(out).toMatch(/does not support @branch/)
   })
 
   it('idempotent on duplicate', () => {
     const slice = { watched: [{ repo: 'org/r' }] }
     const merged: OrchestratorConfig = { plugins: { 'github-new-issues': slice } }
-    const out = plugin().handleCommand!(merged, { plugins: { 'github-new-issues': slice } }, {
-      kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null, channels: [],
-    })
+    const out = plugin().handleCommand!(merged, { plugins: { 'github-new-issues': slice } }, watchRepoCmd('github-new-issues', 'org/r', null, null, []))
     expect(out).toBe('already watching new-issues org/r')
   })
 
   it('refuses to unwatch a tracked-only entry', () => {
     const merged: OrchestratorConfig = { plugins: { 'github-new-issues': { watched: [{ repo: 'org/r' }] } } }
-    const out = plugin().handleCommand!(merged, {}, {
-      kind: 'unwatch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null,
-    })
+    const out = plugin().handleCommand!(merged, {}, unwatchRepoCmd('github-new-issues', 'org/r', null, null))
     expect(out).toBe('new-issues org/r in tracked config.json — hand-edit to remove')
   })
 
   it('ignores target=repo (claimed by github-commits)', () => {
-    expect(plugin().handleCommand!({}, {}, {
-      kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: null, channels: [],
-    })).toBeNull()
+    expect(plugin().handleCommand!({}, {}, watchRepoCmd('github-commits', 'org/r', null, null, []))).toBeNull()
   })
 })
 

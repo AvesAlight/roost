@@ -28,6 +28,13 @@ export interface PluginTickResult {
   channels: string[]
 }
 
+// Result of a plugin's `parseCommand`. The cmd payload is plugin-owned and
+// opaque to the dispatcher — it's threaded back to the same plugin's
+// `handleCommand` unchanged.
+export type ParseResult =
+  | { kind: 'ok'; cmd: unknown }
+  | { kind: 'error'; message: string }
+
 export interface Plugin {
   readonly name: string
   // Config-only channel view at boot, before first tick. Excludes the project
@@ -36,11 +43,31 @@ export interface Plugin {
   // Per tick: next state slice, tagged events, and the live channel set
   // (post-scrape, including dynamic discoveries). `prevState === null` signals seed.
   runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
+  // Try to claim a single watch/unwatch DM line. The dispatcher iterates
+  // plugins in `grammarPriority` order (higher first; ties → `config.plugins`
+  // Object.keys order) and takes the first non-null result:
+  //   - `null`        — not my shape; try the next plugin.
+  //   - `{kind:'ok'}` — claimed cleanly; cmd is threaded back to this plugin's
+  //                     handleCommand on a `{kind:'plugin'}` Command.
+  //   - `{kind:'error'}` — claimed-but-malformed; the dispatcher surfaces the
+  //                     message and aborts iteration. NO other plugin gets a
+  //                     second crack at the same line. The plugin's own parser
+  //                     is the authority on its shape: silently re-routing a
+  //                     malformed claim would let a typo land in a different
+  //                     plugin's slice.
+  // `help` and `watch list` are parsed centrally and broadcast to every
+  // plugin's handleCommand — parseCommand is only consulted for the rest.
+  parseCommand?(line: string): ParseResult | null
+  // Static grammar-priority hint. Operator override via
+  // `config.plugin_priorities[name]` replaces this value outright (no max/sum).
+  // Default 0.
+  readonly grammarPriority?: number
   // Optional DM handler. `merged` is the live view; `local` is the gitignored
   // overlay the plugin mutates (config.json is read-only from the dispatcher).
   // Returns the reply when handled, null when not ours. MUST NOT throw —
   // deterministic failures come back as `"error: ..."`. `list`/`help` broadcast
-  // to every plugin; replies join with `\n\n`.
+  // to every plugin; replies join with `\n\n`. Plugin-claimed commands arrive
+  // as `{kind:'plugin', plugin:this.name, cmd:<your parsed shape>}`.
   handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
   // Optional repo-mode check for plugins that own a `watched`/`repo` shape.
   // Throws on violation. Called after every config load.

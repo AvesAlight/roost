@@ -10,9 +10,10 @@
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
-import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
+import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -32,22 +33,21 @@ export interface NewIssuesPluginState {
 export class GitHubNewIssuesPlugin extends GhPluginBase {
   readonly name = 'github-new-issues'
 
+  parseCommand(line: string): ParseResult | null {
+    return tryClaimPerRepo('new-issues', line)
+  }
+
   handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
     if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
-    if (cmd.kind === 'watch-repo') {
-      if (cmd.target !== 'new-issues') return null
-      if (cmd.branch !== null || cmd.path !== null) {
-        return `error: new-issues does not support @branch or :path — try \`watch new-issues ${cmd.repo}\``
+    if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
+      const c = cmd.cmd as PerRepoCommand
+      if (c.branch !== null || c.path !== null) {
+        const verb = c.verb
+        return `error: new-issues does not support @branch or :path — try \`${verb} new-issues ${c.repo}\``
       }
-      return this.applyWatch(merged, local, cmd.repo, cmd.channels)
-    }
-    if (cmd.kind === 'unwatch-repo') {
-      if (cmd.target !== 'new-issues') return null
-      if (cmd.branch !== null || cmd.path !== null) {
-        return `error: new-issues does not support @branch or :path — try \`unwatch new-issues ${cmd.repo}\``
-      }
-      return this.applyUnwatch(merged, local, cmd.repo)
+      if (c.verb === 'watch') return this.applyWatch(merged, local, c.repo, c.channels)
+      return this.applyUnwatch(merged, local, c.repo)
     }
     return null
   }

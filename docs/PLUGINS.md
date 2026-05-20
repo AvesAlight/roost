@@ -32,9 +32,44 @@ import {
 | `name` | Slot key for both slices. Must match the string passed to `registerPlugin`. |
 | `desiredChannels(config)` | Channels to join at boot. The orchestrator adds the project channel. |
 | `runTick(config, prevState)` | Returns `{ state, taggedEvents, channels }`. `prevState === null` on a seed tick. `channels` is the post-scrape set. |
-| `handleCommand?(config, cmd)` | Optional. Returns a reply when this plugin owns the command, `null` otherwise. Return `"error: ..."` on failure. Don't throw. |
+| `parseCommand?(line)` | Optional. Claim a single watch/unwatch DM line. See "DM grammar" below. |
+| `grammarPriority?` | Optional. Higher = parsed first when two plugins overlap. Default 0. Operator override: `config.plugin_priorities[name]` replaces this outright. |
+| `handleCommand?(merged, local, cmd)` | Optional. Receives `list`/`help` broadcasts + any command this plugin's own `parseCommand` claimed. Returns a reply or `null`. Return `"error: ..."` on failure. Don't throw. |
 
 The dispatcher writes each `TaggedEvent` to every channel in `event.channels`. Event kind strings are yours.
+
+## DM grammar
+
+The dispatcher knows only two global verbs (`help`, `watch list`) and an allowlist. Everything else — `watch <N>`, `watch pr 5`, `watch repo org/r@main`, your own `watch deploy …` — is parsed by the plugin that claims the shape. The canonical semantics live on `Plugin.parseCommand` in `src/orchestrator/plugin.ts` (defer with `null`, claim with `{kind:'ok',cmd}`, fail with `{kind:'error',message}`).
+
+Shared parser helpers cover the two shipped shapes:
+
+```ts
+import { tryClaimPerN, tryClaimPerRepo } from 'roost/plugin'
+
+class MyPlugin extends BasePlugin {
+  readonly name = 'acme-deploy'
+  parseCommand(line: string) {
+    // Claims `watch deploy <N>` / `unwatch deploy <N>`.
+    return tryClaimPerN('deploy', line)
+  }
+  handleCommand(merged, local, cmd) {
+    if (cmd.kind === 'list') return `${this.name}: …`
+    if (cmd.kind === 'help') return `${this.name}: …`
+    if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
+      const c = cmd.cmd as { verb: 'watch'|'unwatch'; number: number; repo: string|null; channels: string[] }
+      // …
+    }
+    return null
+  }
+}
+```
+
+When two plugins want overlapping shapes (e.g. a linear plugin claiming bare `watch <N>` alongside `github-issues`), pick a `grammarPriority` (higher wins) or let the operator set `config.plugin_priorities`. Once a plugin returns `{kind:'error'}`, no other plugin gets a second crack at that line — the producing plugin's parser is the authority on its shape.
+
+### Migration from pre-0.7.0
+
+Plugins that used to receive every `Command` via `handleCommand` (the central parser model) need to add a `parseCommand` to claim what they want. `handleCommand` now only fires for `list`, `help`, and the plugin's own claimed commands. There are no built-in `watch`/`unwatch`/`watch-repo`/`unwatch-repo` Command kinds anymore; the dispatcher wraps claimed payloads as `{kind:'plugin', plugin:<name>, cmd:<your shape>}`.
 
 ## Register on load
 

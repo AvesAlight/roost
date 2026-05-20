@@ -34,6 +34,11 @@ export interface OrchestratorConfig {
   // `registerPlugin` at top level. Relative paths resolve against the config
   // directory. See docs/PLUGINS.md.
   plugin_paths?: string[]
+  // Operator override for grammar-claim ordering — higher wins. Replaces the
+  // plugin's static `grammarPriority` outright (no max/sum). Used when two
+  // plugins overlap on a shape (e.g. a 3rd-party plugin claiming `watch <N>`
+  // alongside `github-issues`). See `Plugin.parseCommand`.
+  plugin_priorities?: Record<string, number>
 }
 
 export interface OrchestratorState {
@@ -106,6 +111,7 @@ export function mergeConfigs(base: OrchestratorConfig, local: OrchestratorConfig
   if (local.repo !== undefined) result.repo = local.repo
   if (local.agent_logins !== undefined) result.agent_logins = local.agent_logins
   if (local.plugin_paths !== undefined) result.plugin_paths = local.plugin_paths
+  if (local.plugin_priorities !== undefined) result.plugin_priorities = local.plugin_priorities
   if (base.irc !== undefined || local.irc !== undefined) {
     result.irc = { ...base.irc, ...local.irc }
   }
