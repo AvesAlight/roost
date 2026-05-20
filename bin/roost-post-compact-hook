@@ -24,4 +24,6 @@ if kill -USR2 "$pid" 2>/dev/null; then
 else
   echo "roost-post-compact-hook: kill -USR2 $pid failed (no such process?)" >&2
 fi
+rm -rf "${ROOST_DATA_DIR}/compact-inject.lock.d" 2>/dev/null || true
+echo "roost-post-compact-hook: cleared compact-inject.lock.d" >&2
 exit 0

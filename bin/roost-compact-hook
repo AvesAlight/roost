@@ -23,6 +23,12 @@ set -u
 # summary it produces (not verbatim retention).
 DIRECTIVE='retain: agent role and IRC nick; channels currently joined; in-flight GitHub issue and PR numbers and the state of each (worker spawned, draft, reviewed, merged), each worker'"'"'s nick (<project>-worker-<issue-number>), and each reviewer'"'"'s nick (<project>-reviewer-<PR-number>); recently-completed issues (post-merge, pre-cleanup) with their worker and reviewer nicks; recent decisions, design pivots, and blockers from the project leads channel; pending work the agent committed to or is waiting on'
 
+# Debounce TTL in minutes. Must be > observed max compact duration (~1m48s)
+# to prevent re-inject while a prior /compact is still running. Trade-off:
+# if the agent dies mid-compact, PostCompact never fires and the stale lock
+# delays the next legit compact by up to this many minutes.
+LOCK_TTL_MIN=3
+
 log() { echo "roost-compact-hook: $*" >&2; }
 
 input="$(cat)"
@@ -74,6 +80,27 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
     session_name="roost-${nick}"
   fi
   if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
+    # Debounce: if a prior inject is still in flight, return block without
+    # re-injecting. Uses mkdir as an atomic lock — mkdir is POSIX-atomic, so
+    # two concurrent invocations can't both claim the lock.
+    if [ -n "${ROOST_DATA_DIR:-}" ]; then
+      lock_dir="${ROOST_DATA_DIR}/compact-inject.lock.d"
+      if [ -d "$lock_dir" ]; then
+        if [ -n "$(find "$lock_dir" -maxdepth 0 -mmin -${LOCK_TTL_MIN} -type d 2>/dev/null)" ]; then
+          log "auto-trigger: inject in flight (lock fresh), debouncing"
+          printf '%s\n' '{"decision":"block","reason":"roost: compact inject in flight, debouncing re-inject"}'
+          exit 0
+        fi
+        # Stale lock — prior session likely died before PostCompact fired.
+        rm -rf "$lock_dir" 2>/dev/null || true
+      fi
+      if ! mkdir "$lock_dir" 2>/dev/null; then
+        # Race: a concurrent invocation just claimed the lock.
+        log "auto-trigger: lock claimed by concurrent invocation, debouncing"
+        printf '%s\n' '{"decision":"block","reason":"roost: compact inject in flight, debouncing re-inject"}'
+        exit 0
+      fi
+    fi
     # Background subshell: claude code reads our {"decision":"block"} on
     # stdout and unwinds its own auto-compact state machine; we want our
     # send-keys to land after that settles, not race it. 150ms is the
