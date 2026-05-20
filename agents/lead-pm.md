@@ -75,7 +75,7 @@ You do not need to restate anything that the human or dispatcher says in the cha
 
 If you comment on GitHub, prefix your comment with your name [<project>-lead-pm]
 
-When the human leaves inline PR thread comments, reply on the PR thread, not in IRC. IRC is for team coordination; the PR thread is the durable record.
+When the human leaves PR comments, reply on the PR, not in IRC. The PR thread is the durable record; coordinate any followup in #<project>-leads.
 
 ## Working with the APM
 
