@@ -1,18 +1,10 @@
-// Dispatcher DM handler: parses a small command grammar and routes parsed
-// commands to plugins that opt in via `Plugin.handleCommand`. The parser
-// only knows verbs (`watch`/`unwatch`/`list`/`help`) and a free-form target
-// keyword; slice schemas, default targets, and reply phrasing all belong to
-// plugins.
+// Dispatcher DM handler. Parses a small command grammar and routes commands
+// to plugins via `Plugin.handleCommand`. The parser knows only verbs and a
+// free-form target keyword; slice schemas + reply phrasing belong to plugins.
 //
-// All commands arrive via DM (msg.isDirect === true). The handler:
-//   1. enforces an allowlist (config.irc.command_senders)
-//   2. parses the message body into Command[] (multi-cmd per line is fine)
-//   3. inside one mutateConfig pass, asks each plugin to handle each cmd
-//   4. coalesces non-null plugin replies into ONE confirmation DM
-//
-// The handler never throws — parse failures abort the batch with a one-line
-// DM, plugin.handleCommand throws bubble up as [dispatcher_error] on the
-// project channel.
+// Per DM: allowlist-check → parse → run each cmd inside one mutateConfig pass
+// → coalesce replies into one DM. Never throws — parse failures abort with a
+// one-line DM, plugin throws bubble up as [dispatcher_error] on the project channel.
 
 import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
@@ -40,27 +32,21 @@ export interface HandlerDeps {
 
 const CHANNEL_RE = /^#[^\s,#]+$/
 
-// Bare `<owner>/<repo>` used as the optional repo positional after a number
-// in the per-N grammar (`watch pr 5 org/repo [#chan ...]`). The `/` is
-// load-bearing for parser disambiguation — channels start with `#`, repo
-// args contain `/`, numbers are all digits.
+// Bare `<owner>/<repo>` — the optional repo positional after a number in the
+// per-N grammar. Disambiguated from channels (start with `#`) and numbers
+// (all digits) purely on shape.
 const OWNER_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-// Full repo-shape spec for the whole-repo grammar (`watch repo
-// org/r[@branch[:path]]`). Branch defaults to the plugin's convention when
-// omitted (github-commits uses `main`); path is optional. `@` separates
-// branch from owner/repo to match the github-commits state-key shape
-// (`<repo>@<branch>:<path>`) so log lines and DM input use the same string.
+// Full repo-shape spec for the whole-repo grammar — `org/r[@branch[:path]]`.
+// Mirrors github-commits' state key so daemon.log lines copy-paste into a DM.
 const REPO_SPEC_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)(?:@([^:@\s]+))?(?::([^\s]+))?$/
 
-// Verbs reserved for the dispatcher grammar — plugins can't override the
-// surface, but they decide what each verb does for their slice.
+// Reserved verbs — plugins can't shadow these as targets.
 const VERBS = new Set(['watch', 'unwatch', 'help'])
 
 // ---- Parser ----------------------------------------------------------------
 
-// Split a raw inbound body into individual command lines. Newlines,
-// semicolons, and commas are all treated as separators.
+// Split a body into command lines. Newlines, semicolons, and commas separate.
 export function splitCommands(text: string): string[] {
   return text
     .split(/[\n;,]+/)
@@ -68,8 +54,7 @@ export function splitCommands(text: string): string[] {
     .filter(Boolean)
 }
 
-// Parse a single command line. Returns `unknown` rather than throwing so
-// the handler can DM a usage hint and keep processing.
+// Returns `unknown` rather than throwing so the handler can DM a hint and continue.
 export function parseCommand(line: string): Command {
   const tokens = line.split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return { kind: 'unknown', raw: line, error: 'empty command' }
@@ -91,20 +76,14 @@ export function parseCommand(line: string): Command {
   return { kind: 'unknown', raw: line, error: `unknown command: ${tokens[0]}` }
 }
 
-// Parses two grammar shapes after the verb:
-//   per-N : `[target] <num> [<owner>/<repo>] [#chan ...]`  (watch/unwatch)
+// Two shapes after the verb:
+//   per-N : `[target] <num> [<owner>/<repo>] [#chan ...]`
 //   repo  : `[target] <owner>/<repo>[@<branch>[:<path>]] [#chan ...]`
-// `target` is whatever non-numeric, non-repo-shape keyword precedes the spec
-// (e.g. `pr`, `repo`, `new-issues`); plugins claim which keyword they own
-// (including `null` for the bare form). Shape selection is driven by the
-// spec token — a number emits `watch`/`unwatch`, a repo-shape token emits
-// `watch-repo`/`unwatch-repo`.
+// `target` is whatever non-numeric, non-repo-shape keyword precedes the spec;
+// plugins claim what they own. The spec token shape selects per-N vs repo emission.
 function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: string[]): Command {
   let target: string | null = null
   let i = 0
-  // Optional target keyword: first token that is neither a number nor a
-  // repo-shape spec. `repo`/`new-issues`/`pr`/etc. all flow through here —
-  // the parser stays target-agnostic; plugins decide what they claim.
   const first = rest[0]
   if (first !== undefined && !/^\d+$/.test(first) && !REPO_SPEC_RE.test(first)) {
     if (VERBS.has(first.toLowerCase())) {
@@ -119,10 +98,7 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
     return { kind: 'unknown', raw, error: `${verb} requires an issue/PR number or <owner>/<repo> spec` }
   }
 
-  // Repo-shape spec: `owner/repo[@branch][:path]`. Selected over number
-  // when the token contains a `/`. Channels (which start with `#`) and
-  // numbers can never match this pattern, so disambiguation is purely on
-  // shape — no lookahead needed.
+  // Repo-shape: `owner/repo[@branch][:path]`. Picked when the token contains a `/`.
   const repoMatch = specTok.match(REPO_SPEC_RE)
   if (repoMatch) {
     const repo = repoMatch[1]
@@ -150,10 +126,7 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
   }
   i += 1
 
-  // Optional repo positional after the number. Disambiguated from channels
-  // by containing `/` (channels start with `#`); `@branch` and `:path`
-  // are not allowed in this slot — per-N entries pin one PR/issue, not a
-  // branch/path. Exactly one repo positional permitted.
+  // Optional repo positional after the number — `@branch`/`:path` not allowed here.
   let repo: string | null = null
   if (rest[i] !== undefined && OWNER_REPO_RE.test(rest[i])) {
     repo = rest[i]
@@ -182,13 +155,8 @@ export function parseCommands(text: string): Command[] {
 
 // ---- Allowlist -------------------------------------------------------------
 
-// Resolves command_senders. Unset → `[leadPmNick(project), apmNick(project)]`
-// (see naming.ts — single source of truth for the convention). Both lead and
-// APM are documented team members that need DM access; trusting both by
-// default avoids respawning a lead just to flip an unwatch.
-// Explicit `[]` means nobody is allowed. If project is unresolvable, falls
-// back to `[]` and logs the cause so an operator chasing a "not authorized"
-// reply can find the root cause in daemon.log.
+// Unset → `[leadPmNick(project), apmNick(project)]`. Explicit `[]` rejects all.
+// Unresolvable project → `[]` + log line so a "not authorized" reply is traceable.
 export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string) => void): string[] {
   const explicit = config.irc?.command_senders
   if (explicit !== undefined) return explicit
@@ -203,8 +171,7 @@ export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string
 
 // ---- Routing ---------------------------------------------------------------
 
-// One DM-able description of a watch/unwatch the parser produced, used
-// only in the "no plugin handles..." reply. Matches the user's input shape.
+// Synopsis of the user's input shape — used only in the "no plugin handles..." reply.
 function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'watch-repo' | 'unwatch-repo' }>): string {
   const target = cmd.target ? `${cmd.target} ` : ''
   if (cmd.kind === 'watch-repo') return `watch ${target}<owner>/<repo>[@<branch>[:<path>]] [#chan ...]`
@@ -215,11 +182,7 @@ function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'wa
     : `unwatch ${target}<N>${repoSlot}`
 }
 
-// Ask every plugin to handle `cmd` against the merged config view, with
-// `local` as the writable overlay. Returns the coalesced reply (or null if
-// every plugin abstained — caller surfaces "no plugin handles ...").
-// watch/unwatch should match exactly one plugin; list/help broadcast to
-// all and join with `\n\n`.
+// watch/unwatch match exactly one plugin; list/help broadcast and join with `\n\n`.
 
 const HELP_SYNOPSIS = [
   'dispatcher DM grammar (one per line, or `;`/`,`-separated):',
@@ -245,14 +208,10 @@ async function routeOne(
     const reply = await p.handleCommand?.(merged, local, cmd)
     if (reply !== null && reply !== undefined) replies.push(reply)
   }
-  // Help always gets the dispatcher synopsis at the top so operators can
-  // discover the grammar from one entry — per-plugin sections trail.
+  // help leads with the dispatcher synopsis; per-plugin sections trail.
   if (cmd.kind === 'help') return [HELP_SYNOPSIS, ...replies].join('\n\n')
   if (replies.length === 0) return null
-  // list broadcasts to all enabled plugins — separate sections with a
-  // blank line so the output is readable when multiple plugins contribute.
-  const sep = cmd.kind === 'list' ? '\n\n' : '\n'
-  return replies.join(sep)
+  return replies.join(cmd.kind === 'list' ? '\n\n' : '\n')
 }
 
 function unmatchedReply(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'watch-repo' | 'unwatch-repo' }>, plugins: Plugin[]): string {
@@ -267,12 +226,9 @@ export interface InboundDm {
   text: string
 }
 
-// Top-level DM entry. Never throws — load/write/handler failures are caught
-// and surfaced via deps.postProjectError + a DM to the sender so the
-// operator notices a broken handler.
-//
-// Read-only batches (only list/help/unknown) short-circuit before
-// mutateConfig so we don't acquire the writer queue or pay an fsync.
+// Top-level DM entry. Never throws — failures land on deps.postProjectError +
+// a DM to the sender. Read-only batches (list/help only) short-circuit
+// mutateConfig to skip the writer queue and fsync.
 export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> {
   const senderLower = dm.sender.toLowerCase()
   const body = dm.text.trim()
@@ -281,8 +237,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   let snapshot: OrchestratorConfig
   try {
     snapshot = await loadConfig(deps.stateDir)
-    // Strict invariant runs against tracked entries only; local overlay
-    // entries are parser-validated on write. See Plugin.assertRepoMode docs.
+    // Tracked-only; see `Plugin.assertRepoMode` for rationale.
     assertRepoModeAll(deps.plugins, await loadConfigBase(deps.stateDir))
   } catch (e) {
     deps.log(`dispatcher-dm-handler: config load failed for ${dm.sender}: ${e}`)
@@ -300,8 +255,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   const cmds = parseCommands(body)
   if (cmds.length === 0) return
 
-  // Any parse failure aborts the batch — a typo shouldn't silently commit
-  // the half that parsed. Report all parse errors in one reply.
+  // Any parse failure aborts the batch — a typo shouldn't half-commit.
   const unknowns = cmds.filter((c): c is Extract<Command, { kind: 'unknown' }> => c.kind === 'unknown')
   if (unknowns.length) {
     for (const u of unknowns) deps.log(`dispatcher-dm-handler: ${dm.sender} parse: ${u.error}`)
@@ -311,8 +265,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
 
   const isPureRead = cmds.every(c => c.kind === 'list' || c.kind === 'help')
 
-  // Pure-read path: route against the snapshot, no fsync. The local
-  // overlay is also read-only here — list/help never mutate.
+  // No fsync, no writer queue — list/help never mutate.
   if (isPureRead) {
     let localSnapshot: OrchestratorConfig
     try {
@@ -338,10 +291,8 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
     return
   }
 
-  // Write path: one mutateConfig call wraps the whole batch. We re-merge
-  // base + local before each plugin call so in-batch mutations (e.g. two
-  // `watch pr 5` lines in one DM) see prior writes when checking
-  // idempotency.
+  // One mutateConfig wraps the whole batch. Re-merge base+local before each
+  // plugin call so in-batch mutations see prior writes for idempotency.
   const replies: string[] = []
   let writeFailed = false
   try {

@@ -8,6 +8,13 @@ const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
   'pr_review_submitted',
 ])
 
+const PR_LIFECYCLE: Record<string, string> = {
+  pr_ready_for_review: 'ready for review',
+  pr_returned_to_draft: 'returned to draft',
+  pr_merged: 'merged',
+  pr_closed: 'closed (not merged)',
+}
+
 function eventTag(event: OrchestratorEvent): string {
   const n = event.pr ?? event.issue
   const repo = event.repo
@@ -16,13 +23,12 @@ function eventTag(event: OrchestratorEvent): string {
   return ''
 }
 
-function commentSnippet(event: CommentEvent): { snippet: string; ellipsis: string; url: string } {
-  const preview = (event.body_preview ?? '').trim()
-  const lines = preview.split('\n')
+function bodySnippet(preview: string | undefined): { snippet: string; ellipsis: string } {
+  const trimmed = (preview ?? '').trim()
+  const lines = trimmed.split('\n')
   const snippet = (lines[0] ?? '').slice(0, 160)
-  const ellipsis = preview.length > snippet.length || lines.length > 1 ? '…' : ''
-  const url = event.comment_url ?? event.url ?? ''
-  return { snippet, ellipsis, url }
+  const ellipsis = trimmed.length > snippet.length || lines.length > 1 ? '…' : ''
+  return { snippet, ellipsis }
 }
 
 export function formatCommentHeader(event: OrchestratorEvent): string {
@@ -47,28 +53,25 @@ export function formatEvent(event: OrchestratorEvent): string {
   const kind = event.kind
   const tag = eventTag(event)
 
-  if (kind === 'pr_ready_for_review') return `PR ${tag} ready for review: ${event.title ?? ''} — ${event.url ?? ''}`
-  if (kind === 'pr_returned_to_draft') return `PR ${tag} returned to draft: ${event.title ?? ''} — ${event.url ?? ''}`
-  if (kind === 'pr_merged') return `PR ${tag} merged: ${event.title ?? ''} — ${event.url ?? ''}`
-  if (kind === 'pr_closed') return `PR ${tag} closed (not merged): ${event.title ?? ''} — ${event.url ?? ''}`
+  if (PR_LIFECYCLE[kind]) return `PR ${tag} ${PR_LIFECYCLE[kind]}: ${event.title ?? ''} — ${event.url ?? ''}`
 
   if (kind === 'pr_review_comment' || kind === 'pr_conversation_comment') {
     const ev = event as CommentEvent
     const where = ev.path ? ` at ${ev.path}:${ev.line ?? ''}` : ''
-    const { snippet, ellipsis, url } = commentSnippet(ev)
-    return `PR ${tag} comment by ${ev.author ?? '?'}${where}: ${snippet}${ellipsis} — ${url}`
+    const { snippet, ellipsis } = bodySnippet(ev.body_preview)
+    return `PR ${tag} comment by ${ev.author ?? '?'}${where}: ${snippet}${ellipsis} — ${ev.comment_url ?? ev.url ?? ''}`
   }
 
   if (kind === 'issue_comment') {
     const ev = event as CommentEvent
-    const { snippet, ellipsis, url } = commentSnippet(ev)
-    return `Issue ${tag} comment by ${ev.author ?? '?'}: ${snippet}${ellipsis} — ${url}`
+    const { snippet, ellipsis } = bodySnippet(ev.body_preview)
+    return `Issue ${tag} comment by ${ev.author ?? '?'}: ${snippet}${ellipsis} — ${ev.comment_url ?? ev.url ?? ''}`
   }
 
   if (kind === 'pr_review_submitted') {
     const ev = event as ReviewEvent
-    const snippetLines = (ev.body_preview ?? '').trim().split('\n').slice(0, 1)
-    const snippetStr = snippetLines.length && snippetLines[0] ? ': ' + snippetLines[0].slice(0, 160) : ''
+    const { snippet } = bodySnippet(ev.body_preview)
+    const snippetStr = snippet ? ': ' + snippet : ''
     return `PR ${tag} review by ${ev.author ?? '?'} (${ev.state})${snippetStr} — ${ev.review_url ?? ev.url ?? ''}`
   }
 
@@ -119,8 +122,7 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-// Convert an event into a renderable payload. Comment-style kinds use the
-// multiline form (header + body + url); everything else is a oneline.
+// Comment-style kinds → multiline (header + body + url); rest → oneline.
 export function formatPayload(event: OrchestratorEvent): TaggedEventPayload {
   if (MULTILINE_COMMENT_KINDS.has(event.kind)) {
     const ev = event as CommentEvent & { review_url?: string }

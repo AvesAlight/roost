@@ -3,21 +3,19 @@ import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
-import { trackedRefusal } from '../_shared.js'
+import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
 
-// Thin shared base for any plugin that needs GhClient but not watch-list
-// scaffolding. GhBase extends this; non-watching plugins (e.g.
-// GitHubNewIssuesPlugin) extend it directly.
+// Shared base for plugins needing GhClient. GhBase extends this for watch-list
+// scaffolding; non-watching plugins (e.g. GitHubNewIssuesPlugin) extend directly.
 export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
   protected readonly log: PluginLogger
 
-  // Per-instance: rolling history of rate limit observations (oldest first).
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
-  // Shared across instances — one warning per 10 min regardless of which plugin fires.
-  // 10 min: enough signals in a 60-min reset window without spamming.
+  // Cross-instance — one warning per 10 min total. 60-min reset window means
+  // ~6 signals max, enough without spamming.
   private static _warnedAt: number | null = null
   private static readonly WARN_COOLDOWN_MS = 10 * 60_000
 
@@ -31,13 +29,9 @@ export abstract class GhPluginBase extends BasePlugin {
     return new Set(config.agent_logins ?? [])
   }
 
-  // Call at the end of runTick (after all gh scraping) to log the current rate
-  // limit budget and, if trajectory predicts exhaustion before reset, emit an
-  // IRC warning to the project channel. Returns the warning as a TaggedEvent[]
-  // (empty when no warning or rate limit fetch failed).
-  //
-  // Runs even when the tick's own scraping failed — we want to observe the budget
-  // through failures since a failing tick is often a symptom of exhaustion.
+  // End-of-tick: log current GH rate budget and emit an IRC warning to the
+  // project channel when the rolling rate predicts exhaustion before reset.
+  // Runs even when scrapes failed — a failing tick is often a symptom of exhaustion.
   protected async observeRateLimit(
     projectChannel: string,
     _fetch: (log: PluginLogger) => Promise<RateLimitInfo | null> = fetchRateLimit,
@@ -46,8 +40,6 @@ export abstract class GhPluginBase extends BasePlugin {
     if (!info) return []
 
     const now = Date.now()
-
-    // Prune history to the rolling window before computing rate.
     const cutoff = now - RATE_LIMIT_WINDOW_MS
     this._rateLimitHistory = this._rateLimitHistory.filter(h => h.ts >= cutoff)
 
@@ -75,52 +67,34 @@ interface GhPluginConfig {
   watched?: WatchedEntry[]
 }
 
-// Format a `<label> #<N>` or `<label> <owner>/<repo>#<N>` string. Bare `#N`
-// when the entry's effective repo is the same as `config.repo`; cross-repo
-// when it differs (including all multi-repo entries, where `defaultRepo`
-// is undefined). Same shape used in success, idempotent, and refusal
-// replies so a future grep finds them all.
+// Bare `#N` when the entry's effective repo matches `config.repo`; full
+// `<owner>/<repo>#N` when it diverges (or in multi-repo mode).
 function formatEntryLabel(label: string, number: number, repo: string | undefined, defaultRepo: string | undefined): string {
   const isCross = repo != null && repo !== defaultRepo
   return isCross ? `${label} ${repo}#${number}` : `${label} #${number}`
 }
 
-// "Effective" repo for an entry — the value `resolveRepoEntry` would
-// produce. Used for dedup and reply formatting; returns null when the
-// entry has no repo and there's no default (multi-mode bare-watch),
-// which the caller rejects before dedup.
+// Effective repo — what `resolveRepoEntry` would produce. Null in multi-mode
+// bare-watch (caller rejects before dedup).
 function effectiveRepo(entryRepo: string | undefined, defaultRepo: string | undefined): string | null {
   return entryRepo ?? defaultRepo ?? null
 }
 
-// Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
-// `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
-// slice convention, and `handleCommand` for watch/unwatch/list/help.
-// Each subclass declares the target keyword it claims and a singular label.
+// Watch-list scaffolding for the two per-N github plugins (PRs, issues).
+// Owns the `{ watched?: WatchedEntry[] }` slice convention and the
+// watch/unwatch/list/help command surface.
 export abstract class GhBase extends GhPluginBase {
-  // Target keyword this plugin claims for watch/unwatch. `null` = no keyword
-  // (bare `watch <N>`). The dispatcher's parser is target-agnostic; plugins
-  // declare which keyword (if any) they own here.
+  // Target keyword for watch/unwatch — `null` = bare `watch <N>`. The parser
+  // is target-agnostic; subclasses declare what they claim.
   protected abstract readonly target: string | null
-  // Singular noun used in reply lines (e.g. "issue", "pr"). Plural is the
-  // plugin name slice.
+  // Singular noun in reply lines (e.g. "issue", "pr").
   protected abstract readonly label: string
 
-  // The plugin's `watched` list from `config.plugins[name].watched` — the
-  // shared shape for every GhBase plugin.
   protected watched(config: OrchestratorConfig): WatchedEntry[] {
     return this.pluginConfig<GhPluginConfig>(config)?.watched ?? []
   }
 
-  // Each watched entry must respect the active repo mode. In single mode an
-  // entry's repo (when set) must equal config.repo; in multi mode every entry
-  // must carry its own repo. The dispatcher calls this after every config
-  // load — boot, tick reload, and DM snapshot.
-  //
-  // The repo-mode invariant runs only against tracked `config.json` entries
-  // — local-overlay entries (DM-driven) bypass it because the DM parser
-  // validates OWNER/REPO shape at write time, leaving the overlay
-  // parser-clean by construction.
+  // Tracked-only; see `Plugin.assertRepoMode` for rationale.
   assertRepoMode(base: OrchestratorConfig): void {
     const topRepo = base.repo
     for (const entry of this.watched(base)) {
@@ -129,8 +103,7 @@ export abstract class GhBase extends GhPluginBase {
     }
   }
 
-  // No watches → no project lookup (avoids requiring `project`/`repo` on
-  // minimal configs).
+  // No watches → no project lookup (avoids requiring `project`/`repo` on minimal configs).
   protected entryChannels(config: OrchestratorConfig, entries: WatchedEntry[] | undefined): string[] {
     if (!entries?.length) return []
     const project = defaultProject(config)
@@ -145,11 +118,6 @@ export abstract class GhBase extends GhPluginBase {
 
   // ---- DM command handling --------------------------------------------
 
-  // Inbound DM command surface. The dispatcher (dispatcher-dm-handler.ts) calls this
-  // once per parsed command inside its mutateConfig pass. Reads consult
-  // `merged` (config.json + config.local.json union); writes target `local`
-  // — config.json is read-only from the dispatcher. Returns the reply line
-  // when we handle the command, null when it isn't ours. Never throws.
   handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
     if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
@@ -164,88 +132,54 @@ export abstract class GhBase extends GhPluginBase {
     return null
   }
 
-  // Read-or-create the typed slice under `local.plugins[name]`. Plugins
-  // own their slice shape; this is the one mutation seam.
-  private localSlice(local: OrchestratorConfig): GhPluginConfig {
-    local.plugins ??= {}
-    const existing = local.plugins[this.name]
-    if (existing && typeof existing === 'object') return existing as GhPluginConfig
-    const fresh: GhPluginConfig = {}
-    local.plugins[this.name] = fresh
-    return fresh
+  // Multi-mode bare-watch error — DM grammar lets the operator supply
+  // `<owner>/<repo>` to disambiguate; the message points at that fix.
+  private bareError(verb: 'watch' | 'unwatch', number: number): string {
+    const verbForm = this.target ? `${verb} ${this.target} <N>` : `${verb} <N>`
+    return `error: cannot ${verb} ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`${verbForm}\` has no repo; supply \`${verbForm} <owner>/<repo>\``
+  }
+
+  private matchEntry(defaultRepo: string | undefined, effective: string, number: number): (e: WatchedEntry) => boolean {
+    return e => e.number === number && effectiveRepo(e.repo, defaultRepo) === effective
   }
 
   private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, number: number, repo: string | null, channels: string[]): string {
-    // Resolve the entry's effective repo. Bare `watch <N>` in multi-repo
-    // mode has no inherit target — the DM grammar now lets the operator
-    // supply `<owner>/<repo>` to disambiguate, so the rejection points at
-    // that fix.
     const defaultRepo = merged.repo
     const effective = effectiveRepo(repo ?? undefined, defaultRepo)
-    if (effective === null) {
-      const verbForm = this.target ? `watch ${this.target} <N>` : 'watch <N>'
-      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`${verbForm}\` has no repo; supply \`${verbForm} <owner>/<repo>\``
-    }
-    // Dedup by (number, effective repo) — `watch pr 5` and `watch pr 5
-    // org/other` are distinct entries in single-repo mode.
-    const inMerged = this.watched(merged).find(e => e.number === number && effectiveRepo(e.repo, defaultRepo) === effective)
+    if (effective === null) return this.bareError('watch', number)
+    const match = this.matchEntry(defaultRepo, effective, number)
     const labelStr = formatEntryLabel(this.label, number, effective, defaultRepo)
-    if (!inMerged) {
-      const slice = this.localSlice(local)
+    if (!this.watched(merged).some(match)) {
+      const slice = this.localSlice<GhPluginConfig>(local)
       slice.watched ??= []
       const entry: WatchedEntry = { number }
-      // Only pin entry.repo when it'd differ from config.repo — otherwise
-      // leave it bare so a future config.repo change inherits cleanly.
+      // Only pin entry.repo when it diverges from config.repo — leave bare so
+      // a future config.repo change inherits cleanly.
       if (effective !== defaultRepo) entry.repo = effective
       if (channels.length) entry.channels = [...channels]
       slice.watched.push(entry)
-      return channels.length
-        ? `watching ${labelStr} + ${channels.join(' ')}`
-        : `watching ${labelStr}`
+      return channels.length ? `watching ${labelStr} + ${channels.join(' ')}` : `watching ${labelStr}`
     }
-    if (!channels.length) return `already watching ${labelStr}`
-    // Adding channels: only the local-overlay entry is writable. If the
-    // matched entry lives only in tracked config.json, surface the
-    // hand-edit requirement instead of silently failing.
-    const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []
-    const localEntry = localEntries.find(e => e.number === number && effectiveRepo(e.repo, defaultRepo) === effective)
-    if (!localEntry) {
-      return trackedRefusal(labelStr, 'add channels')
-    }
-    const existing = new Set(localEntry.channels ?? [])
-    const added: string[] = []
-    for (const c of channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
-    if (!added.length) return `${labelStr} channels unchanged`
-    localEntry.channels = [...existing]
-    return `${labelStr} + ${added.join(' ')}`
+    const localEntry = (this.pluginConfig<GhPluginConfig>(local)?.watched ?? []).find(match)
+    if (!localEntry) return channels.length ? trackedRefusal(labelStr, 'add channels') : `already watching ${labelStr}`
+    return addChannelsToEntry(localEntry, channels, labelStr)
   }
 
   private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, number: number, repo: string | null): string {
     const defaultRepo = merged.repo
     const effective = effectiveRepo(repo ?? undefined, defaultRepo)
-    if (effective === null) {
-      const verbForm = this.target ? `unwatch ${this.target} <N>` : 'unwatch <N>'
-      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`${verbForm}\` has no repo; supply \`${verbForm} <owner>/<repo>\``
-    }
-    const labelStr = formatEntryLabel(this.label, number, effective, defaultRepo)
-    const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []
-    const localIdx = localEntries.findIndex(e => e.number === number && effectiveRepo(e.repo, defaultRepo) === effective)
-    if (localIdx >= 0) {
-      localEntries.splice(localIdx, 1)
-      return `unwatched ${labelStr}`
-    }
-    const inMerged = this.watched(merged).some(e => e.number === number && effectiveRepo(e.repo, defaultRepo) === effective)
-    if (inMerged) {
-      return trackedRefusal(labelStr, 'remove')
-    }
-    return `not watching ${labelStr}`
+    if (effective === null) return this.bareError('unwatch', number)
+    return applyUnwatchEntry<WatchedEntry>(
+      this.watched(merged),
+      this.pluginConfig<GhPluginConfig>(local)?.watched ?? [],
+      this.matchEntry(defaultRepo, effective, number),
+      formatEntryLabel(this.label, number, effective, defaultRepo),
+    )
   }
 
   private formatListSection(merged: OrchestratorConfig): string {
-    // Concat-merged watched lists can carry the same (number, repo) from
-    // both base and local (e.g. post-upgrade reconcile). Dedup by the
-    // (effective-repo, number) tuple with a channel union so the
-    // operator-visible reply matches what's actually being scraped.
+    // Concat-merged list can carry the same (number, repo) from base + local;
+    // dedup by (effective-repo, number) with channel union.
     const defaultRepo = merged.repo
     const entries = this.watched(merged)
     const byKey = new Map<string, { number: number; repo: string | null; channels: Set<string> }>()

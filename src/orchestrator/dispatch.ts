@@ -33,11 +33,9 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
-// Plugin-agnostic, payload-shape-aware: we know how to write the two payload
-// variants (oneline / multiline) but nothing about plugins, event kinds, or
-// routing. Channels are pre-resolved and pre-deduped by the plugin's
-// resolveChannels — we trust the input. say() is a synchronous socket write
-// with no delivery ack: a mid-tick disconnect drops in-flight events silently.
+// Plugin-agnostic, payload-shape-aware. Channels are pre-resolved by the
+// plugin's resolveChannels — trust the input. say() has no delivery ack; a
+// mid-tick disconnect silently drops in-flight events.
 export async function dispatchTaggedEvents(
   taggedEvents: TaggedEvent[],
   client: RoostIrcClient

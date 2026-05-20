@@ -1,23 +1,20 @@
 # dispatcher
 
-A reference implementation of the polling pattern Roost teams use to wake
-agents on GitHub activity. Polls GitHub for changes to watched issues and PRs,
-then dispatches events to IRC channels where workers / leads are listening.
+Reference implementation of the polling pattern Roost teams use to wake agents
+on GitHub activity. Polls watched issues/PRs and dispatches events to IRC
+channels where workers/leads are listening.
 
-The dispatcher is a plain IRC client. It connects to the same ergo server, posts formatted messages
-to the target channels, and disconnects. There is no special link to the roost-irc MCP — agents
-receive dispatcher messages exactly like any other channel message.
+The dispatcher is a plain IRC client — no special link to the roost-irc MCP.
+Agents receive dispatcher messages like any other channel message. Ships as
+an example: run it from a Roost clone (or fork) and point the config at your
+own repo / channel set.
 
-This ships as an example. Run it from a Roost clone (or fork) and point the
-config at your own repo / channel set.
-
-Each watched item routes to `#<project>-issue-{number}` in single-repo mode
-(top-level `config.repo` set). In multi-repo mode (no `config.repo`) the
-channel picks up a slug segment: `#<project>-<slug>-issue-{number}`, where
-`<slug>` is the lowercased basename of the entry's `repo`. Worker /
-reviewer nicks pick up the same slug. The project channel (default
+Each watched item routes to `#<project>-issue-{number}` in single-repo mode.
+Multi-repo mode (no `config.repo`) inserts a slug: `#<project>-<slug>-issue-
+{number}`, where `<slug>` is the lowercased basename of the entry's `repo`.
+Worker / reviewer nicks pick up the same slug. Project channel (default
 `#<project>-leads`) is a fallback for errors and project-level events.
-See `src/orchestrator/naming.ts` for the full namespacing convention.
+See `src/orchestrator/naming.ts`.
 
 ## Setup
 
@@ -32,41 +29,23 @@ cp .orchestrator/config.local.example.json .orchestrator/config.local.json
 ### Two-file split
 
 `.orchestrator/config.json` is **tracked** and holds the shareable project
-shape: `project`, `repo`, `agent_logins`, `irc`, plus the static plugin
-slices the team agrees on — currently `github-new-issues.watched` and
-`github-commits.watched`. PR-reviewed changes go here.
-`config.example.json` mirrors that shape as a fork template.
+shape: `project`, `repo`, `agent_logins`, `irc`, plus static plugin slices
+the team agrees on (currently `github-new-issues.watched` and
+`github-commits.watched`). PR-reviewed changes go here.
 
 `.orchestrator/config.local.json` is **gitignored** and holds the
-dispatcher-mutated overlay: PR/issue watches added via `watch <N>` DMs land
-in `plugins.github-prs.watched` / `plugins.github-issues.watched` here.
-Concurrent operators don't clobber each other's live entries.
-`config.local.example.json` is the tracked template for it — empty
-`github-prs` / `github-issues` slices that enable the two DM-driven
-plugins out of the box.
+dispatcher-mutated overlay: PR/issue watches from `watch <N>` DMs land in
+`plugins.github-prs.watched` / `plugins.github-issues.watched` here.
 
-The loader merges the two files. The enabled plugin set is the **union**
-of `Object.keys(plugins)` across both, so a slice that lives only in the
-local overlay still enables its plugin. Most fields are local-wins on
-conflict; `plugins.<name>.watched` arrays are **concatenated** — both
-sources contribute live entries. DM commands operate on the local overlay
-only: `unwatch <N>` on a tracked entry returns
-`in tracked config.json — hand-edit to remove`, since the dispatcher won't
-modify tracked operator/project state.
+The loader merges the two. Enabled plugins = union of `Object.keys(plugins)`
+across both. Most fields are local-wins; `plugins.<name>.watched` is
+**concatenated**. DMs mutate the overlay only — `unwatch <N>` on a tracked
+entry returns `in tracked config.json — hand-edit to remove`.
 
-Existing operators upgrading from the single-file layout: your old
-config.json keeps working as-is. The dispatcher stops writing to it on
-the next watch; new entries land in config.local.json. To bring a
-tracked entry under dispatcher control, hand-edit `config.json` to
-remove it — the dispatcher will pick it up via a fresh `watch <N>`.
-There's no automatic migration: refusing to mutate tracked entries is
-the contract, not a bug.
-
-Promoting a local entry to tracked is the reverse: hand-edit
-`config.json` to add it, then DM `unwatch <N>` (or `unwatch repo …` /
-`unwatch new-issues …`) to prune the local copy. Skipping the unwatch
-leaves the same key in both files — concat-merge would scrape it twice
-and `watch list` shows the duplicate.
+Promoting a local entry to tracked: hand-edit `config.json` to add, then DM
+`unwatch <N>` to prune the local copy. Skipping the unwatch leaves the same
+key in both files — concat-merge would scrape it twice and `watch list`
+shows the duplicate.
 
 Fields:
 
@@ -86,44 +65,30 @@ Fields:
 | `plugins.github-new-issues.watched` | `[{"repo": "OWNER/NAME", "channels"?: [...]}]`. Multi-repo new-issue feed — `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
 
-For watched entries, `repo` defaults to the top-level value in single-repo
-mode and is required per entry in multi-repo mode. `channels` adds
-destinations on top of the auto-routed issue channel (PR events also route
-to each linked issue's channel, slugged the same way in multi-repo mode).
+For watched entries, `repo` defaults to the top-level in single mode and is
+required per entry in multi mode. `channels` adds destinations on top of the
+auto-routed issue channel.
 
 ### Cross-repo PR closures
 
-`closingIssuesReferences` can cross repos — a PR in repo A may close an
-issue in repo B. The slug for each linked-issue channel is derived from
-the linked issue's own repo, not the PR's repo:
+`closingIssuesReferences` can cross repos — a PR in A may close an issue in
+B. Each linked-issue channel is slugged from its own repo, not the PR's:
 
-- **Multi-repo mode:** PR `org/a#25` closing `org/b#14` routes events to
-  `#<project>-b-issue-14`. If `org/b` is also watched, the PR-side and
-  issue-side events converge in the same channel.
-- **Single-repo mode (`config.repo` set), same-repo linked issue:**
-  routes to bare `#<project>-issue-<N>` as before.
-- **Single-repo mode, cross-repo linked issue:** the foreign-repo issue
-  is dropped from routing (no synthesized slug in single-mode) and the
-  dispatcher emits one stderr line per drop with the remediation: add the
-  foreign repo to `config.json` or switch to multi-repo mode. The drop
-  warning is debounced per `head_oid` — it re-fires when the PR force-pushes
-  and the closing references are re-resolved.
-  
-  Operator-visible signal in this case is **dual**: the IRC channel still
-  shows `now watching PR ...` (because `gh` did return a linked issue,
-  just not one we can address), but stderr carries the drop notice.
-  Read stderr when in doubt.
+- **Multi-repo:** PR `org/a#25` closing `org/b#14` routes to
+  `#<project>-b-issue-14`. If `org/b` is also watched, PR-side and issue-side
+  events converge.
+- **Single-repo, same-repo linked issue:** routes to `#<project>-issue-<N>`.
+- **Single-repo, cross-repo linked issue:** dropped from routing; dispatcher
+  emits one stderr line per drop with remediation. Debounced per `head_oid`
+  (force-push re-triggers). The IRC channel still shows `now watching PR ...`
+  (gh did return a linked issue, just not addressable) — read stderr when in doubt.
 
-A plugin not listed under `plugins` is not instantiated — there is no top-level
-fallback. The first-party set shipped in this repo is `github-prs`,
-`github-issues`, `github-new-issues`, `github-commits`. External plugins are
-loaded via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the registry
-is walked, so their names become available alongside the built-ins.
+A plugin not listed under `plugins` is not instantiated. First-party set:
+`github-prs`, `github-issues`, `github-new-issues`, `github-commits`. External
+plugins load via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the
+registry walks.
 
-`github-new-issues` needs an explicit `plugins.github-new-issues` entry with
-at least one `watched` entry to run. `bin/roost init` writes one for new
-projects; for existing projects add a `watched` list naming each repo to
-watch.
+`github-new-issues` needs an explicit slice with ≥1 `watched` entry to run.
 
 ## Running
 
@@ -138,18 +103,16 @@ bin/dispatcher --daemon
 bin/dispatcher --dry-run
 ```
 
-Daemon mode holds a persistent IRC connection, re-reads config each tick (so
-you can add/remove watched items without restarting), and handles reconnects
-automatically.
+Daemon mode holds a persistent IRC connection, re-reads config each tick, and
+auto-reconnects.
 
 ## Lifecycle
 
-The daemon is dumb on purpose — it loops, ticks, sleeps. Bring it up under
-whatever process supervisor your project already uses (tmux, systemd, launchd),
-or via the bundled `bin/start-dispatcher <config-dir>` helper, which is
-idempotent — safe to call concurrently from multiple agents.
+The daemon loops, ticks, sleeps. Bring it up under whatever process supervisor
+the project uses (tmux, systemd, launchd), or via `bin/start-dispatcher
+<config-dir>` (idempotent — safe to call concurrently).
 
-Run from your project root — `.orchestrator/` is resolved relative to `process.cwd()`.
+Run from your project root — `.orchestrator/` resolves against `process.cwd()`.
 
 State files in `.orchestrator/`:
 
@@ -168,39 +131,34 @@ State files in `.orchestrator/`:
 
 ### Readiness check (three signals)
 
-To verify a dispatcher is running and healthy for *this* project, an operator
-or agent can check three things, in order from cheapest to most informative:
+Cheapest to most informative:
 
 1. **PID file** — `cat .orchestrator/dispatcher.pid` and `kill -0 <pid>`. The
-   file lives inside this project's `.orchestrator/`, so it can't be confused
-   with another team's daemon. The `cmdline` field also embeds the absolute
-   config-dir path, which `bin/start-dispatcher` uses to defend against PID
-   recycle.
+   file lives in this project's `.orchestrator/`, so it can't be confused with
+   another team's daemon; `cmdline` also embeds the absolute config-dir path
+   for PID-recycle defense.
 2. **Heartbeat** — `cat .orchestrator/last-tick.txt`. Should be within the
    last `irc.interval_seconds * 2`.
 3. **Joined channels** — `cat .orchestrator/joined-channels.txt`. Should
-   contain the project channel (`#<project>-leads` by default) and every
-   `#<project>-issue-N` for currently-watched items. Snapshot is "last
-   successful tick" — during a brief IRC blip it may lag reality by one
-   interval.
+   contain `#<project>-leads` and every `#<project>-issue-N` for currently-
+   watched items. Snapshot is "last successful tick" — may lag reality during
+   an IRC blip.
 
 ### Stopping
 
-At milestone end, the APM only sends `unwatch` DMs — the daemon keeps running so it's ready for the next issue without a cold start. Don't call `stop-dispatcher` as part of normal teardown. Agents reach this via the milestone-teardown dance in associate-pm.md.
-
-Use `stop-dispatcher` when you need to actually stop the daemon — incidents, upgrades, decommission:
+At milestone end, the APM only sends `unwatch` DMs — the daemon keeps running for the next issue without a cold start. Use `stop-dispatcher` only for incidents, upgrades, decommission:
 
 ```sh
 bin/stop-dispatcher <config-dir>
 ```
 
-Sends SIGTERM and waits up to 30s (override with `STOP_TIMEOUT=<seconds>`). No SIGKILL escalation — if the daemon hangs past 30s, kill it manually. Idempotent — exits 0 if no live dispatcher is found.
+SIGTERM, waits up to 30s (`STOP_TIMEOUT=<seconds>` overrides). No SIGKILL escalation — kill manually if it hangs. Idempotent.
 
 ## DM grammar
 
-The dispatcher accepts a small command grammar via direct message from
-nicks in `irc.command_senders` (defaults to lead-pm + APM). Plugins claim
-target keywords; the parser is target-agnostic.
+The dispatcher accepts a small grammar via DM from nicks in
+`irc.command_senders` (defaults to lead-pm + APM). Plugins claim target
+keywords; the parser is target-agnostic.
 
 ```
 watch [<target>] <N> [<owner>/<repo>] [#chan ...]      # github-prs, github-issues
@@ -222,34 +180,25 @@ Target keywords currently claimed by first-party plugins:
 
 Notes:
 
-- The optional `<owner>/<repo>` positional after `<N>` is the cross-repo
-  knob — it pins one PR/issue to a non-default repo. Disambiguated from
-  channels by containing `/` (channels start with `#`). Omitting it
-  inherits `config.repo`; in multi-repo mode (`config.repo` unset) the
-  bare form is rejected.
-- The repo-shape grammar (`<owner>/<repo>[@<branch>[:<path>]]`) mirrors
-  the github-commits state key, so a daemon.log line copy-pastes into a
-  DM. Branch defaults to `main` when omitted; path is optional.
-- DM additions land in `config.local.json` only. Re-watching a tracked
-  entry is idempotent; unwatching a tracked entry is refused with
-  `… in tracked config.json — hand-edit to remove`.
+- The optional `<owner>/<repo>` positional after `<N>` pins to a non-default
+  repo (disambiguated from channels by containing `/`). Omit it to inherit
+  `config.repo`; in multi-repo mode the bare form is rejected.
+- The repo-shape grammar mirrors github-commits' state key, so a daemon.log
+  line copy-pastes into a DM. Branch defaults to `main`; path is optional.
+- DMs mutate `config.local.json` only. Re-watching a tracked entry is
+  idempotent; unwatching one is refused with `… hand-edit to remove`.
 
 ### Repo-mode invariant — tracked-strict, local-loose
 
-The repo-mode invariant runs only against tracked `config.json` entries
-— local-overlay entries (DM-driven) bypass it because the DM parser
-validates OWNER/REPO shape at write time, leaving the overlay
-parser-clean by construction.
+Plugins that own a `watched`/`repo` shape enforce single-vs-multi: in single
+mode (top-level `repo` set) entries' `repo` must be absent or equal
+`config.repo`; in multi mode every entry must carry its own `repo`.
 
-Plugins that own a `watched`/`repo` shape enforce a single-vs-multi-repo
-check: in single-repo mode (top-level `repo` set), entries' `repo` must
-be absent or equal `config.repo`; in multi-repo mode (top-level `repo`
-unset), every entry must carry its own `repo`. The tracked-only rule lets
-an operator running a single-repo dispatcher use `watch pr 5 OtherOrg/r`
-to watch a cross-repo PR without losing the typo-guard on hand-edited
-tracked entries. See `Plugin.assertRepoMode`
-(`src/orchestrator/plugin.ts`) for the contract and `assertEntryRepoMode`
-(`src/orchestrator/config.ts`) for the mode invariants.
+The check runs only against tracked `config.json` entries — local-overlay
+entries bypass because the DM parser validates OWNER/REPO at write time. The
+tracked-only rule lets a single-repo operator `watch pr 5 OtherOrg/r` for a
+cross-repo PR without losing the typo-guard on hand-edited entries. See
+`Plugin.assertRepoMode` for the contract.
 
 ## Events dispatched
 

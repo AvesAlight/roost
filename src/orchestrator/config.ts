@@ -5,9 +5,7 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-// Schema version 4: PrSnap.linked_issues carries per-issue repo (was bare
-// number[]); cross-repo PR closures route to the linked issue's own repo
-// slug. Schema bumps trigger a one-time re-seed via loadState().
+// Bump triggers a one-time re-seed via loadState().
 export const SCHEMA_VERSION = 4
 
 export interface WatchedEntry {
@@ -27,21 +25,13 @@ export interface OrchestratorConfig {
     server?: string
     port?: number
     interval_seconds?: number
-    // Allowlist of nicks permitted to DM the dispatcher with watch/unwatch
-    // commands. When unset, defaults to `[leadPmNick(project), apmNick(project)]`
-    // — the lead-pm and APM that drive this project (see naming.ts).
-    // Explicit `[]` disables remote control entirely.
+    // Unset → `[leadPmNick(project), apmNick(project)]`. Explicit `[]` disables DMs.
     command_senders?: string[]
   }
-  // Per-plugin config slice, symmetric with `state.plugins.{name}`. The set
-  // of enabled plugins is `Object.keys(plugins)`. Each slice is shaped by
-  // the owning plugin — typed locally via BasePlugin.pluginConfig.
   plugins?: Record<string, unknown>
-  // External plugin modules to load before `buildPlugins`. Each entry is a
-  // path to a module that calls `registerPlugin(name, factory)` at top
-  // level. Relative paths resolve against the config directory
-  // (`.orchestrator/`); absolute paths pass through unchanged. A failing
-  // import is fatal — see docs/PLUGINS.md.
+  // External plugin modules loaded before `buildPlugins`; each module calls
+  // `registerPlugin` at top level. Relative paths resolve against the config
+  // directory. See docs/PLUGINS.md.
   plugin_paths?: string[]
 }
 
@@ -62,11 +52,7 @@ function sortedJson(value: unknown): string {
   }, 2) + '\n'
 }
 
-// Two-file split: config.json (tracked, operator/project) + config.local.json
-// (gitignored, dispatcher-mutated overlay). loadConfig returns the merged view;
-// dispatcher writes never touch config.json. Operators can hand-edit either —
-// re-watching a tracked entry is a no-op (idempotent), unwatching one is
-// refused (hand-edit config.json to remove). See DISPATCHER.md.
+// Two-file split (config.json tracked + config.local.json overlay) — see DISPATCHER.md.
 
 export async function loadConfigBase(stateDir: string): Promise<OrchestratorConfig> {
   const path = join(stateDir, 'config.json')
@@ -75,17 +61,7 @@ export async function loadConfigBase(stateDir: string): Promise<OrchestratorConf
   return (await file.json()) as OrchestratorConfig
 }
 
-// Per-entry/per-slice repo-mode check shared by plugins that have an
-// inheritable repo (e.g. github-prs/github-issues watched entries,
-// github-new-issues' slice repo). Throws on violation with a uniform
-// error message; plugins call it inside their own `assertRepoMode`.
-//
-// The repo-mode invariant runs only against tracked `config.json` entries
-// — local-overlay entries (DM-driven) bypass it because the DM parser
-// validates OWNER/REPO shape at write time, leaving the overlay
-// parser-clean by construction.
-//
-// Mode invariants (applied to tracked entries):
+// Tracked-only; see `Plugin.assertRepoMode` for rationale. Mode invariants:
 //   single-repo (topRepo set):   entryRepo must be absent or equal topRepo.
 //   multi-repo  (topRepo unset): entryRepo must be set — no inherit target.
 export function assertEntryRepoMode(
@@ -121,10 +97,8 @@ export async function loadConfig(stateDir: string): Promise<OrchestratorConfig> 
   return mergeConfigs(base, local)
 }
 
-// Local-wins on conflict for every field except `plugins.<name>.watched`,
-// which is concatenated (both sources contribute live entries). `irc` is
-// merged at the field level so operators can override a single nested key
-// without restating the whole block.
+// Local-wins for every field except `plugins.<name>.watched` (concatenated)
+// and `irc` (field-level merge).
 export function mergeConfigs(base: OrchestratorConfig, local: OrchestratorConfig): OrchestratorConfig {
   const result: OrchestratorConfig = { ...base }
   if (local.project !== undefined) result.project = local.project
@@ -156,10 +130,8 @@ function mergePluginSlice(base: unknown, local: unknown): unknown {
   if (typeof base !== 'object' || typeof local !== 'object' || Array.isArray(base) || Array.isArray(local)) {
     return local
   }
-  // structuredClone the concatenated entries so a plugin author who
-  // mutates an entry on the merged view can't reach back into base or
-  // local and silently corrupt persistent state. The contract says
-  // "mutate local only" — this enforces it by reference.
+  // structuredClone the concatenated entries so a plugin mutating the merged
+  // view can't reach back into base/local — the contract is "mutate local only".
   const merged = { ...(base as Record<string, unknown>), ...(local as Record<string, unknown>) }
   const baseWatched = (base as Record<string, unknown>).watched
   const localWatched = (local as Record<string, unknown>).watched
@@ -186,32 +158,23 @@ export async function loadState(stateDir: string): Promise<OrchestratorState | n
 }
 
 export async function writeState(stateDir: string, state: OrchestratorState): Promise<void> {
-  await mkdir(stateDir, { recursive: true })
-  const tmp = join(stateDir, `.state.${process.pid}.${Date.now()}.tmp`)
-  try {
-    await Bun.write(tmp, sortedJson(state))
-    await rename(tmp, join(stateDir, 'state.json'))
-  } catch (e) {
-    try { await unlink(tmp) } catch { /* ignore */ }
-    throw e
-  }
+  await writeAtomicJson(stateDir, 'state.json', state)
 }
 
-// Raw atomic write of config.json. Used by `bin/roost init` and tests —
-// dispatcher-side mutations write through mutateConfig (which targets
-// config.local.json instead, keeping config.json reviewer-tracked).
+// `bin/roost init` and tests write config.json directly — dispatcher mutations
+// go through mutateConfig (which targets config.local.json).
 export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
-  await writeAtomic(stateDir, 'config.json', config)
+  await writeAtomicJson(stateDir, 'config.json', config)
 }
 
 export async function writeLocalConfig(stateDir: string, local: OrchestratorConfig): Promise<void> {
-  await writeAtomic(stateDir, 'config.local.json', local)
+  await writeAtomicJson(stateDir, 'config.local.json', local)
 }
 
-async function writeAtomic(stateDir: string, name: string, value: OrchestratorConfig): Promise<void> {
+// tmp must share a filesystem with the target so rename is atomic — os.tmpdir()
+// can be a different mount on macOS.
+async function writeAtomicJson(stateDir: string, name: string, value: unknown): Promise<void> {
   await mkdir(stateDir, { recursive: true })
-  // tmp must share a filesystem with the target so rename is atomic;
-  // os.tmpdir() can be a different mount on macOS.
   const tmp = join(stateDir, `.${name}.${process.pid}.${Date.now()}.tmp`)
   try {
     await Bun.write(tmp, sortedJson(value))
@@ -222,19 +185,12 @@ async function writeAtomic(stateDir: string, name: string, value: OrchestratorCo
   }
 }
 
-// In-process promise queue — serializes concurrent DM handlers (and any
-// future mutators) within the dispatcher process. writeState has no
-// equivalent because only the poll loop writes state; config is
-// multi-writer once DM handlers land.
-// Single-process writer assumption: if a second process writes config
-// concurrently, last-writer-wins. Operator hand-edits while the
-// dispatcher runs are on the operator.
+// In-process serialization of concurrent DM mutations. Cross-process writes
+// are last-writer-wins — operator hand-edits during a live dispatcher are on the operator.
 let configMutex: Promise<void> = Promise.resolve()
 
-// Reads base + local, hands both to the callback, writes only the local
-// overlay back. Callers should mutate `local` for any change they want
-// persisted; `base` is provided so handlers can re-merge inside the
-// callback to see prior in-batch mutations (see dispatcher-dm-handler).
+// Reads base+local, hands both to `fn`, writes only the local overlay.
+// `base` lets handlers re-merge mid-batch for in-batch idempotency.
 export async function mutateConfig(
   stateDir: string,
   fn: (base: OrchestratorConfig, local: OrchestratorConfig) => void | Promise<void>
@@ -245,11 +201,9 @@ export async function mutateConfig(
   try {
     await prev.catch(() => {})
     const [base, local] = await Promise.all([loadConfigBase(stateDir), loadLocalOverlay(stateDir)])
-    // Freeze base so an accidental mutation in `fn` throws at the bug
-    // site instead of silently vanishing on the next write (only `local`
-    // is persisted back to disk). Shallow freeze is enough here — nested
-    // slices that get reached from base mostly arrive through the merged
-    // view (which is cloned in mergePluginSlice for `watched`).
+    // Freeze base so an accidental mutation in `fn` throws at the bug site
+    // (only `local` is persisted). Shallow is enough — nested slices reached
+    // from base arrive through the cloned merged view (see mergePluginSlice).
     Object.freeze(base)
     await fn(base, local)
     await writeLocalConfig(stateDir, local)
@@ -264,10 +218,7 @@ export async function writeHeartbeat(stateDir: string): Promise<void> {
 }
 
 // Dispatcher PID file. JSON `{pid, started_at_ms, cmdline}`. Only `pid` is
-// contractual today — `bin/start-dispatcher` reads it for the front-door
-// liveness check. `started_at_ms` and `cmdline` are written for operator
-// inspection and as the substrate for future tooling (e.g. a shutdown helper)
-// — extend with care once a consumer lands.
+// contractual today; `bin/start-dispatcher` reads it for the liveness check.
 export const DISPATCHER_PID_FILE = 'dispatcher.pid'
 
 export interface DispatcherPidInfo {
@@ -276,9 +227,7 @@ export interface DispatcherPidInfo {
   cmdline: string
 }
 
-// Cross-platform: `ps -p <pid> -o args=` returns the full command line on
-// both darwin and linux. Empty string on dead PID. We grep for a substring
-// (the config-dir arg) to defend against PID recycle.
+// Full command line on darwin and linux; empty on dead PID.
 async function readPsArgs(pid: number): Promise<string> {
   try {
     const { stdout } = await execFileP('ps', ['-p', String(pid), '-o', 'args='])
@@ -288,20 +237,15 @@ async function readPsArgs(pid: number): Promise<string> {
   }
 }
 
-// signal-0 distinguishes "no such process" (ESRCH) from "process exists but
-// you can't signal it" (EPERM, e.g. daemon owned by a different uid). Both
-// kill -0 failures look identical in shell, but in TS we can keep the
-// safer answer: EPERM means alive, treat as not-ours-but-still-running.
+// signal-0 distinguishes ESRCH (dead) from EPERM (alive but owned by another uid).
 function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) {
     return (e as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 
-// Returns the live dispatcher's PID info if the PID file exists, the PID is
-// alive, AND its cmdline includes our stateDir (cheap PID-recycle defense).
-// Returns null if no file, file unreadable, PID dead, or cmdline mismatch —
-// in any of those cases the caller should clean up and proceed to start.
+// PID info iff the file exists, the PID is alive, AND its cmdline includes
+// stateDir (PID-recycle defense). Null on any miss.
 export async function readDispatcherPid(stateDir: string): Promise<DispatcherPidInfo | null> {
   const path = join(stateDir, DISPATCHER_PID_FILE)
   let raw: string
@@ -312,20 +256,14 @@ export async function readDispatcherPid(stateDir: string): Promise<DispatcherPid
     if (typeof info.pid !== 'number') return null
   } catch { return null }
   if (!isAlive(info.pid)) return null
+  // cmdline must reference our stateDir to rule out PID recycle.
   const args = await readPsArgs(info.pid)
-  // cmdline must reference our stateDir to rule out PID recycle. We compare
-  // against the absolute path the daemon recorded — if the operator moved
-  // the dir, the recorded cmdline still pins identity.
   if (!args.includes(stateDir)) return null
   return info
 }
 
-// Write the PID file exclusively (O_EXCL via `wx`). Caller (the daemon) has
-// already verified no live dispatcher owns the stateDir. If the file exists
-// but is stale (held by no live owner), clean it up and retry once.
-//
-// Uses node:fs/promises rather than Bun.write because the latter has no
-// exclusive-create flag — `wx` is the load-bearing primitive here.
+// O_EXCL via `wx` — node:fs/promises rather than Bun.write because the latter
+// has no exclusive-create flag. Stale file (no live owner) → unlink and retry once.
 export async function writeDispatcherPid(stateDir: string): Promise<DispatcherPidInfo> {
   await mkdir(stateDir, { recursive: true })
   const path = join(stateDir, DISPATCHER_PID_FILE)
@@ -352,10 +290,8 @@ export async function removeDispatcherPid(stateDir: string): Promise<void> {
   try { await unlink(join(stateDir, DISPATCHER_PID_FILE)) } catch { /* ignore */ }
 }
 
-// Snapshot of channels the dispatcher believes it's joined to, written each
-// tick alongside the heartbeat. Operators read this to verify the dispatcher
-// is in the channels they expect. Freshness == last successful tick (the
-// dispatcher's view at boundary), not "right now" — see DISPATCHER.md.
+// Per-tick snapshot of joined channels. Freshness == last successful tick,
+// not "right now" — see DISPATCHER.md.
 export async function writeJoinedChannels(stateDir: string, channels: string[]): Promise<void> {
   await mkdir(stateDir, { recursive: true })
   const body = channels.length ? channels.join('\n') + '\n' : ''

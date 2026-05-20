@@ -170,6 +170,26 @@ export function formatCommentEvent(
 
 // ---- PR diff ---------------------------------------------------------------
 
+function linkedSpread(linked: LinkedIssue[]): { linked_issues?: LinkedIssue[] } {
+  return linked.length ? { linked_issues: linked } : {}
+}
+
+function labelDiff(prev: string[] | undefined, cur: string[] | undefined): { added: string[]; removed: string[] } {
+  const prevS = new Set(prev ?? [])
+  const curS = new Set(cur ?? [])
+  return {
+    added: [...curS].filter(l => !prevS.has(l)).sort(),
+    removed: [...prevS].filter(l => !curS.has(l)).sort(),
+  }
+}
+
+// New ids in `cur` not present in `prev`, sorted ascending. Used for all
+// three comment/review feeds — PRs (review+conversation+reviews) and issues.
+function newIds(prev: number[] | undefined, cur: Record<number, unknown>): number[] {
+  const prevSet = new Set(prev ?? [])
+  return Object.keys(cur).map(Number).filter(id => !prevSet.has(id)).sort((a, b) => a - b)
+}
+
 export function diffPr(
   prev: PrSnap,
   cur: PrSnapInternal,
@@ -179,7 +199,7 @@ export function diffPr(
   const n = cur.number
   const repo = cur.repo
   const linked = cur.linked_issues ?? []
-  const base = { repo, pr: n, url: cur.url ?? '', title: cur.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
+  const base = { repo, pr: n, url: cur.url ?? '', title: cur.title ?? '', ...linkedSpread(linked) }
 
   if (linked.length === 0 && !prev.warned_no_linked) events.push({ kind: 'pr_no_linked_issues', ...base })
 
@@ -188,45 +208,34 @@ export function diffPr(
   if (!prev.merged && cur.merged) events.push({ kind: 'pr_merged', ...base })
   else if (prev.state === 'OPEN' && cur.state === 'CLOSED' && !cur.merged) events.push({ kind: 'pr_closed', ...base })
 
-  const prevLabels = new Set(prev.labels ?? [])
-  const curLabels = new Set(cur.labels ?? [])
-  const added = [...curLabels].filter(l => !prevLabels.has(l)).sort()
-  const removed = [...prevLabels].filter(l => !curLabels.has(l)).sort()
+  const { added, removed } = labelDiff(prev.labels, cur.labels)
   if (added.length || removed.length) {
     events.push({ kind: 'labels_changed', subject: 'pr', added, removed, ...base } as LabelEvent)
   }
 
-  const prevHead = prev.head_oid
   const curHead = cur.head_oid
-  const headChanged = prevHead !== curHead
+  const headChanged = prev.head_oid !== curHead
   const prevCi = prev.ci_state
   const curCi = cur.ci_state
+  const ciBase = { repo, pr: n, url: cur.url ?? '', head_oid: curHead, ...linkedSpread(linked) }
   if (headChanged && (curCi === 'SUCCESS' || curCi === 'FAILURE')) {
-    events.push({ kind: 'ci_transitioned', repo, pr: n, url: cur.url ?? '', from: 'PENDING', to: curCi, head_oid: curHead, ...(linked.length ? { linked_issues: linked } : {}) } as CiEvent)
+    events.push({ kind: 'ci_transitioned', from: 'PENDING', to: curCi, ...ciBase } as CiEvent)
   } else if (!headChanged && prevCi !== curCi) {
-    events.push({ kind: 'ci_transitioned', repo, pr: n, url: cur.url ?? '', from: prevCi, to: curCi, head_oid: curHead, ...(linked.length ? { linked_issues: linked } : {}) } as CiEvent)
+    events.push({ kind: 'ci_transitioned', from: prevCi, to: curCi, ...ciBase } as CiEvent)
   }
 
-  const prevRc = new Set(prev.seen_review_comment_ids ?? [])
-  for (const cid of [...Object.keys(cur._review_comments_by_id)].map(Number).filter(id => !prevRc.has(id)).sort((a, b) => a - b)) {
-    events.push(formatCommentEvent(cur._review_comments_by_id[cid] as GhComment, {
-      kind: 'pr_review_comment', repo, pr: n, url: cur.url ?? '', agentLogins, linkedIssues: linked,
-    }))
+  const commentOpts = { repo, pr: n, url: cur.url ?? '', agentLogins, linkedIssues: linked }
+  for (const cid of newIds(prev.seen_review_comment_ids, cur._review_comments_by_id)) {
+    events.push(formatCommentEvent(cur._review_comments_by_id[cid] as GhComment, { kind: 'pr_review_comment', ...commentOpts }))
+  }
+  for (const cid of newIds(prev.seen_conversation_comment_ids, cur._conversation_comments_by_id)) {
+    events.push(formatCommentEvent(cur._conversation_comments_by_id[cid] as GhComment, { kind: 'pr_conversation_comment', ...commentOpts }))
   }
 
-  const prevCc = new Set(prev.seen_conversation_comment_ids ?? [])
-  for (const cid of [...Object.keys(cur._conversation_comments_by_id)].map(Number).filter(id => !prevCc.has(id)).sort((a, b) => a - b)) {
-    events.push(formatCommentEvent(cur._conversation_comments_by_id[cid] as GhComment, {
-      kind: 'pr_conversation_comment', repo, pr: n, url: cur.url ?? '', agentLogins, linkedIssues: linked,
-    }))
-  }
-
-  const prevRev = new Set(prev.seen_review_ids ?? [])
-  for (const rid of [...Object.keys(cur._reviews_by_id)].map(Number).filter(id => !prevRev.has(id)).sort((a, b) => a - b)) {
+  for (const rid of newIds(prev.seen_review_ids, cur._reviews_by_id)) {
     const review = cur._reviews_by_id[rid] as GhReview
     const reviewAuthor = review.user?.login
-    const isAgentAuthor = Boolean(agentLogins?.size && reviewAuthor && agentLogins.has(reviewAuthor))
-    const revEv: ReviewEvent = {
+    events.push({
       kind: 'pr_review_submitted',
       repo, pr: n, url: cur.url ?? '',
       review_id: rid,
@@ -235,10 +244,9 @@ export function diffPr(
       state: (review.state ?? '').toUpperCase(),
       body: review.body ?? '',
       body_preview: (review.body ?? '').slice(0, 280),
-      is_worker_reply: isAgentAuthor,
-      ...(linked.length ? { linked_issues: linked } : {}),
-    }
-    events.push(revEv)
+      is_worker_reply: Boolean(agentLogins?.size && reviewAuthor && agentLogins.has(reviewAuthor)),
+      ...linkedSpread(linked),
+    } as ReviewEvent)
   }
 
   return events
@@ -254,24 +262,19 @@ export function diffIssue(
   const events: OrchestratorEvent[] = []
   const n = cur.number
   const repo = cur.repo
+  const url = cur.url ?? ''
 
   if (prev.state !== cur.state) {
-    events.push({ kind: 'issue_state_changed', repo, issue: n, url: cur.url ?? '', from: prev.state, to: cur.state } as StateChangeEvent)
+    events.push({ kind: 'issue_state_changed', repo, issue: n, url, from: prev.state, to: cur.state } as StateChangeEvent)
   }
 
-  const prevLabels = new Set(prev.labels ?? [])
-  const curLabels = new Set(cur.labels ?? [])
-  const added = [...curLabels].filter(l => !prevLabels.has(l)).sort()
-  const removed = [...prevLabels].filter(l => !curLabels.has(l)).sort()
+  const { added, removed } = labelDiff(prev.labels, cur.labels)
   if (added.length || removed.length) {
-    events.push({ kind: 'labels_changed', subject: 'issue', added, removed, repo, issue: n, url: cur.url ?? '' } as LabelEvent)
+    events.push({ kind: 'labels_changed', subject: 'issue', added, removed, repo, issue: n, url } as LabelEvent)
   }
 
-  const prevC = new Set(prev.seen_comment_ids ?? [])
-  for (const cid of [...Object.keys(cur._comments_by_id)].map(Number).filter(id => !prevC.has(id)).sort((a, b) => a - b)) {
-    events.push(formatCommentEvent(cur._comments_by_id[cid] as GhComment, {
-      kind: 'issue_comment', repo, issue: n, url: cur.url ?? '', agentLogins,
-    }))
+  for (const cid of newIds(prev.seen_comment_ids, cur._comments_by_id)) {
+    events.push(formatCommentEvent(cur._comments_by_id[cid] as GhComment, { kind: 'issue_comment', repo, issue: n, url, agentLogins }))
   }
 
   return events

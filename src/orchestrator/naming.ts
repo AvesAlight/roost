@@ -1,20 +1,5 @@
-// Project-namespaced names for the roost conventions. Multi-project hygiene
-// requires every per-project artifact (IRC nick, IRC channel, tmux session)
-// to carry a project prefix so two projects sharing one ergo + one tmux do
-// not collide. Single source of truth for the prefix shape.
-//
-// Format: project-first (`#<project>-leads`, `#<project>-issue-N`,
-// `<project>-worker-N`). Project-first groups every channel for one project
-// together in irssi/weechat `/list`, which is the dogfooding ergonomic.
-//
-// Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment
-// between project and role in every per-issue artifact:
-// `#<project>-<slug>-issue-<N>`, `<project>-<slug>-worker-<N>`,
-// `<project>-<slug>-reviewer-<N>`. The slug is the lowercased repo basename
-// (`Owner/Foo` → `foo`). Slug-after-project groups every artifact for one
-// repo together in `/list`. Cross-org name overlap (`Org1/foo` + `Org2/foo`)
-// is a known footgun. Single-repo mode (with `config.repo` set) keeps the
-// bare `<project>-issue-<N>` shape.
+// Project-namespaced names. Single source of truth for the prefix shape;
+// operator-facing description lives in DISPATCHER.md.
 
 import type { OrchestratorConfig } from './config.js'
 
@@ -32,10 +17,8 @@ export function validateProject(project: string): void {
   }
 }
 
-// Falls back to the basename of `repo` if `project` is unset, so existing
-// configs with `repo: "Owner/name"` keep working without a hand-edit.
-// Multi-mode (no `config.repo`) requires `config.project` set explicitly —
-// there is no inherit target.
+// Falls back to the basename of `repo` if `project` is unset. Multi-mode
+// (no `config.repo`) requires `config.project` set — no inherit target.
 export function defaultProject(config: OrchestratorConfig): string {
   if (config.project) {
     validateProject(config.project)
@@ -48,14 +31,13 @@ export function defaultProject(config: OrchestratorConfig): string {
   throw new Error('no project: multi-repo mode (no `config.repo`) requires `config.project` set in config.json')
 }
 
-// Returns true when the config is in multi-repo mode (no top-level repo).
 export function isMultiRepo(config: OrchestratorConfig): boolean {
   return !config.repo
 }
 
-// Lowercased basename of `Owner/Repo`. Must match the project pattern (since
-// the slug is interpolated into nicks/channels). Cross-org collisions
-// (`Owner1/foo` + `Owner2/foo`) are a known footgun.
+// Lowercased basename of `Owner/Repo` — interpolated into nicks/channels, so
+// must match the project pattern. Cross-org overlap (`Org1/foo` + `Org2/foo`)
+// is a known footgun.
 export function repoSlug(repo: string): string {
   const base = repo.split('/').pop()?.toLowerCase() ?? ''
   if (!PROJECT_PATTERN.test(base)) {
@@ -66,9 +48,8 @@ export function repoSlug(repo: string): string {
   return base
 }
 
-// Returns the slug segment for an entry's repo in the active mode. `undefined`
-// in single-repo mode (callers omit the segment); the lowercased basename in
-// multi-repo mode.
+// Slug segment for an entry's repo in the active mode — undefined in single-repo
+// mode (callers omit the segment), repoSlug in multi-repo mode.
 export function channelSlug(config: OrchestratorConfig, repo: string | undefined): string | undefined {
   if (!isMultiRepo(config)) return undefined
   if (!repo) {

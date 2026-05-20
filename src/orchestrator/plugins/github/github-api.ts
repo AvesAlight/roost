@@ -1,8 +1,7 @@
 import type { PluginLogger } from '../../plugin.js'
 
-// Transient stderr classifier — patterns we'll retry on. Anything else
-// (404/401/422/etc.) throws on the first attempt. 422 is logged verbatim
-// in spawnGh so a 422-as-race can be spotted in dispatcher logs.
+// Stderr patterns we retry on. 404/401/422/etc. throw on first attempt; 422
+// is logged verbatim in spawnGh so a 422-as-race shows in dispatcher logs.
 const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
   { re: /HTTP 5\d\d/i, label: 'http-5xx' },
   { re: /HTTP 429/i, label: 'http-429-rate-limit' },
@@ -36,9 +35,8 @@ export class GhError extends Error {
   }
 }
 
-// Single gh attempt — runs the subprocess and parses output. Throws GhError
-// on non-zero exit. Default implementation of SpawnDeps.exec; tests inject
-// a fake to avoid spawning a real gh.
+// Default SpawnDeps.exec — runs gh once, parses output, throws GhError on
+// non-zero exit. Tests inject a fake to avoid spawning a real gh.
 async function runGhOnce(args: string[]): Promise<unknown> {
   const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
   const [out, errOut] = await Promise.all([
@@ -62,14 +60,12 @@ async function runGhOnce(args: string[]): Promise<unknown> {
 }
 
 export interface SpawnDeps {
-  // log is required so every gh call has a real sink — no module-globalish
-  // default. Plugins thread their factory-supplied logger down through here.
+  // log is required — every gh call gets a real sink.
   log: PluginLogger
-  // Each option is injectable so tests can pin behavior (no real sleeps, no
-  // real gh, deterministic jitter).
+  // Injectable for tests (no real sleeps/gh, deterministic jitter).
   sleep?: (ms: number) => Promise<void>
-  attempts?: number          // total tries including the first; default 3
-  baseMs?: number            // first backoff window; default 1000
+  attempts?: number          // total tries; default 3
+  baseMs?: number            // first backoff; default 1000
   jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
   random?: () => number      // 0..1; default Math.random
   exec?: (args: string[]) => Promise<unknown>  // default runGhOnce
@@ -91,8 +87,7 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
     try {
       return await exec(args)
     } catch (e) {
-      // Non-GhError surfaces an upstream contract problem (missing gh binary,
-      // bun spawn crash, etc.) — bypass retry.
+      // Non-GhError = upstream contract bug (missing gh, spawn crash) — bypass retry.
       if (!(e instanceof GhError)) throw e
       if (HTTP_422.test(e.stderr)) {
         log(`gh-retry: ${cmd} HTTP 422 (non-transient) — stderr verbatim:\n${e.stderr}\n`)
@@ -122,17 +117,14 @@ export interface RateLimitInfo {
   resetAt: number  // unix seconds
 }
 
-// Fetches the current GH rate limit via `gh api /rate_limit` (exempt endpoint —
-// does not consume a token). Returns null on any failure; never throws.
-// `attempts: 1` because this is observability — we don't want retries burning
-// more of the budget we're trying to observe.
+// `gh api /rate_limit` — exempt endpoint, no token cost. `attempts: 1` because
+// retries would burn the budget we're trying to measure. Null on any failure.
 export async function fetchRateLimit(
   log: PluginLogger,
   deps?: Partial<SpawnDeps>
 ): Promise<RateLimitInfo | null> {
   try {
-    // `attempts: 1` is last so deps can't accidentally override it — this call should
-    // never burn retries from the same budget it's measuring.
+    // `attempts: 1` is last so deps can't accidentally override it.
     const raw = await spawnGh(['api', '/rate_limit'], { log, ...deps, attempts: 1 })
     if (raw == null || typeof raw !== 'object') return null
     const resp = raw as Record<string, unknown>
@@ -144,15 +136,11 @@ export async function fetchRateLimit(
   }
 }
 
-// Rolling window for rate computation — 5 minutes gives a stable average
-// across ticks while still catching genuine sustained spikes.
+// 5 minute rolling window — stable cross-tick average without missing spikes.
 export const RATE_LIMIT_WINDOW_MS = 5 * 60_000
 
-// Pure trajectory computation. Returns a warning string when the rolling
-// consumption rate predicts exhaustion before the reset boundary; null otherwise.
-// `history` is a time-ordered (oldest first) array of past observations, already
-// pruned to the rolling window by the caller. Uses history[0] as the anchor so
-// the rate is smoothed across the full window rather than tick-to-tick.
+// Returns a warning string when the rolling rate predicts exhaustion before
+// reset; null otherwise. `history` is window-pruned by the caller, oldest first.
 export function computeRateLimitWarning(
   current: RateLimitInfo,
   history: ReadonlyArray<{ remaining: number; ts: number }>,
@@ -164,7 +152,7 @@ export function computeRateLimitWarning(
   if (consumed <= 0) return null
   const intervalMs = now - anchor.ts
   if (intervalMs <= 0) return null
-  // Require at least half the window of history before trusting the rate estimate.
+  // Need at least half the window before trusting the rate estimate.
   if (intervalMs < RATE_LIMIT_WINDOW_MS / 2) return null
   const ratePerMin = consumed / (intervalMs / 60_000)
   const minToReset = (current.resetAt * 1000 - now) / 60_000
@@ -230,9 +218,8 @@ export interface GhIssue {
   labels?: GhLabel[]
 }
 
-// Repo-issues feed shape. The `/repos/{owner}/{repo}/issues` endpoint returns
-// both issues and PRs; `pull_request` is the marker for filtering PRs out at
-// the call site (see GhClient.fetchRepoOpenIssues).
+// `/repos/{owner}/{repo}/issues` returns both issues and PRs — `pull_request`
+// is the marker for filtering PRs out (see fetchRepoOpenIssues).
 export interface GhRepoIssue {
   number?: number
   title?: string
@@ -242,9 +229,8 @@ export interface GhRepoIssue {
   pull_request?: Record<string, unknown>
 }
 
-// Repo-commits feed shape. `/repos/{owner}/{repo}/commits` returns newest-first.
-// We only consume sha, html_url, and the message subject; the rest of the
-// payload is intentionally untyped to keep us insulated from GH schema drift.
+// `/repos/{owner}/{repo}/commits` returns newest-first. We only consume sha,
+// html_url, and the message subject — the rest stays untyped vs schema drift.
 export interface GhCommit {
   sha?: string
   html_url?: string
@@ -298,11 +284,8 @@ export function labelNames(labels: GhLabel[] | null | undefined): string[] {
     .sort()
 }
 
-// GhClient — per-plugin handle that owns the PluginLogger and exposes the
-// fetch surface as instance methods. Every gh call lands in spawnGh via the
-// private api()/graphql() shape helpers, so retry stays the universal contract.
-// Plugins construct one at boot (see GhPluginBase) and hand it to a per-tick
-// GhScraper instead of threading `log` through each callsite.
+// Per-plugin handle owning the PluginLogger. Every fetch lands in spawnGh via
+// the private api()/graphql() helpers, so retry stays universal.
 export class GhClient {
   constructor(private readonly log: PluginLogger) {}
 
@@ -364,10 +347,8 @@ export class GhClient {
     return (await this.api(`repos/${repo}/pulls/${number}/reviews?per_page=100`, true) ?? []) as GhReview[]
   }
 
-  // Returns `{repo, number}` per linked issue — `closingIssuesReferences` can
-  // cross repos (a PR in repo A closing an issue in repo B), so the repo is
-  // load-bearing for downstream channel routing. Sorted by `(repo, number)`
-  // for deterministic order.
+  // `closingIssuesReferences` can cross repos, so each entry carries its own
+  // repo (load-bearing for routing). Sorted by `(repo, number)`.
   async fetchPrLinkedIssues(repo: string, number: number): Promise<Array<{ repo: string; number: number }>> {
     const [owner, name] = repo.split('/', 2)
     const query = (
@@ -397,18 +378,14 @@ export class GhClient {
     return (await this.api(`repos/${repo}/issues/${number}/comments?per_page=100`, true) ?? []) as GhComment[]
   }
 
-  // Lists open issues across the repo. The GH `/repos/{repo}/issues` endpoint
-  // returns PRs as well, so we filter them out via the `pull_request` marker.
-  // Paginated; the response is the de-duped, PR-stripped open-issue set.
+  // PR-stripped open-issue set (the endpoint returns both).
   async fetchRepoOpenIssues(repo: string): Promise<GhRepoIssue[]> {
     const raw = (await this.api(`repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
     return raw.filter(i => !i.pull_request)
   }
 
-  // Lists commits on `branch` (and optionally restricted to a single `path`).
-  // Single page, capped at `perPage` — the caller's poll cadence + the cap
-  // bound the watermark; pagination would only matter on multi-page bursts,
-  // which the caller logs (see GitHubCommitsPlugin).
+  // Single page capped at `perPage` — multi-page bursts are caller-logged
+  // (see GitHubCommitsPlugin).
   async fetchRepoCommits(
     repo: string,
     branch: string,
