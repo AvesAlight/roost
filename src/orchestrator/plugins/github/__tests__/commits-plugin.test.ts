@@ -2,6 +2,7 @@ import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubCommitsPlugin, type CommitsPluginState } from '../commits-plugin.js'
 import { GhClient, type GhCommit } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
+import { stubRateLimit } from './gh-test-helpers.js'
 
 function commit(sha: string, subject: string): GhCommit {
   return {
@@ -33,6 +34,8 @@ function onelineText(payload: { kind: 'oneline'; text: string } | unknown): stri
 }
 
 describe('GitHubCommitsPlugin.runTick', () => {
+  stubRateLimit()
+
   it('seeds without emitting on first run and records the head sha per entry', async () => {
     const spy = stubFetch(() => [commit('aaa1111', 'bump 1'), commit('bbb2222', 'bump 0')])
     try {

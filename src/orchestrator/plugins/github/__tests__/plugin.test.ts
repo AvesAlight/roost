@@ -9,6 +9,7 @@ import type { OrchestratorConfig } from '../../../config.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import { GhScraper } from '../scraper.js'
 import type { OrchestratorEvent } from '../diff.js'
+import { stubRateLimit } from './gh-test-helpers.js'
 
 function fakePrSnap(overrides: Partial<PrSnap> = {}): PrSnap {
   return {
@@ -28,6 +29,8 @@ function fakeIssueSnap(overrides: Partial<IssueSnap> = {}): IssueSnap {
 }
 
 describe('GitHubPrsPlugin.runTick', () => {
+  stubRateLimit()
+
   it('routes a PR comment to linked-issue channels unioned with entry channels', async () => {
     const commentEv: OrchestratorEvent = {
       kind: 'pr_review_comment',
@@ -163,6 +166,8 @@ describe('GitHubPrsPlugin.runTick', () => {
 })
 
 describe('GitHubIssuesPlugin.runTick', () => {
+  stubRateLimit()
+
   it('emits now-watching to project channel on issue_added_to_watch', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
@@ -290,6 +295,8 @@ describe('desiredChannels', () => {
 })
 
 describe('multi-repo runTick — slug-aware channel routing', () => {
+  stubRateLimit()
+
   it('PR event routes to the slugged linked-issue channel', async () => {
     const commentEv: OrchestratorEvent = {
       kind: 'pr_review_comment',

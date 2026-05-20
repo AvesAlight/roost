@@ -2,6 +2,7 @@ import { describe, it, expect, spyOn } from 'bun:test'
 import { GitHubNewIssuesPlugin, type NewIssuesPluginState } from '../new-issues-plugin.js'
 import { GhClient, type GhRepoIssue } from '../github-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
+import { stubRateLimit } from './gh-test-helpers.js'
 
 function issue(n: number, overrides: Partial<GhRepoIssue> = {}): GhRepoIssue {
   return {
@@ -34,6 +35,8 @@ function prevState(numbers: number[], repo = 'org/repo'): NewIssuesPluginState {
 }
 
 describe('GitHubNewIssuesPlugin.runTick', () => {
+  stubRateLimit()
+
   it('seeds without emitting on first run (prev === null)', async () => {
     const spy = stubFetch([issue(1), issue(2), issue(3)])
     try {
