@@ -4,6 +4,7 @@
 export {
   BasePlugin,
   registerPlugin,
+  type ParseResult,
   type Plugin,
   type PluginConfig,
   type PluginFactory,
@@ -14,3 +15,11 @@ export {
 } from './plugin.js'
 
 export type { Command } from './dispatcher-dm-handler.js'
+
+export {
+  tryClaimPerN,
+  tryClaimPerRepo,
+  type PerNCommand,
+  type PerRepoCommand,
+  type Verb,
+} from './plugins/grammar.js'

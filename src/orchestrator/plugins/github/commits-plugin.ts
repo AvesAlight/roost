@@ -15,9 +15,10 @@
 
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
-import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
+import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import type { GhCommit } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -72,16 +73,17 @@ function formatCommit(entry: CommitWatchEntry, commit: GhCommit, sha: string): s
 export class GitHubCommitsPlugin extends GhPluginBase {
   readonly name = 'github-commits'
 
+  parseCommand(line: string): ParseResult | null {
+    return tryClaimPerRepo('repo', line)
+  }
+
   handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
     if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
-    if (cmd.kind === 'watch-repo') {
-      if (cmd.target !== 'repo') return null
-      return this.applyWatchRepo(merged, local, cmd.repo, cmd.branch, cmd.path, cmd.channels)
-    }
-    if (cmd.kind === 'unwatch-repo') {
-      if (cmd.target !== 'repo') return null
-      return this.applyUnwatchRepo(merged, local, cmd.repo, cmd.branch, cmd.path)
+    if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
+      const c = cmd.cmd as PerRepoCommand
+      if (c.verb === 'watch') return this.applyWatchRepo(merged, local, c.repo, c.branch, c.path, c.channels)
+      return this.applyUnwatchRepo(merged, local, c.repo, c.branch, c.path)
     }
     return null
   }
