@@ -21,7 +21,7 @@ set -u
 # if we ever tune it. Single-line, semicolon-separated — passed as the
 # `/compact` argument; the compactor treats it as a behavior hint for the
 # summary it produces (not verbatim retention).
-DIRECTIVE='retain: agent role and IRC nick; channels currently joined; in-flight GitHub issue and PR numbers and the state of each (worker spawned, draft, reviewed, merged); recent decisions, design pivots, and blockers from the project leads channel; pending work the agent committed to or is waiting on'
+DIRECTIVE='retain: agent role and IRC nick; channels currently joined; in-flight GitHub issue and PR numbers and the state of each (worker spawned, draft, reviewed, merged), each worker'"'"'s nick (<project>-worker-<issue-number>), and each reviewer'"'"'s nick (<project>-reviewer-<PR-number>); recently-completed issues (post-merge, pre-cleanup) with their worker and reviewer nicks; recent decisions, design pivots, and blockers from the project leads channel; pending work the agent committed to or is waiting on'
 
 log() { echo "roost-compact-hook: $*" >&2; }
 

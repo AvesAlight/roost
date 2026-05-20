@@ -37,7 +37,7 @@ Every per-project artifact carries a `<project>-` prefix:
 - Leads channel: `#<project>-leads`
 - Issue channel: `#<project>-issue-<N>`
 - Worker nick: `<project>-worker-<N>`
-- Reviewer nick: `<project>-reviewer-<N>`
+- Reviewer nick: `<project>-reviewer-<PR>`
 - Associate-pm nick: `<project>-apm`
 - Dispatcher nick: `<project>-dispatcher` (set in `.orchestrator/config.json`)
 

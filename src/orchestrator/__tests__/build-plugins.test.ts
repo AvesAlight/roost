@@ -36,7 +36,7 @@ describe('buildPlugins', () => {
       project: 'proj',
       repo: 'org/repo',
       plugins: {
-        'github-new-issues': {},
+        'github-new-issues': { watched: [] },
         'github-prs': { watched: [] },
         'github-issues': { watched: [] },
       },
