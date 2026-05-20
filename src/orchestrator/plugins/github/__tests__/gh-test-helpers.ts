@@ -3,8 +3,6 @@ import { GhPluginBase } from '../base.js'
 
 // Call inside a describe block to suppress the real `gh api /rate_limit`
 // subprocess that observeRateLimit fires at the end of every runTick.
-// Affects: commits-plugin.test.ts, new-issues-plugin.test.ts,
-//          the runTick describe blocks in plugin.test.ts.
 export function stubRateLimit(): void {
   let spy: { mockRestore(): void }
   beforeAll(() => {
