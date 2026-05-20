@@ -51,11 +51,15 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     return [...chans]
   }
 
-  // Slice's `repo` inherits from `config.repo` in single mode and is required
-  // in multi mode. Mirrors the entry-level rule the per-watch plugins enforce.
+  // Each watched entry's repo must equal config.repo when set (single mode);
+  // the type guarantees repo is present, so the multi-mode missing-repo branch
+  // never fires for this plugin. Mirrors the gh-base watched check.
   assertRepoMode(config: OrchestratorConfig): void {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
-    assertEntryRepoMode(this.name, '(slice)', slice.repo, config.repo)
+    const topRepo = config.repo
+    for (const entry of slice.watched ?? []) {
+      assertEntryRepoMode(this.name, `(repo=${entry.repo})`, entry.repo, topRepo)
+    }
   }
 
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {

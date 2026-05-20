@@ -540,24 +540,34 @@ describe('assertRepoMode — GhBase (PRs/issues)', () => {
 })
 
 describe('assertRepoMode — GitHubNewIssuesPlugin', () => {
-  it('accepts a single-repo slice that omits repo (inherits config.repo)', () => {
-    const cfg: OrchestratorConfig = { project: 'p', repo: 'org/main', plugins: { 'github-new-issues': {} } }
+  it('accepts a single-repo slice whose entries all match config.repo', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p', repo: 'org/main',
+      plugins: { 'github-new-issues': { watched: [{ repo: 'org/main' }] } },
+    }
     expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
   })
 
-  it('rejects a single-repo slice that pins a divergent repo', () => {
+  it('rejects a single-repo entry that pins a divergent repo', () => {
     const cfg: OrchestratorConfig = {
       project: 'p', repo: 'org/main',
-      plugins: { 'github-new-issues': { repo: 'org/other' } },
+      plugins: { 'github-new-issues': { watched: [{ repo: 'org/other' }] } },
     }
     expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg))
-      .toThrow(/single-repo mode.*github-new-issues \(slice\) pins repo=org\/other/)
+      .toThrow(/single-repo mode.*github-new-issues \(repo=org\/other\) pins repo=org\/other/)
   })
 
-  it('rejects a multi-repo slice missing repo', () => {
+  it('accepts a multi-repo slice (every entry carries repo by type)', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'p',
+      plugins: { 'github-new-issues': { watched: [{ repo: 'org/a' }, { repo: 'org/b' }] } },
+    }
+    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
+  })
+
+  it('passes through when the slice has no watched entries', () => {
     const cfg: OrchestratorConfig = { project: 'p', plugins: { 'github-new-issues': {} } }
-    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg))
-      .toThrow(/multi-repo mode.*github-new-issues \(slice\) is missing one/)
+    expect(() => new GitHubNewIssuesPlugin('#proj').assertRepoMode(cfg)).not.toThrow()
   })
 })
 
