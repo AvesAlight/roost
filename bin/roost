@@ -773,13 +773,12 @@ cmd_spawn() {
     prompt_file="${ROOST_DATA_DIR}/prompt.txt"
     printf '%s' "${prompt_text}" > "${prompt_file}"
   fi
-  if [ "${steer_compact}" -eq 1 ]; then
-    # Tell the PreCompact hook which tmux session to inject into. Without
-    # this the hook would have to guess from ROOST_IRC_NICK + the default
-    # ${SESSION_PREFIX}${nick} convention — and would silently miss when
-    # the operator passed -s/--session NAME with a non-default name.
-    printf '%s' "${session_name}" > "${ROOST_DATA_DIR}/session-name.txt"
-  fi
+  # Tell compact hooks which tmux session to inject into. Without this they
+  # would have to guess from ROOST_IRC_NICK + the ${SESSION_PREFIX}${nick}
+  # convention — and would silently miss when the operator passes -s/--session
+  # NAME with a non-default name. Written unconditionally: PostCompact is
+  # always wired and reads this file too.
+  printf '%s' "${session_name}" > "${ROOST_DATA_DIR}/session-name.txt"
   # Per-session roost-settings.json. Written before the tmux/ircd preflight
   # so test seams can read it on preflight failure. PostCompact + SessionStart
   # matcher=compact are always wired; PreCompact is opt-in via --steer-compact;

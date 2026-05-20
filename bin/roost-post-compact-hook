@@ -1,8 +1,16 @@
 #!/bin/sh
-# PostCompact hook — signal MCP to replay missed messages (SIGUSR2).
+# PostCompact hook — two jobs after compaction returns:
+# 1. signal MCP to replay missed messages (SIGUSR2)
+# 2. inject a channel-membership verification directive into the tmux pane
 #
 # Wired by bin/roost at spawn time via roost-settings.json. Never exits
 # non-zero — a hook failure must not block compaction.
+
+# Directive injected into the agent's tmux pane after compaction. One place
+# to edit — references PreCompact's "channels currently joined" retain hint
+# so the agent knows what to compare against.
+DIRECTIVE='call channel_list to confirm your channel membership matches the "channels currently joined" section of the compact summary; rejoin any that are missing'
+
 if [ -z "$ROOST_DATA_DIR" ]; then
   echo "roost-post-compact-hook: ROOST_DATA_DIR not set, skipping" >&2
   exit 0
@@ -15,19 +23,44 @@ if [ -d "${ROOST_DATA_DIR}/compact-inject.lock.d" ]; then
 fi
 pid_file="$ROOST_DATA_DIR/mcp.pid"
 if [ ! -f "$pid_file" ]; then
-  echo "roost-post-compact-hook: $pid_file not found, skipping" >&2
-  exit 0
-fi
-pid=$(cat "$pid_file")
-case "$pid" in
-  ''|*[!0-9]*)
-    echo "roost-post-compact-hook: malformed pid in $pid_file: '$pid', skipping" >&2
-    exit 0
-    ;;
-esac
-if kill -USR2 "$pid" 2>/dev/null; then
-  echo "roost-post-compact-hook: sent SIGUSR2 to MCP pid $pid" >&2
+  echo "roost-post-compact-hook: $pid_file not found, skipping SIGUSR2" >&2
 else
-  echo "roost-post-compact-hook: kill -USR2 $pid failed (no such process?)" >&2
+  pid=$(cat "$pid_file")
+  case "$pid" in
+    ''|*[!0-9]*)
+      echo "roost-post-compact-hook: malformed pid in $pid_file: '$pid', skipping SIGUSR2" >&2
+      ;;
+    *)
+      if kill -USR2 "$pid" 2>/dev/null; then
+        echo "roost-post-compact-hook: sent SIGUSR2 to MCP pid $pid" >&2
+      else
+        echo "roost-post-compact-hook: kill -USR2 $pid failed (no such process?)" >&2
+      fi
+      ;;
+  esac
+fi
+# Inject channel-membership verification directive if the tmux session is reachable.
+# Buffer name uses $$ to avoid collisions if two PostCompact hooks overlap.
+nick="${ROOST_IRC_NICK:-}"
+if [ -n "$nick" ]; then
+  session_file="${ROOST_DATA_DIR}/session-name.txt"
+  if [ -s "$session_file" ]; then
+    session_name="$(cat "$session_file")"
+  else
+    session_name="roost-${nick}"
+  fi
+  if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
+    (
+      # Small buffer for the SIGUSR2-triggered MCP replay to start delivering
+      # before the directive fires — agent should see backfilled context first.
+      sleep 0.15
+      buf="roost-post-compact-${nick}-$$"
+      printf '%s' "$DIRECTIVE" | tmux load-buffer -b "$buf" -
+      tmux paste-buffer -t "$session_name" -b "$buf" -p
+      tmux send-keys -t "$session_name" Enter
+      tmux delete-buffer -b "$buf" 2>/dev/null || true
+    ) &
+    echo "roost-post-compact-hook: queued channel-verify directive for $session_name" >&2
+  fi
 fi
 exit 0

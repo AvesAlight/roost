@@ -361,8 +361,9 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test 20: no --steer-compact → no PreCompact entry, no session-name.txt --
+# -- Test 20: no --steer-compact → no PreCompact entry; session-name.txt written
 # Default behavior: claude code's native auto-compact runs unmodified.
+# session-name.txt is written unconditionally (PostCompact reads it too).
 
 setup
 out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
@@ -371,10 +372,10 @@ if [ -n "$data_dir" ] \
     && [ -f "$data_dir/roost-settings.json" ] \
     && ! grep -qF '"PreCompact"' "$data_dir/roost-settings.json" \
     && ! grep -qF 'roost-compact-hook' "$data_dir/roost-settings.json" \
-    && [ ! -f "$data_dir/session-name.txt" ]; then
-  ok "no flag: PreCompact omitted from settings, no session-name.txt"
+    && [ -f "$data_dir/session-name.txt" ]; then
+  ok "no flag: PreCompact omitted from settings, session-name.txt written"
 else
-  fail "no flag: PreCompact omitted from settings, no session-name.txt" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+  fail "no flag: PreCompact omitted from settings, session-name.txt written" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
