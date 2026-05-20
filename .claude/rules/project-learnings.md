@@ -35,3 +35,7 @@ When the lead has approved a specific naming or ordering decision in chat (e.g. 
 ## 2026-05-19: Three repeats of a bug class in one milestone triggers escalation to worker-driven design (from #450)
 
 Three repeats of a bug class in one milestone is the escalation signal — flip from lead-rolled-in fix to worker-driven design with review. Recurrence count, not severity, is what triggers the flip. Cheap fixes on operator-facing surfaces (config files, tracked templates, docs) rarely stay cheap; the cost compounds across every future operator.
+
+## 2026-05-19: Frame "could go either way" design calls as explicit questions, not defended picks (from #433)
+
+When a worker hits a design call mid-plan with two plausible answers, surface it to the lead as an explicit question with the trade-offs spelled out. Don't pick one and defend it. A defended choice typically resurfaces as a rework round in human review; a framed question gets resolved cheaply at plan stage. The asymmetry of conviction is the lever — workers convey "I see two options" rather than "I chose option A," and the lead negotiates before code lands.
