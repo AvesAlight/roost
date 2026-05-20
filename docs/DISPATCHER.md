@@ -62,6 +62,12 @@ remove it — the dispatcher will pick it up via a fresh `watch <N>`.
 There's no automatic migration: refusing to mutate tracked entries is
 the contract, not a bug.
 
+Promoting a local entry to tracked is the reverse: hand-edit
+`config.json` to add it, then DM `unwatch <N>` (or `unwatch repo …` /
+`unwatch new-issues …`) to prune the local copy. Skipping the unwatch
+leaves the same key in both files — concat-merge would scrape it twice
+and `watch list` shows the duplicate.
+
 Fields:
 
 | Field | Meaning |
