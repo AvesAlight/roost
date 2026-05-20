@@ -449,6 +449,23 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
     expect(issues().handleCommand!({}, {}, { kind: 'list' })).toContain('(none)')
   })
 
+  it('list dedupes duplicate numbers (concat-merge artifact) and unions channels', () => {
+    // Simulates the post-upgrade case where the same number lives in both
+    // base and local — the loader concatenates rather than deduping, so
+    // the display layer has to do it.
+    const merged: OrchestratorConfig = {
+      plugins: { 'github-issues': { watched: [
+        { number: 5, channels: ['#a'] },
+        { number: 5, channels: ['#b'] },
+        { number: 6 },
+      ] } },
+    }
+    const out = issues().handleCommand!(merged, {}, { kind: 'list' })!
+    expect(out).toContain('github-issues (2):')
+    expect(out).toContain('  #5 + #a #b')
+    expect(out).toContain('  #6')
+  })
+
   it('help returns this plugin\'s usage block', () => {
     const out = issues().handleCommand!({}, {}, { kind: 'help' })!
     expect(out).toContain('github-issues commands')

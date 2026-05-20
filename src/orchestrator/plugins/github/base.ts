@@ -213,12 +213,28 @@ export abstract class GhBase extends GhPluginBase {
   }
 
   private formatListSection(merged: OrchestratorConfig): string {
+    // Concat-merged watched lists can carry the same number from both
+    // base and local (e.g. post-upgrade reconcile). Dedup by number with
+    // a channel union so the operator-visible reply matches what's
+    // actually being scraped.
     const entries = this.watched(merged)
-    const header = `${this.name} (${entries.length}):`
-    if (!entries.length) return `${header}\n  (none)`
-    const lines = entries.map(e => {
-      const chans = e.channels?.length ? ` + ${e.channels.join(' ')}` : ''
-      return `  #${e.number}${chans}`
+    const byNumber = new Map<number, { number: number; channels: Set<string> }>()
+    const order: number[] = []
+    for (const e of entries) {
+      let bucket = byNumber.get(e.number)
+      if (!bucket) {
+        bucket = { number: e.number, channels: new Set<string>() }
+        byNumber.set(e.number, bucket)
+        order.push(e.number)
+      }
+      for (const c of e.channels ?? []) bucket.channels.add(c)
+    }
+    const header = `${this.name} (${byNumber.size}):`
+    if (!byNumber.size) return `${header}\n  (none)`
+    const lines = order.map(n => {
+      const bucket = byNumber.get(n)!
+      const chans = bucket.channels.size ? ` + ${[...bucket.channels].join(' ')}` : ''
+      return `  #${n}${chans}`
     })
     return [header, ...lines].join('\n')
   }
