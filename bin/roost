@@ -2,7 +2,7 @@
 # roost — manage roost-irc Claude sessions in tmux.
 #
 # Subcommands:
-#   init                    — bootstrap .orchestrator/config.json for a project
+#   init                    — bootstrap .orchestrator/ (config.json + local overlay) for a project
 #   spawn <nick> [options]  — bring up a Claude session on the roost
 #   shutdown <nick>         — kill the tmux session for that nick
 #   list                    — show all roost-prefixed tmux sessions
@@ -61,10 +61,14 @@ usage_init() {
   cat <<EOF
 Usage: roost init [options]
 
-Bootstrap .orchestrator/config.json + .gitignore for a new project and copy
-roost prompt templates to .claude/commands/ and agent definitions to
-.claude/agents/ for local customization.
+Bootstrap .orchestrator/config.json + config.local.json + .gitignore for a
+new project and copy roost prompt templates to .claude/commands/ and agent
+definitions to .claude/agents/ for local customization.
 Autodetects project name, repo, and GitHub user; each value can be overridden.
+
+config.json is tracked (shareable project shape); config.local.json is
+gitignored (dispatcher-mutated overlay for github-prs/github-issues watches
+added via DM). See docs/DISPATCHER.md.
 
 Options:
   --project NAME         Project name (default: basename of cwd, lowercased).
@@ -72,9 +76,9 @@ Options:
                          defaults to the origin remote URL.
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
-  --force                Overwrite everything: config.json, .gitignore,
-                         .claude/commands/ prompt copies, and .claude/agents/
-                         agent copies.
+  --force                Overwrite everything: config.json, config.local.json,
+                         .gitignore, .claude/commands/ prompt copies, and
+                         .claude/agents/ agent copies.
   --force-prompts        Overwrite only .claude/commands/ prompt copies.
                          Does not touch config.json or .gitignore.
   --force-agents         Overwrite only .claude/agents/ agent copies.
@@ -301,8 +305,15 @@ _init_config_json() {
     "$1" "$2" "$3"
 }
 
+# Empty scaffold for the gitignored dispatcher-mutated overlay. The
+# dispatcher writes here when DM commands add github-prs/github-issues
+# watches; operator-set static entries belong in config.json instead.
+_init_config_local_json() {
+  printf '{\n  "plugins": {\n    "github-prs": { "watched": [] },\n    "github-issues": { "watched": [] }\n  }\n}\n'
+}
+
 _init_gitignore() {
-  printf 'state.json\nlast-tick.txt\nlast-error.txt\ndispatcher.pid\njoined-channels.txt\ndispatcher-boot.log\ndaemon.log\n.dispatcher.start.lock\ntoken-snapshots.json\n.token-snapshots.*.tmp\n'
+  printf 'config.local.json\nstate.json\nlast-tick.txt\nlast-error.txt\ndispatcher.pid\njoined-channels.txt\ndispatcher-boot.log\ndaemon.log\n.dispatcher.start.lock\ntoken-snapshots.json\n.token-snapshots.*.tmp\n'
 }
 
 cmd_init() {
@@ -395,6 +406,7 @@ cmd_init() {
   logins_json="${logins_json}]"
 
   local config_path=".orchestrator/config.json"
+  local config_local_path=".orchestrator/config.local.json"
   local gitignore_path=".orchestrator/.gitignore"
   local prompts_dir="${ROOST_DIR}/prompts"
   local commands_dir=".claude/commands"
@@ -419,6 +431,8 @@ cmd_init() {
   if [ "$dry_run" -eq 1 ]; then
     echo "--- ${config_path} ---"
     _init_config_json "$project" "$repo" "$logins_json"
+    echo "--- ${config_local_path} ---"
+    _init_config_local_json
     echo "--- ${gitignore_path} ---"
     _init_gitignore
     if [ "$no_prompts" -eq 0 ] && [ "${#prompt_files[@]}" -gt 0 ]; then
@@ -442,9 +456,13 @@ cmd_init() {
 
   # Decide what would actually be written.
   local write_config=0
+  local write_config_local=0
   local write_gitignore=0
   if [ ! -f "$config_path" ] || [ "$force" -eq 1 ]; then
     write_config=1
+  fi
+  if [ ! -f "$config_local_path" ] || [ "$force" -eq 1 ]; then
+    write_config_local=1
   fi
   if [ ! -f "$gitignore_path" ] || [ "$force" -eq 1 ]; then
     write_gitignore=1
@@ -461,6 +479,10 @@ cmd_init() {
   if [ "$write_config" -eq 1 ]; then
     _init_config_json "$project" "$repo" "$logins_json" > "$config_path"
     echo "Wrote ${config_path}"
+  fi
+  if [ "$write_config_local" -eq 1 ]; then
+    _init_config_local_json > "$config_local_path"
+    echo "Wrote ${config_local_path}"
   fi
   if [ "$write_gitignore" -eq 1 ]; then
     _init_gitignore > "$gitignore_path"

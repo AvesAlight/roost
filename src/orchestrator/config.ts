@@ -61,7 +61,13 @@ function sortedJson(value: unknown): string {
   }, 2) + '\n'
 }
 
-export async function loadConfig(stateDir: string): Promise<OrchestratorConfig> {
+// Two-file split: config.json (tracked, operator/project) + config.local.json
+// (gitignored, dispatcher-mutated overlay). loadConfig returns the merged view;
+// dispatcher writes never touch config.json. Operators can hand-edit either —
+// re-watching a tracked entry is a no-op (idempotent), unwatching one is
+// refused (hand-edit config.json to remove). See DISPATCHER.md.
+
+export async function loadConfigBase(stateDir: string): Promise<OrchestratorConfig> {
   const path = join(stateDir, 'config.json')
   const file = Bun.file(path)
   if (!(await file.exists())) throw new Error(`config missing: ${path}`)
@@ -97,6 +103,62 @@ export function assertEntryRepoMode(
   }
 }
 
+export async function loadLocalOverlay(stateDir: string): Promise<OrchestratorConfig> {
+  const path = join(stateDir, 'config.local.json')
+  const file = Bun.file(path)
+  if (!(await file.exists())) return {}
+  return file.json() as Promise<OrchestratorConfig>
+}
+
+export async function loadConfig(stateDir: string): Promise<OrchestratorConfig> {
+  const [base, local] = await Promise.all([loadConfigBase(stateDir), loadLocalOverlay(stateDir)])
+  return mergeConfigs(base, local)
+}
+
+// Local-wins on conflict for every field except `plugins.<name>.watched`,
+// which is concatenated (both sources contribute live entries). `irc` is
+// merged at the field level so operators can override a single nested key
+// without restating the whole block.
+export function mergeConfigs(base: OrchestratorConfig, local: OrchestratorConfig): OrchestratorConfig {
+  const result: OrchestratorConfig = { ...base }
+  if (local.project !== undefined) result.project = local.project
+  if (local.repo !== undefined) result.repo = local.repo
+  if (local.agent_logins !== undefined) result.agent_logins = local.agent_logins
+  if (local.plugin_paths !== undefined) result.plugin_paths = local.plugin_paths
+  if (base.irc !== undefined || local.irc !== undefined) {
+    result.irc = { ...base.irc, ...local.irc }
+  }
+  if (base.plugins !== undefined || local.plugins !== undefined) {
+    const merged: Record<string, unknown> = {}
+    const names = new Set([
+      ...Object.keys(base.plugins ?? {}),
+      ...Object.keys(local.plugins ?? {}),
+    ])
+    for (const name of names) {
+      const b = base.plugins?.[name]
+      const l = local.plugins?.[name]
+      merged[name] = mergePluginSlice(b, l)
+    }
+    result.plugins = merged
+  }
+  return result
+}
+
+function mergePluginSlice(base: unknown, local: unknown): unknown {
+  if (base == null) return local
+  if (local == null) return base
+  if (typeof base !== 'object' || typeof local !== 'object' || Array.isArray(base) || Array.isArray(local)) {
+    return local
+  }
+  const merged = { ...(base as Record<string, unknown>), ...(local as Record<string, unknown>) }
+  const baseWatched = (base as Record<string, unknown>).watched
+  const localWatched = (local as Record<string, unknown>).watched
+  if (Array.isArray(baseWatched) && Array.isArray(localWatched)) {
+    merged.watched = [...baseWatched, ...localWatched]
+  }
+  return merged
+}
+
 export async function loadState(stateDir: string): Promise<OrchestratorState | null> {
   const path = join(stateDir, 'state.json')
   const file = Bun.file(path)
@@ -125,16 +187,25 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
   }
 }
 
-// Raw atomic write. Use mutateConfig for any read-modify-write — it
-// serializes concurrent callers in-process.
+// Raw atomic write of config.json. Used by `bin/roost init` and tests —
+// dispatcher-side mutations write through mutateConfig (which targets
+// config.local.json instead, keeping config.json reviewer-tracked).
 export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {
+  await writeAtomic(stateDir, 'config.json', config)
+}
+
+export async function writeLocalConfig(stateDir: string, local: OrchestratorConfig): Promise<void> {
+  await writeAtomic(stateDir, 'config.local.json', local)
+}
+
+async function writeAtomic(stateDir: string, name: string, value: OrchestratorConfig): Promise<void> {
   await mkdir(stateDir, { recursive: true })
-  // tmp must share a filesystem with config.json so rename is atomic;
+  // tmp must share a filesystem with the target so rename is atomic;
   // os.tmpdir() can be a different mount on macOS.
-  const tmp = join(stateDir, `.config.${process.pid}.${Date.now()}.tmp`)
+  const tmp = join(stateDir, `.${name}.${process.pid}.${Date.now()}.tmp`)
   try {
-    await Bun.write(tmp, sortedJson(config))
-    await rename(tmp, join(stateDir, 'config.json'))
+    await Bun.write(tmp, sortedJson(value))
+    await rename(tmp, join(stateDir, name))
   } catch (e) {
     try { await unlink(tmp) } catch { /* ignore */ }
     throw e
@@ -150,18 +221,22 @@ export async function writeConfig(stateDir: string, config: OrchestratorConfig):
 // dispatcher runs are on the operator.
 let configMutex: Promise<void> = Promise.resolve()
 
+// Reads base + local, hands both to the callback, writes only the local
+// overlay back. Callers should mutate `local` for any change they want
+// persisted; `base` is provided so handlers can re-merge inside the
+// callback to see prior in-batch mutations (see dispatcher-dm-handler).
 export async function mutateConfig(
   stateDir: string,
-  fn: (config: OrchestratorConfig) => void | Promise<void>
+  fn: (base: OrchestratorConfig, local: OrchestratorConfig) => void | Promise<void>
 ): Promise<void> {
   const prev = configMutex
   let release!: () => void
   configMutex = new Promise(r => { release = r })
   try {
     await prev.catch(() => {})
-    const config = await loadConfig(stateDir)
-    await fn(config)
-    await writeConfig(stateDir, config)
+    const [base, local] = await Promise.all([loadConfigBase(stateDir), loadLocalOverlay(stateDir)])
+    await fn(base, local)
+    await writeLocalConfig(stateDir, local)
   } finally {
     release()
   }

@@ -132,7 +132,9 @@ setup "https://github.com/TestOwner/myproject.git"
 cd "$TDIR"
 dry_out="$(roost_init --dry-run 2>/dev/null)"
 if echo "$dry_out" | grep -q '"project"' \
-    && [ ! -f "${TDIR}/.orchestrator/config.json" ]; then
+    && echo "$dry_out" | grep -q 'config.local.json' \
+    && [ ! -f "${TDIR}/.orchestrator/config.json" ] \
+    && [ ! -f "${TDIR}/.orchestrator/config.local.json" ]; then
   ok "--dry-run: no files written, content printed"
 else
   fail "--dry-run: no files written, content printed"
@@ -211,12 +213,46 @@ teardown
 setup "https://github.com/TestOwner/myproject.git"
 cd "$TDIR"
 roost_init >/dev/null 2>&1
-if grep -q 'state.json'     "${TDIR}/.orchestrator/.gitignore" \
+if grep -q 'config.local.json' "${TDIR}/.orchestrator/.gitignore" \
+    && grep -q 'state.json'     "${TDIR}/.orchestrator/.gitignore" \
     && grep -q 'last-tick.txt'  "${TDIR}/.orchestrator/.gitignore" \
-    && grep -q 'last-error.txt' "${TDIR}/.orchestrator/.gitignore"; then
-  ok ".gitignore: correct entries"
+    && grep -q 'last-error.txt' "${TDIR}/.orchestrator/.gitignore" \
+    && ! grep -q '^config\.json$' "${TDIR}/.orchestrator/.gitignore"; then
+  ok ".gitignore: covers config.local.json + state, leaves config.json tracked"
 else
-  fail ".gitignore: correct entries"
+  fail ".gitignore: covers config.local.json + state, leaves config.json tracked"
+fi
+cd - >/dev/null
+teardown
+
+# --- config.local.json scaffold written ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+roost_init >/dev/null 2>&1
+if [ -f "${TDIR}/.orchestrator/config.local.json" ] \
+    && grep -q '"github-prs"' "${TDIR}/.orchestrator/config.local.json" \
+    && grep -q '"github-issues"' "${TDIR}/.orchestrator/config.local.json"; then
+  ok "config.local.json: scaffold written"
+else
+  fail "config.local.json: scaffold written"
+fi
+cd - >/dev/null
+teardown
+
+# --- --force overwrites config.local.json too ---
+
+setup "https://github.com/TestOwner/myproject.git"
+cd "$TDIR"
+mkdir -p .orchestrator
+echo '{"old": true}' > .orchestrator/config.json
+echo '{"stale": true}' > .orchestrator/config.local.json
+if roost_init --force >/dev/null 2>&1 \
+    && grep -q '"github-prs"' "${TDIR}/.orchestrator/config.local.json" \
+    && ! grep -q '"stale"' "${TDIR}/.orchestrator/config.local.json"; then
+  ok "--force: overwrites config.local.json"
+else
+  fail "--force: overwrites config.local.json"
 fi
 cd - >/dev/null
 teardown

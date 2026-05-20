@@ -14,7 +14,7 @@
 // DM, plugin.handleCommand throws bubble up as [dispatcher_error] on the
 // project channel.
 
-import { loadConfig, mutateConfig, type OrchestratorConfig } from './config.js'
+import { loadConfig, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
 import { assertRepoModeAll, type Plugin } from './plugin.js'
 
@@ -155,19 +155,21 @@ function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>): 
     : `unwatch ${target}<N>`
 }
 
-// Ask every plugin to handle `cmd` against the (in-progress) config.
-// Returns the coalesced reply (or null if every plugin abstained — caller
-// surfaces "no plugin handles ..."). watch/unwatch should match exactly
-// one plugin; list/help broadcast to all and join with `\n\n`.
+// Ask every plugin to handle `cmd` against the merged config view, with
+// `local` as the writable overlay. Returns the coalesced reply (or null if
+// every plugin abstained — caller surfaces "no plugin handles ...").
+// watch/unwatch should match exactly one plugin; list/help broadcast to
+// all and join with `\n\n`.
 async function routeOne(
-  config: OrchestratorConfig,
+  merged: OrchestratorConfig,
+  local: OrchestratorConfig,
   cmd: Command,
   plugins: Plugin[],
 ): Promise<string | null> {
   if (cmd.kind === 'unknown') return `error: ${cmd.error}`
   const replies: string[] = []
   for (const p of plugins) {
-    const reply = await p.handleCommand?.(config, cmd)
+    const reply = await p.handleCommand?.(merged, local, cmd)
     if (reply !== null && reply !== undefined) replies.push(reply)
   }
   if (replies.length === 0) return null
@@ -231,12 +233,21 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
 
   const isPureRead = cmds.every(c => c.kind === 'list' || c.kind === 'help')
 
-  // Pure-read path: route against the snapshot, no fsync.
+  // Pure-read path: route against the snapshot, no fsync. The local
+  // overlay is also read-only here — list/help never mutate.
   if (isPureRead) {
+    let localSnapshot: OrchestratorConfig
+    try {
+      localSnapshot = await loadLocalOverlay(deps.stateDir)
+    } catch (e) {
+      deps.log(`dispatcher-dm-handler: local overlay load failed for ${dm.sender}: ${e}`)
+      deps.postProjectError(`[dispatcher_error] config.local load: ${e}`)
+      return
+    }
     const replies: string[] = []
     for (const cmd of cmds) {
       try {
-        const reply = await routeOne(snapshot, cmd, deps.plugins)
+        const reply = await routeOne(snapshot, localSnapshot, cmd, deps.plugins)
         if (reply !== null) replies.push(reply)
         deps.log(`dispatcher-dm-handler: ${dm.sender} cmd=${cmd.kind}`)
       } catch (e) {
@@ -249,14 +260,18 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
     return
   }
 
-  // Write path: one mutateConfig call wraps the whole batch.
+  // Write path: one mutateConfig call wraps the whole batch. We re-merge
+  // base + local before each plugin call so in-batch mutations (e.g. two
+  // `watch pr 5` lines in one DM) see prior writes when checking
+  // idempotency.
   const replies: string[] = []
   let writeFailed = false
   try {
-    await mutateConfig(deps.stateDir, async (config) => {
+    await mutateConfig(deps.stateDir, async (base, local) => {
       for (const cmd of cmds) {
+        const merged = mergeConfigs(base, local)
         try {
-          const reply = await routeOne(config, cmd, deps.plugins)
+          const reply = await routeOne(merged, local, cmd, deps.plugins)
           if (reply !== null) {
             replies.push(reply)
           } else if (cmd.kind === 'watch' || cmd.kind === 'unwatch') {

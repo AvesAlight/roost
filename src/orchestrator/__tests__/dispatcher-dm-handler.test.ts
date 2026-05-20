@@ -11,7 +11,7 @@ import {
   type Command,
   type HandlerDeps,
 } from '../dispatcher-dm-handler.js'
-import { loadConfig, writeConfig, type OrchestratorConfig } from '../config.js'
+import { loadConfig, loadConfigBase, loadLocalOverlay, writeConfig, type OrchestratorConfig } from '../config.js'
 import type { Plugin, PluginTickResult } from '../plugin.js'
 
 let dir: string
@@ -175,22 +175,26 @@ interface FakeIrc {
 // tests can assert routing precisely without depending on slice schemas.
 class StubPlugin implements Plugin {
   readonly name: string
-  readonly handled: Array<{ cmd: Command; configSnapshot: OrchestratorConfig }> = []
-  constructor(name: string, private readonly target: string | null, private readonly behavior?: (cmd: Command, config: OrchestratorConfig) => string | null) {
+  readonly handled: Array<{ cmd: Command; mergedSnapshot: OrchestratorConfig; localSnapshot: OrchestratorConfig }> = []
+  constructor(name: string, private readonly target: string | null, private readonly behavior?: (cmd: Command, merged: OrchestratorConfig, local: OrchestratorConfig) => string | null) {
     this.name = name
   }
   desiredChannels(): string[] { return [] }
   async runTick(): Promise<PluginTickResult> {
     return { state: null, taggedEvents: [], channels: [] }
   }
-  handleCommand(config: OrchestratorConfig, cmd: Command): string | null {
-    this.handled.push({ cmd, configSnapshot: JSON.parse(JSON.stringify(config)) as OrchestratorConfig })
-    if (this.behavior) return this.behavior(cmd, config)
+  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+    this.handled.push({
+      cmd,
+      mergedSnapshot: JSON.parse(JSON.stringify(merged)) as OrchestratorConfig,
+      localSnapshot: JSON.parse(JSON.stringify(local)) as OrchestratorConfig,
+    })
+    if (this.behavior) return this.behavior(cmd, merged, local)
     if (cmd.kind === 'list') return `${this.name}: list-section`
     if (cmd.kind === 'help') return `${this.name}: help-section`
     if (cmd.kind === 'watch' && cmd.target === this.target) {
-      config.plugins ??= {}
-      config.plugins[this.name] = { watched: cmd.number }
+      local.plugins ??= {}
+      local.plugins[this.name] = { watched: cmd.number }
       return `${this.name}: watched ${cmd.number}`
     }
     if (cmd.kind === 'unwatch' && cmd.target === this.target) {
@@ -322,6 +326,46 @@ describe('handleDm — routing', () => {
     const config = await loadConfig(dir)
     expect(config.plugins?.['issues']).toEqual({ watched: 5 })
     expect(config.plugins?.['prs']).toEqual({ watched: 10 })
+  })
+
+  it('writes go to config.local.json, never config.json', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const baseBefore = await loadConfigBase(dir)
+    const { deps } = makeDeps(dir, [new StubPlugin('issues', null), new StubPlugin('prs', 'pr')])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5\nwatch pr 10' })
+    const baseAfter = await loadConfigBase(dir)
+    expect(baseAfter).toEqual(baseBefore)
+    const overlay = await loadLocalOverlay(dir)
+    expect(overlay.plugins?.['issues']).toEqual({ watched: 5 })
+    expect(overlay.plugins?.['prs']).toEqual({ watched: 10 })
+  })
+
+  it('re-merges base+local before each cmd so in-batch dedup sees prior writes', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    // A plugin that appends a number to its local watched list and refuses
+    // duplicates against the merged view — mimicking GhBase semantics.
+    class ListishPlugin implements Plugin {
+      readonly name = 'listish'
+      desiredChannels(): string[] { return [] }
+      async runTick(): Promise<PluginTickResult> {
+        return { state: null, taggedEvents: [], channels: [] }
+      }
+      handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+        if (cmd.kind !== 'watch' || cmd.target !== null) return null
+        const mergedWatched = (merged.plugins?.['listish'] as { watched?: number[] } | undefined)?.watched ?? []
+        if (mergedWatched.includes(cmd.number)) return `already watching ${cmd.number}`
+        local.plugins ??= {}
+        const slice = (local.plugins['listish'] as { watched?: number[] } | undefined) ?? {}
+        slice.watched = [...(slice.watched ?? []), cmd.number]
+        local.plugins['listish'] = slice
+        return `watching ${cmd.number}`
+      }
+    }
+    const { deps, irc } = makeDeps(dir, [new ListishPlugin()])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5; watch 5' })
+    expect(irc.dms[0].text).toBe('watching 5\n\nalready watching 5')
+    const overlay = await loadLocalOverlay(dir)
+    expect((overlay.plugins?.['listish'] as { watched: number[] }).watched).toEqual([5])
   })
 
   it('empty-body DMs are ignored silently', async () => {

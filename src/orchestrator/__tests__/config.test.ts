@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
-import { readdirSync } from 'node:fs'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { readdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig, writeConfig, mutateConfig, assertEntryRepoMode } from '../config.js'
+import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, writeConfig, writeLocalConfig, assertEntryRepoMode } from '../config.js'
 
 let dir: string
 
@@ -30,38 +30,123 @@ describe('writeConfig', () => {
   })
 })
 
+describe('mergeConfigs', () => {
+  it('returns the base unchanged when overlay is empty', () => {
+    const base = { project: 'p', repo: 'o/r', plugins: { x: { watched: [{ number: 1 }] } } }
+    expect(mergeConfigs(base, {})).toEqual(base)
+  })
+
+  it('local wins on top-level scalars', () => {
+    const merged = mergeConfigs({ project: 'base', repo: 'o/r' }, { project: 'local' })
+    expect(merged).toEqual({ project: 'local', repo: 'o/r' })
+  })
+
+  it('merges irc per-field (local-wins, base fills gaps)', () => {
+    const merged = mergeConfigs(
+      { irc: { server: 'a', port: 6667 } },
+      { irc: { server: 'b' } }
+    )
+    expect(merged.irc).toEqual({ server: 'b', port: 6667 })
+  })
+
+  it('concatenates plugins.<name>.watched arrays', () => {
+    const merged = mergeConfigs(
+      { plugins: { 'github-prs': { watched: [{ number: 1 }, { number: 2 }] } } },
+      { plugins: { 'github-prs': { watched: [{ number: 3 }] } } }
+    )
+    expect((merged.plugins!['github-prs'] as { watched: unknown[] }).watched).toEqual([
+      { number: 1 }, { number: 2 }, { number: 3 },
+    ])
+  })
+
+  it('preserves sibling slice keys with overlay-wins for non-watched fields', () => {
+    const merged = mergeConfigs(
+      { plugins: { x: { watched: [{ number: 1 }], other: 'base' } } },
+      { plugins: { x: { other: 'local' } } }
+    )
+    expect(merged.plugins!.x).toEqual({ watched: [{ number: 1 }], other: 'local' })
+  })
+
+  it('keeps a plugin slice that exists only on one side', () => {
+    const merged = mergeConfigs(
+      { plugins: { 'github-commits': { watched: [{ number: 9 }] } } },
+      { plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
+    )
+    expect(Object.keys(merged.plugins!).sort()).toEqual(['github-commits', 'github-prs'])
+  })
+})
+
+describe('loadConfig (with overlay)', () => {
+  it('treats missing config.local.json as an empty overlay', async () => {
+    await writeConfig(dir, { project: 'p', plugins: { x: { watched: [{ number: 1 }] } } })
+    expect(await loadLocalOverlay(dir)).toEqual({})
+    const merged = await loadConfig(dir)
+    expect(merged.project).toBe('p')
+    expect((merged.plugins!.x as { watched: unknown[] }).watched).toEqual([{ number: 1 }])
+  })
+
+  it('concatenates watched arrays across files', async () => {
+    await writeConfig(dir, { plugins: { 'github-prs': { watched: [{ number: 1 }] } } })
+    await writeLocalConfig(dir, { plugins: { 'github-prs': { watched: [{ number: 2 }] } } })
+    const merged = await loadConfig(dir)
+    expect((merged.plugins!['github-prs'] as { watched: unknown[] }).watched).toEqual([
+      { number: 1 }, { number: 2 },
+    ])
+  })
+
+  it('local overlay wins on top-level scalars', async () => {
+    await writeConfig(dir, { project: 'base', repo: 'o/r' })
+    await writeLocalConfig(dir, { project: 'local' })
+    const merged = await loadConfig(dir)
+    expect(merged).toEqual({ project: 'local', repo: 'o/r' })
+  })
+})
+
 describe('mutateConfig', () => {
   beforeEach(async () => {
     await writeConfig(dir, { project: 'initial' })
   })
 
-  it('applies fn and persists the result', async () => {
-    await mutateConfig(dir, (c) => { c.repo = 'org/repo' })
-    const config = await loadConfig(dir)
-    expect(config.project).toBe('initial')
-    expect(config.repo).toBe('org/repo')
+  it('applies fn and persists only to config.local.json', async () => {
+    await mutateConfig(dir, (_base, local) => { local.repo = 'org/repo' })
+    expect((await loadConfigBase(dir)).repo).toBeUndefined()
+    expect((await loadLocalOverlay(dir)).repo).toBe('org/repo')
+    const merged = await loadConfig(dir)
+    expect(merged.project).toBe('initial')
+    expect(merged.repo).toBe('org/repo')
+  })
+
+  it('does not touch config.json bytes', async () => {
+    const before = await readFile(join(dir, 'config.json'), 'utf8')
+    await mutateConfig(dir, (_base, local) => {
+      local.plugins ??= {}
+      local.plugins['github-prs'] = { watched: [{ number: 7 }] }
+    })
+    const after = await readFile(join(dir, 'config.json'), 'utf8')
+    expect(after).toBe(before)
+    expect(existsSync(join(dir, 'config.local.json'))).toBe(true)
   })
 
   it('serializes concurrent callers — no lost updates', async () => {
     await writeConfig(dir, { project: '0' })
-    const bump = () => mutateConfig(dir, async (c) => {
-      const n = parseInt(c.project ?? '0', 10)
+    const bump = () => mutateConfig(dir, async (_base, local) => {
+      const n = parseInt(local.project ?? '0', 10)
       await new Promise(r => setTimeout(r, 5))
-      c.project = String(n + 1)
+      local.project = String(n + 1)
     })
     await Promise.all([bump(), bump()])
-    const config = await loadConfig(dir)
-    expect(config.project).toBe('2')
+    const merged = await loadConfig(dir)
+    expect(merged.project).toBe('2')
   })
 
   it('serializes an async fn that awaits in the middle', async () => {
     await writeConfig(dir, { project: '0' })
     const order: string[] = []
-    const tagged = (tag: string) => mutateConfig(dir, async (c) => {
+    const tagged = (tag: string) => mutateConfig(dir, async (_base, local) => {
       order.push(`${tag}-start`)
       await new Promise(r => setTimeout(r, 5))
       order.push(`${tag}-end`)
-      c.project = tag
+      local.project = tag
     })
     await Promise.all([tagged('a'), tagged('b')])
     const aStart = order.indexOf('a-start')
@@ -77,11 +162,18 @@ describe('mutateConfig', () => {
     await expect(
       mutateConfig(dir, () => { throw new Error('boom') })
     ).rejects.toThrow('boom')
-    const config = await loadConfig(dir)
-    expect(config.project).toBe('initial')
+    const merged = await loadConfig(dir)
+    expect(merged.project).toBe('initial')
+    expect(existsSync(join(dir, 'config.local.json'))).toBe(false)
     // Queue not poisoned: next mutate succeeds
-    await mutateConfig(dir, (c) => { c.project = 'after-error' })
+    await mutateConfig(dir, (_base, local) => { local.project = 'after-error' })
     expect((await loadConfig(dir)).project).toBe('after-error')
+  })
+
+  it('preserves an already-on-disk local overlay even when fn does nothing', async () => {
+    await writeFile(join(dir, 'config.local.json'), JSON.stringify({ repo: 'preserved/repo' }))
+    await mutateConfig(dir, () => { /* no-op */ })
+    expect((await loadLocalOverlay(dir)).repo).toBe('preserved/repo')
   })
 })
 

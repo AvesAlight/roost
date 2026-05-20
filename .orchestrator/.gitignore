@@ -1,0 +1,11 @@
+config.local.json
+state.json
+last-tick.txt
+last-error.txt
+dispatcher.pid
+joined-channels.txt
+dispatcher-boot.log
+daemon.log
+.dispatcher.start.lock
+token-snapshots.json
+.token-snapshots.*.tmp

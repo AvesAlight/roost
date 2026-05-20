@@ -5,9 +5,10 @@
 // agnostic to the source plugin's event vocabulary.
 //
 // Plugins may also opt in to inbound DM commands via `handleCommand`: see
-// dispatcher-dm-handler.ts for the routing layer. Plugins mutate their own slice
-// (config.plugins[name]) in place inside the dispatcher's mutateConfig
-// callback; dispatcher-dm-handler never touches slice shapes.
+// dispatcher-dm-handler.ts for the routing layer. `handleCommand` receives
+// both the merged config (for idempotency / list views) and the local
+// overlay (for mutations) — config.json is read-only from the dispatcher,
+// so any state change must be made on the local overlay.
 import type { Command } from './dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from './config.js'
 
@@ -53,16 +54,18 @@ export interface Plugin {
   // including dynamic discoveries like PR linked-issues). Seeding is signaled
   // by `prevState === null`.
   runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
-  // Optional: handle a parsed DM command (see dispatcher-dm-handler.ts). Plugins mutate
-  // their own slice (config.plugins[name]) in place — the call site is wrapped
-  // in mutateConfig so writes are atomic across plugins. Return a reply line
-  // when this plugin handles the command, null when it doesn't apply.
-  // Implementations MUST NOT throw: deterministic failures (e.g. malformed
-  // slice) must come back as an `"error: ..."` string. The router will treat
-  // a thrown exception as a bug and surface a [dispatcher_error]. Both watch
-  // list and help are broadcast to every enabled plugin; replies are joined
-  // with `\n\n`.
-  handleCommand?(config: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
+  // Optional: handle a parsed DM command (see dispatcher-dm-handler.ts).
+  // `merged` is the live view (config.json + config.local.json with
+  // `plugins.<name>.watched` arrays concatenated); `local` is the
+  // gitignored overlay this plugin should mutate. Plugins MUST only mutate
+  // `local.plugins[name]` — config.json is read-only from the dispatcher.
+  // Return a reply line when this plugin handles the command, null when it
+  // doesn't apply. Implementations MUST NOT throw: deterministic failures
+  // (e.g. malformed slice) must come back as an `"error: ..."` string. The
+  // router will treat a thrown exception as a bug and surface a
+  // [dispatcher_error]. Both watch list and help are broadcast to every
+  // enabled plugin; replies are joined with `\n\n`.
+  handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
   // Optional: assert this plugin's own slice respects the active repo mode
   // (single vs multi). Plugins that own a `watched`/`repo` shape implement
   // this to enforce their own constraints; plugins that are cross-repo by
@@ -76,7 +79,7 @@ export abstract class BasePlugin implements Plugin {
   constructor(protected readonly defaultChannel: string) {}
   abstract desiredChannels(config: OrchestratorConfig): string[]
   abstract runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
-  handleCommand?(config: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
+  handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
 
   // Union auto-detected channels with the entry's declared channels;
   // fall back to the default channel if both are empty (defensive for any
