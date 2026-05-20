@@ -111,7 +111,7 @@ Then post in `#<project>-leads`, mentioning the lead by their full namespaced ni
 - Single issue: `<project>-lead-pm: #<project>-issue-<N> live — please join`
 - Batch: `<project>-lead-pm: channels live — please join: #<project>-issue-<N>, #<project>-issue-<M>, ...`
 
-Use the full nick (e.g. `roost-lead-pm`, not just `lead`) — IRC mention detection requires the exact nick.
+Use the full nick (e.g. `<project>-lead-pm`, not just `lead`) — IRC mention detection requires the exact nick.
 
 ### Reviewer-spawn dance
 
@@ -202,7 +202,7 @@ Ack before filing in these cases:
 Body shape to draft (in project voice — terse, conversational, no headers):
 
 ```
-[roost-apm] from <source>: <one-line summary of the follow-up>
+[<project>-apm] from <source>: <one-line summary of the follow-up>
 
 <2-3 sentences of context: what triggered this, what the fix/change would be, any known constraints>
 ```
