@@ -153,6 +153,102 @@ else
 fi
 teardown_tmpdir
 
+# -- Test 6: fresh lock → debounce (block returned, no tmux inject) -----------
+
+setup_tmpdir
+mkdir "$TDIR/compact-inject.lock.d"
+input='{"trigger":"auto","custom_instructions":null}'
+out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
+exit_code=$?
+sleep 0.5
+
+if [ "$exit_code" -eq 0 ] \
+    && echo "$out" | grep -q '"decision":"block"' \
+    && ! grep -q "load-buffer" "$TRACE" 2>/dev/null; then
+  ok "debounce: fresh lock → block without inject"
+else
+  fail "debounce: fresh lock → block without inject" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
+fi
+teardown_tmpdir
+
+# -- Test 7: stale lock → inject fires, lock refreshed -----------------------
+# Simulate a stale lock by setting its mtime to epoch (1970-01-01).
+
+setup_tmpdir
+mkdir "$TDIR/compact-inject.lock.d"
+touch -t 197001010000.00 "$TDIR/compact-inject.lock.d"
+input='{"trigger":"auto","custom_instructions":null}'
+out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
+exit_code=$?
+sleep 0.5
+
+if [ "$exit_code" -eq 0 ] \
+    && echo "$out" | grep -q '"decision":"block"' \
+    && grep -q "load-buffer" "$TRACE" 2>/dev/null \
+    && [ -d "$TDIR/compact-inject.lock.d" ]; then
+  ok "debounce: stale lock → inject fires, lock re-claimed"
+else
+  fail "debounce: stale lock → inject fires, lock re-claimed" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"
+fi
+teardown_tmpdir
+
+# -- Test 8: PostCompact hook clears the lock dir -----------------------------
+
+POST_HOOK="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )/bin/roost-post-compact-hook"
+
+setup_tmpdir
+mkdir "$TDIR/compact-inject.lock.d"
+perl -e '$SIG{USR2} = sub { exit 0 }; sleep 5' &
+victim_pid=$!
+sleep 0.1
+echo "$victim_pid" > "$TDIR/mcp.pid"
+env -i ROOST_DATA_DIR="$TDIR" "$POST_HOOK" >/dev/null 2>/dev/null
+kill "$victim_pid" 2>/dev/null || true
+wait 2>/dev/null || true
+
+if [ ! -d "$TDIR/compact-inject.lock.d" ]; then
+  ok "post-compact: lock dir cleared after compact"
+else
+  fail "post-compact: lock dir cleared after compact" "lock still exists"
+fi
+teardown_tmpdir
+
+# -- Test 9: PostCompact clears lock even when mcp.pid is missing -------------
+# Lock cleanup must run regardless of the SIGUSR2 path's success.
+
+setup_tmpdir
+mkdir "$TDIR/compact-inject.lock.d"
+# no mcp.pid written — simulates MCP died between PreCompact and PostCompact
+env -i ROOST_DATA_DIR="$TDIR" "$POST_HOOK" >/dev/null 2>/dev/null
+
+if [ ! -d "$TDIR/compact-inject.lock.d" ]; then
+  ok "post-compact: lock cleared even when mcp.pid is missing"
+else
+  fail "post-compact: lock cleared even when mcp.pid is missing" "lock still exists"
+fi
+teardown_tmpdir
+
+# -- Test 10: concurrent invocations — only one inject fires ------------------
+# mkdir is POSIX-atomic: two simultaneous hook invocations can't both claim
+# the lock. Exactly one should inject; the other should debounce.
+
+setup_tmpdir
+input='{"trigger":"auto","custom_instructions":null}'
+printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>/dev/null &
+pid1=$!
+printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>/dev/null &
+pid2=$!
+wait $pid1 $pid2
+sleep 0.5
+
+inject_count=$(grep -c "load-buffer" "$TRACE" 2>/dev/null || echo 0)
+if [ "$inject_count" -eq 1 ]; then
+  ok "concurrent: exactly one inject (mkdir atomicity)"
+else
+  fail "concurrent: exactly one inject (mkdir atomicity)" "inject_count=$inject_count trace=$(cat "$TRACE" 2>/dev/null)"
+fi
+teardown_tmpdir
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

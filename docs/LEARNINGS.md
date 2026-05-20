@@ -579,6 +579,16 @@ the pass-through SIGUSR1 path inherited from the prior hook. No
 TypeScript, no env-var knobs, no polling, no fired-flag reset state
 machine.
 
+**Debounce required for long milestones (added in fix/precompact-debounce).**
+Context pressure can re-trigger PreCompact multiple times before the
+injected `/compact` drains — observed 24+ queued lines in the pane,
+agent hung. Fix: atomic mkdir lock (`${ROOST_DATA_DIR}/compact-inject.lock.d`).
+`LOCK_TTL_MIN=3` (in `bin/roost-compact-hook`) is the knob — must stay
+above observed compact duration (~1m48s). If this regresses (agent hung
+with `compact-inject.lock.d` fresh and stale), raise `LOCK_TTL_MIN`.
+Trade-off: dead sessions leave stale locks that block re-inject for up
+to TTL minutes; PostCompact normally clears them.
+
 **Operational footgun surfaced during the v3 rebase (2026-05-17):**
 GitHub stopped firing CI on this PR after the v2 push. Root cause:
 the branch became `mergeable=CONFLICTING` against main once #374/

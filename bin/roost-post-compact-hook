@@ -7,6 +7,12 @@ if [ -z "$ROOST_DATA_DIR" ]; then
   echo "roost-post-compact-hook: ROOST_DATA_DIR not set, skipping" >&2
   exit 0
 fi
+# Clear the debounce lock regardless of SIGUSR2 path success — lock cleanup
+# is independent of whether the MCP pid is present or reachable.
+if [ -d "${ROOST_DATA_DIR}/compact-inject.lock.d" ]; then
+  rm -rf "${ROOST_DATA_DIR}/compact-inject.lock.d" 2>/dev/null || true
+  echo "roost-post-compact-hook: cleared compact-inject.lock.d" >&2
+fi
 pid_file="$ROOST_DATA_DIR/mcp.pid"
 if [ ! -f "$pid_file" ]; then
   echo "roost-post-compact-hook: $pid_file not found, skipping" >&2
