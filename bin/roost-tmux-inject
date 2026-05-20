@@ -1,0 +1,9 @@
+#!/bin/sh
+# Inject stdin text into a tmux pane via the load-buffer/paste-buffer/send-keys/delete-buffer chain.
+# Usage: printf 'text' | roost-tmux-inject <session> <buf-name-prefix>
+: "${1:?roost-tmux-inject: session name required}" "${2:?roost-tmux-inject: buf-name-prefix required}"
+buf="${2}-$$"
+tmux load-buffer -b "$buf" -
+tmux paste-buffer -t "$1" -b "$buf" -p
+tmux send-keys -t "$1" Enter
+tmux delete-buffer -b "$buf" 2>/dev/null || true

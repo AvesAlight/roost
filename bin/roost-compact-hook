@@ -106,20 +106,8 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
     # stdout and unwinds its own auto-compact state machine; we want our
     # send-keys to land after that settles, not race it. 150ms is the
     # smallest sleep that consistently avoids partial /compact buffers
-    # under load. Buffer name uses $$ (this hook process's pid — distinct
-    # per invocation; a subshell inherits its parent's $$ in POSIX sh) to
-    # avoid collisions across concurrent compacts. The load-buffer /
-    # paste-buffer -p / send-keys Enter / delete-buffer sequence mirrors
-    # `cmd_send` in bin/roost — keep them in sync if either grows e.g.
-    # better multi-line handling.
-    (
-      sleep 0.15
-      buf="roost-compact-${nick}-$$"
-      printf '/compact %s' "$DIRECTIVE" | tmux load-buffer -b "$buf" -
-      tmux paste-buffer -t "$session_name" -b "$buf" -p
-      tmux send-keys -t "$session_name" Enter
-      tmux delete-buffer -b "$buf" 2>/dev/null || true
-    ) &
+    # under load.
+    (sleep 0.15; printf '/compact %s' "$DIRECTIVE" | "$(dirname "$0")/roost-tmux-inject" "$session_name" "roost-compact-${nick}") &
     log "auto-trigger intercepted; queued /compact <directive> for $session_name"
     printf '%s\n' '{"decision":"block","reason":"roost: redirecting auto-compact to manual /compact with custom_instructions"}'
     exit 0

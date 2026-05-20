@@ -1080,11 +1080,7 @@ cmd_send() {
     echo "no tmux session named '${session_name}'" >&2
     exit 4
   fi
-  local buf="roost-send-${nick}-$$"
-  printf '%s' "${message}" | tmux load-buffer -b "${buf}" -
-  tmux paste-buffer -t "${session_name}" -b "${buf}" -p
-  tmux send-keys -t "${session_name}" Enter
-  tmux delete-buffer -b "${buf}" 2>/dev/null || true
+  printf '%s' "${message}" | "${ROOST_DIR}/bin/roost-tmux-inject" "${session_name}" "roost-send-${nick}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -40,7 +40,6 @@ else
   esac
 fi
 # Inject channel-membership verification directive if the tmux session is reachable.
-# Buffer name uses $$ to avoid collisions if two PostCompact hooks overlap.
 nick="${ROOST_IRC_NICK:-}"
 if [ -n "$nick" ]; then
   session_file="${ROOST_DATA_DIR}/session-name.txt"
@@ -50,16 +49,9 @@ if [ -n "$nick" ]; then
     session_name="roost-${nick}"
   fi
   if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
-    (
-      # Small buffer for the SIGUSR2-triggered MCP replay to start delivering
-      # before the directive fires — agent should see backfilled context first.
-      sleep 0.15
-      buf="roost-post-compact-${nick}-$$"
-      printf '%s' "$DIRECTIVE" | tmux load-buffer -b "$buf" -
-      tmux paste-buffer -t "$session_name" -b "$buf" -p
-      tmux send-keys -t "$session_name" Enter
-      tmux delete-buffer -b "$buf" 2>/dev/null || true
-    ) &
+    # Small buffer for the SIGUSR2-triggered MCP replay to start delivering
+    # before the directive fires — agent should see backfilled context first.
+    (sleep 0.15; printf '%s' "$DIRECTIVE" | "$(dirname "$0")/roost-tmux-inject" "$session_name" "roost-post-compact-${nick}") &
     echo "roost-post-compact-hook: queued channel-verify directive for $session_name" >&2
   fi
 fi
