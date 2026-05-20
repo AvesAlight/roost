@@ -27,3 +27,7 @@ When you delete a guard (error check, validation, early-return), scan tests for 
 Prose in this project needs one idea per sentence. Skip em-dashes. Don't use jargon without a concrete instruction next to it. Writing "claudey" the first time costs a full extra review round.
 
 Self-check: read the sentence aloud. If it has more than one connector, split it.
+
+## 2026-05-19: Restate approved naming/ordering decisions verbatim in the plan (from #434)
+
+When the lead has approved a specific naming or ordering decision in chat (e.g. `<project>-<slug>-worker-<N>` rather than just "slug-aware nick"), restate the exact string in your plan back to the lead. Paraphrasing loses load-bearing detail and pushes the mismatch out to human review instead of catching it in plan review.
