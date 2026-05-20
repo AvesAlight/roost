@@ -72,6 +72,12 @@ When migrating N call sites to a new helper, scan each migrated function for *ev
 
 When filing a followup issue, ask whether the work is primarily in service of a future milestone before defaulting to the current one. If the followup's value lands in a later wave (e.g., a boot-time priority-tie warning is most useful when the Linear plugin lands in 0.8.0, not during a 0.7.0 cleanup pass), file it in that future milestone. The concrete test: "when does this followup's primary consumer arrive?"
 
+## 2026-05-20: Don't tag humans until agents have resolved all outstanding issues (from cross-project scratcher)
+
+Agents resolve all outstanding issues first; humans only get tagged when the team has nothing left to improve. In the ready-for-review dance: worker drafts PR, reviewer posts findings, worker addresses them, CI goes green, lead pressure-tests — only then does the lead explicitly signal "mark ready + add human." No auto-fire on worker-ready+CI-green. The concrete cost of premature tagging: human review time spent on issues the agent team would have caught.
+
+Attribution: alex, cross-project learning from scratcher milestone.
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
