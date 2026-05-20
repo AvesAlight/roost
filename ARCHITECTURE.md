@@ -177,7 +177,7 @@ instance from durable artifacts. Sequence:
 roost spawn productops-simplifyrewards \
   -c '#leads-simplifyrewards,#issue-718,#issue-721,#issue-693' \
   --steer-compact --cache-ttl 1h \
-  --ask-irc '#leads-simplifyrewards' --ask-target <answerer> \
+  --ask-irc '#leads-simplifyrewards' --ask-target <your-nick> \
   --prompt-file /tmp/handoff-2026-04-28.md
 ```
 

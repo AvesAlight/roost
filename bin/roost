@@ -125,10 +125,11 @@ Options:
                              mode. Lifecycle = MCP lifecycle.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
-  --ask-irc CHANNEL          Proxy AskUserQuestion calls over IRC. Posts
-                             questions to CHANNEL and waits for a reply from
-                             --ask-target (or --perm-target). Enables permbot
-                             if not already started by --perm-irc.
+  --ask-irc CHANNEL          Routes AskUserQuestion calls to a channel
+                             instead of blocking the terminal; pair with
+                             --ask-target (the nick whose replies count).
+                             Enables permbot if not already started by
+                             --perm-irc.
   --ask-target NICK          Nick whose replies count for AskUserQuestion.
                              Defaults to --perm-target when both are set.
                              Required when --ask-irc is set without --perm-target.

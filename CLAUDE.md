@@ -22,7 +22,7 @@ The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` a
 
 ## Agent class heuristic
 
-The role→flag heuristic for `--cache-ttl` and `--steer-compact` lives in the "Agent class guidance" block of `bin/roost`'s `spawn --help` output — that's the canonical source. Agent prompts (`agents/lead-pm.md`, `agents/associate-pm.md`), the roost skill, and `docs/LEARNINGS.md` §9 all point at it. Edit the `bin/roost` block if the trade-offs shift; the pointers don't need to move. Shipped artifacts (agent prompts, the skill) deliberately don't carry "edit here" instructions — they install into projects that aren't roost, where operators don't own the heuristic.
+The role→flag heuristic for `--cache-ttl`, `--steer-compact`, and `--ask-irc` lives in the "Agent class guidance" block of `bin/roost`'s `spawn --help` output — that's the canonical source. Agent prompts (`agents/lead-pm.md`, `agents/associate-pm.md`), the roost skill, and `docs/LEARNINGS.md` §9 all point at it. Edit the `bin/roost` block if the trade-offs shift; the pointers don't need to move. Shipped artifacts (agent prompts, the skill) deliberately don't carry "edit here" instructions — they install into projects that aren't roost, where operators don't own the heuristic.
 
 ## Comments
 
