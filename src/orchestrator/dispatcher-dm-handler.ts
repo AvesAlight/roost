@@ -14,13 +14,15 @@
 // DM, plugin.handleCommand throws bubble up as [dispatcher_error] on the
 // project channel.
 
-import { loadConfig, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
+import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
 import { assertRepoModeAll, type Plugin } from './plugin.js'
 
 export type Command =
-  | { kind: 'watch'; target: string | null; number: number; channels: string[] }
-  | { kind: 'unwatch'; target: string | null; number: number }
+  | { kind: 'watch'; target: string | null; number: number; repo: string | null; channels: string[] }
+  | { kind: 'unwatch'; target: string | null; number: number; repo: string | null }
+  | { kind: 'watch-repo'; target: string | null; repo: string; branch: string | null; path: string | null; channels: string[] }
+  | { kind: 'unwatch-repo'; target: string | null; repo: string; branch: string | null; path: string | null }
   | { kind: 'list' }
   | { kind: 'help' }
   | { kind: 'unknown'; raw: string; error: string }
@@ -37,6 +39,19 @@ export interface HandlerDeps {
 }
 
 const CHANNEL_RE = /^#[^\s,#]+$/
+
+// Bare `<owner>/<repo>` used as the optional repo positional after a number
+// in the per-N grammar (`watch pr 5 org/repo [#chan ...]`). The `/` is
+// load-bearing for parser disambiguation — channels start with `#`, repo
+// args contain `/`, numbers are all digits.
+const OWNER_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+// Full repo-shape spec for the whole-repo grammar (`watch repo
+// org/r[@branch[:path]]`). Branch defaults to the plugin's convention when
+// omitted (github-commits uses `main`); path is optional. `@` separates
+// branch from owner/repo to match the github-commits state-key shape
+// (`<repo>@<branch>:<path>`) so log lines and DM input use the same string.
+const REPO_SPEC_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)(?:@([^:@\s]+))?(?::([^\s]+))?$/
 
 // Verbs reserved for the dispatcher grammar — plugins can't override the
 // surface, but they decide what each verb does for their slice.
@@ -76,39 +91,81 @@ export function parseCommand(line: string): Command {
   return { kind: 'unknown', raw: line, error: `unknown command: ${tokens[0]}` }
 }
 
-// Parses `[target] <num> [#chan ...]` for watch, `[target] <num>` for unwatch.
-// `target` is whatever non-numeric keyword precedes the number (e.g. `pr`);
-// plugins choose which target keyword they claim, including `null` for the
-// bare form (no target keyword at all).
+// Parses two grammar shapes after the verb:
+//   per-N : `[target] <num> [<owner>/<repo>] [#chan ...]`  (watch/unwatch)
+//   repo  : `[target] <owner>/<repo>[@<branch>[:<path>]] [#chan ...]`
+// `target` is whatever non-numeric, non-repo-shape keyword precedes the spec
+// (e.g. `pr`, `repo`, `new-issues`); plugins claim which keyword they own
+// (including `null` for the bare form). Shape selection is driven by the
+// spec token — a number emits `watch`/`unwatch`, a repo-shape token emits
+// `watch-repo`/`unwatch-repo`.
 function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: string[]): Command {
   let target: string | null = null
   let i = 0
-  // First token: either the number (no target keyword) or a target keyword
-  // followed by the number. `pr` today; future plugins (linear, etc.) can
-  // claim other words without touching the parser.
-  if (rest[0] !== undefined && !/^\d+$/.test(rest[0])) {
-    if (VERBS.has(rest[0].toLowerCase())) {
-      return { kind: 'unknown', raw, error: `${verb}: "${rest[0]}" is a reserved verb, not a target` }
+  // Optional target keyword: first token that is neither a number nor a
+  // repo-shape spec. `repo`/`new-issues`/`pr`/etc. all flow through here —
+  // the parser stays target-agnostic; plugins decide what they claim.
+  const first = rest[0]
+  if (first !== undefined && !/^\d+$/.test(first) && !REPO_SPEC_RE.test(first)) {
+    if (VERBS.has(first.toLowerCase())) {
+      return { kind: 'unknown', raw, error: `${verb}: "${first}" is a reserved verb, not a target` }
     }
-    target = rest[0].toLowerCase()
+    target = first.toLowerCase()
     i = 1
   }
 
-  const numTok = rest[i]
-  if (numTok === undefined) {
-    return { kind: 'unknown', raw, error: `${verb} requires an issue/PR number` }
-  }
-  const number = parseInt(numTok, 10)
-  if (number <= 0 || String(number) !== numTok) {
-    return { kind: 'unknown', raw, error: `${verb}: "${numTok}" is not a positive integer` }
+  const specTok = rest[i]
+  if (specTok === undefined) {
+    return { kind: 'unknown', raw, error: `${verb} requires an issue/PR number or <owner>/<repo> spec` }
   }
 
-  const channels = rest.slice(i + 1)
+  // Repo-shape spec: `owner/repo[@branch][:path]`. Selected over number
+  // when the token contains a `/`. Channels (which start with `#`) and
+  // numbers can never match this pattern, so disambiguation is purely on
+  // shape — no lookahead needed.
+  const repoMatch = specTok.match(REPO_SPEC_RE)
+  if (repoMatch) {
+    const repo = repoMatch[1]
+    const branch = repoMatch[2] ?? null
+    const path = repoMatch[3] ?? null
+    const channels = rest.slice(i + 1)
+    if (verb === 'unwatch') {
+      if (channels.length) {
+        return { kind: 'unknown', raw, error: 'unwatch takes no channel arguments' }
+      }
+      return { kind: 'unwatch-repo', target, repo, branch, path }
+    }
+    for (const c of channels) {
+      if (!CHANNEL_RE.test(c)) {
+        return { kind: 'unknown', raw, error: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
+      }
+    }
+    return { kind: 'watch-repo', target, repo, branch, path, channels }
+  }
+
+  // Number-shape spec.
+  const number = parseInt(specTok, 10)
+  if (number <= 0 || String(number) !== specTok) {
+    return { kind: 'unknown', raw, error: `${verb}: "${specTok}" is not a positive integer or <owner>/<repo> spec` }
+  }
+  i += 1
+
+  // Optional repo positional after the number. Disambiguated from channels
+  // by containing `/` (channels start with `#`); `@branch` and `:path`
+  // are not allowed in this slot — per-N entries pin one PR/issue, not a
+  // branch/path. Exactly one repo positional permitted.
+  let repo: string | null = null
+  if (rest[i] !== undefined && OWNER_REPO_RE.test(rest[i])) {
+    repo = rest[i]
+    i += 1
+  }
+
+  const channels = rest.slice(i)
   if (verb === 'unwatch') {
     if (channels.length) {
       return { kind: 'unknown', raw, error: 'unwatch takes no channel arguments' }
     }
-    return { kind: 'unwatch', target, number }
+    return { kind: 'unwatch', target, number, repo }
   }
 
   for (const c of channels) {
@@ -116,7 +173,7 @@ function parseWatchOrUnwatch(raw: string, verb: 'watch' | 'unwatch', rest: strin
       return { kind: 'unknown', raw, error: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
     }
   }
-  return { kind: 'watch', target, number, channels }
+  return { kind: 'watch', target, number, repo, channels }
 }
 
 export function parseCommands(text: string): Command[] {
@@ -148,11 +205,14 @@ export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string
 
 // One DM-able description of a watch/unwatch the parser produced, used
 // only in the "no plugin handles..." reply. Matches the user's input shape.
-function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>): string {
+function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'watch-repo' | 'unwatch-repo' }>): string {
   const target = cmd.target ? `${cmd.target} ` : ''
+  if (cmd.kind === 'watch-repo') return `watch ${target}<owner>/<repo>[@<branch>[:<path>]] [#chan ...]`
+  if (cmd.kind === 'unwatch-repo') return `unwatch ${target}<owner>/<repo>[@<branch>[:<path>]]`
+  const repoSlot = cmd.repo != null ? ' <owner>/<repo>' : ''
   return cmd.kind === 'watch'
-    ? `watch ${target}<N> [#chan ...]`
-    : `unwatch ${target}<N>`
+    ? `watch ${target}<N>${repoSlot} [#chan ...]`
+    : `unwatch ${target}<N>${repoSlot}`
 }
 
 // Ask every plugin to handle `cmd` against the merged config view, with
@@ -160,6 +220,19 @@ function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>): 
 // every plugin abstained — caller surfaces "no plugin handles ...").
 // watch/unwatch should match exactly one plugin; list/help broadcast to
 // all and join with `\n\n`.
+
+const HELP_SYNOPSIS = [
+  'dispatcher DM grammar (one per line, or `;`/`,`-separated):',
+  '  watch [<target>] <N> [<owner>/<repo>] [#chan ...]',
+  '  unwatch [<target>] <N> [<owner>/<repo>]',
+  '  watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]',
+  '  unwatch <target> <owner>/<repo>[@<branch>[:<path>]]',
+  '  watch list                 — every plugin\'s active entries',
+  '  help                       — this synopsis + per-plugin commands',
+  '',
+  '<target> is plugin-claimed (`pr`, `repo`, `new-issues`, …). per-plugin help:',
+].join('\n')
+
 async function routeOne(
   merged: OrchestratorConfig,
   local: OrchestratorConfig,
@@ -172,14 +245,17 @@ async function routeOne(
     const reply = await p.handleCommand?.(merged, local, cmd)
     if (reply !== null && reply !== undefined) replies.push(reply)
   }
+  // Help always gets the dispatcher synopsis at the top so operators can
+  // discover the grammar from one entry — per-plugin sections trail.
+  if (cmd.kind === 'help') return [HELP_SYNOPSIS, ...replies].join('\n\n')
   if (replies.length === 0) return null
-  // list/help broadcast to all enabled plugins — separate sections with a
+  // list broadcasts to all enabled plugins — separate sections with a
   // blank line so the output is readable when multiple plugins contribute.
-  const sep = cmd.kind === 'list' || cmd.kind === 'help' ? '\n\n' : '\n'
+  const sep = cmd.kind === 'list' ? '\n\n' : '\n'
   return replies.join(sep)
 }
 
-function unmatchedReply(cmd: Extract<Command, { kind: 'watch' | 'unwatch' }>, plugins: Plugin[]): string {
+function unmatchedReply(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'watch-repo' | 'unwatch-repo' }>, plugins: Plugin[]): string {
   const names = plugins.map(p => p.name).sort().join(', ') || '(none)'
   return `error: no plugin handles \`${describeCommand(cmd)}\` — enabled plugins: ${names}`
 }
@@ -205,7 +281,9 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   let snapshot: OrchestratorConfig
   try {
     snapshot = await loadConfig(deps.stateDir)
-    assertRepoModeAll(deps.plugins, snapshot)
+    // Strict invariant runs against tracked entries only; local overlay
+    // entries are parser-validated on write. See Plugin.assertRepoMode docs.
+    assertRepoModeAll(deps.plugins, await loadConfigBase(deps.stateDir))
   } catch (e) {
     deps.log(`dispatcher-dm-handler: config load failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config load: ${e}`)
@@ -274,7 +352,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
           const reply = await routeOne(merged, local, cmd, deps.plugins)
           if (reply !== null) {
             replies.push(reply)
-          } else if (cmd.kind === 'watch' || cmd.kind === 'unwatch') {
+          } else if (cmd.kind === 'watch' || cmd.kind === 'unwatch' || cmd.kind === 'watch-repo' || cmd.kind === 'unwatch-repo') {
             replies.push(unmatchedReply(cmd, deps.plugins))
           }
         } catch (e) {
@@ -293,8 +371,13 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
 
   if (writeFailed) return
   for (const cmd of cmds) {
-    const summary = `cmd=${cmd.kind}${'target' in cmd ? ` target=${cmd.target ?? '(default)'}` : ''}${'number' in cmd ? ` n=${cmd.number}` : ''}`
-    deps.log(`dispatcher-dm-handler: ${dm.sender} ${summary}`)
+    const parts = [`cmd=${cmd.kind}`]
+    if ('target' in cmd) parts.push(`target=${cmd.target ?? '(default)'}`)
+    if ('number' in cmd) parts.push(`n=${cmd.number}`)
+    if ('repo' in cmd && cmd.repo) parts.push(`repo=${cmd.repo}`)
+    if ('branch' in cmd && cmd.branch) parts.push(`branch=${cmd.branch}`)
+    if ('path' in cmd && cmd.path) parts.push(`path=${cmd.path}`)
+    deps.log(`dispatcher-dm-handler: ${dm.sender} ${parts.join(' ')}`)
   }
   deps.dm(dm.sender, replies.join('\n\n'))
 }

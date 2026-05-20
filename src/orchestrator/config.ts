@@ -79,7 +79,12 @@ export async function loadConfigBase(stateDir: string): Promise<OrchestratorConf
 // github-new-issues' slice repo). Throws on violation with a uniform
 // error message; plugins call it inside their own `assertRepoMode`.
 //
-// Mode invariants:
+// The repo-mode invariant runs only against tracked `config.json` entries
+// — local-overlay entries (DM-driven) bypass it because the DM parser
+// validates OWNER/REPO shape at write time, leaving the overlay
+// parser-clean by construction.
+//
+// Mode invariants (applied to tracked entries):
 //   single-repo (topRepo set):   entryRepo must be absent or equal topRepo.
 //   multi-repo  (topRepo unset): entryRepo must be set — no inherit target.
 export function assertEntryRepoMode(

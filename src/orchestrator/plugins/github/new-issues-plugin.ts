@@ -10,6 +10,10 @@
 // init` writes one for new projects; existing projects need an operator edit
 // (or the example.json refresh) to pick this up.
 //
+// DM grammar: claims target=`new-issues`. Operators can `watch new-issues
+// <owner>/<repo> [#chan ...]` / `unwatch new-issues <owner>/<repo>`.
+// `@branch`/`:path` are not accepted — new-issues entries are repo-only.
+//
 // State slice: `{ repos: Record<string, number[]> }` keyed by repo slug.
 // Seeding (`prev===null`) and first-observation of a new repo entry
 // (`prev.repos[repo]===undefined`) both capture the current open set without
@@ -17,10 +21,12 @@
 // forward in state (matches commits-plugin) so remove-then-readd doesn't
 // replay history. Closed issues that re-open will re-announce only if pruned
 // from `seen` (we don't prune today; the operator can `watch <N>` for it).
+import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
+import { trackedRefusal } from '../_shared.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -40,6 +46,112 @@ export interface NewIssuesPluginState {
 export class GitHubNewIssuesPlugin extends GhPluginBase {
   readonly name = 'github-new-issues'
 
+  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+    if (cmd.kind === 'list') return this.formatListSection(merged)
+    if (cmd.kind === 'help') return this.formatHelpSection()
+    if (cmd.kind === 'watch-repo') {
+      if (cmd.target !== 'new-issues') return null
+      if (cmd.branch !== null || cmd.path !== null) {
+        return `error: new-issues does not support @branch or :path — try \`watch new-issues ${cmd.repo}\``
+      }
+      return this.applyWatch(merged, local, cmd.repo, cmd.channels)
+    }
+    if (cmd.kind === 'unwatch-repo') {
+      if (cmd.target !== 'new-issues') return null
+      if (cmd.branch !== null || cmd.path !== null) {
+        return `error: new-issues does not support @branch or :path — try \`unwatch new-issues ${cmd.repo}\``
+      }
+      return this.applyUnwatch(merged, local, cmd.repo)
+    }
+    return null
+  }
+
+  private localSlice(local: OrchestratorConfig): NewIssuesPluginConfig {
+    local.plugins ??= {}
+    const existing = local.plugins[this.name]
+    if (existing && typeof existing === 'object') return existing as NewIssuesPluginConfig
+    const fresh: NewIssuesPluginConfig = {}
+    local.plugins[this.name] = fresh
+    return fresh
+  }
+
+  private mergedWatched(config: OrchestratorConfig): NewIssuesWatchEntry[] {
+    return this.pluginConfig<NewIssuesPluginConfig>(config)?.watched ?? []
+  }
+
+  private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, repo: string, channels: string[]): string {
+    const labelStr = `new-issues ${repo}`
+    const inMerged = this.mergedWatched(merged).find(e => e.repo === repo)
+    if (!inMerged) {
+      const slice = this.localSlice(local)
+      slice.watched ??= []
+      const entry: NewIssuesWatchEntry = { repo }
+      if (channels.length) entry.channels = [...channels]
+      slice.watched.push(entry)
+      return channels.length
+        ? `watching ${labelStr} + ${channels.join(' ')}`
+        : `watching ${labelStr}`
+    }
+    if (!channels.length) return `already watching ${labelStr}`
+    const localEntries = this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? []
+    const localEntry = localEntries.find(e => e.repo === repo)
+    if (!localEntry) {
+      return trackedRefusal(labelStr, 'add channels')
+    }
+    const existing = new Set(localEntry.channels ?? [])
+    const added: string[] = []
+    for (const c of channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
+    if (!added.length) return `${labelStr} channels unchanged`
+    localEntry.channels = [...existing]
+    return `${labelStr} + ${added.join(' ')}`
+  }
+
+  private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, repo: string): string {
+    const labelStr = `new-issues ${repo}`
+    const localEntries = this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? []
+    const localIdx = localEntries.findIndex(e => e.repo === repo)
+    if (localIdx >= 0) {
+      localEntries.splice(localIdx, 1)
+      return `unwatched ${labelStr}`
+    }
+    if (this.mergedWatched(merged).some(e => e.repo === repo)) {
+      return trackedRefusal(labelStr, 'remove')
+    }
+    return `not watching ${labelStr}`
+  }
+
+  private formatListSection(merged: OrchestratorConfig): string {
+    const entries = this.mergedWatched(merged)
+    const byRepo = new Map<string, Set<string>>()
+    const order: string[] = []
+    for (const e of entries) {
+      let chans = byRepo.get(e.repo)
+      if (!chans) {
+        chans = new Set<string>()
+        byRepo.set(e.repo, chans)
+        order.push(e.repo)
+      }
+      for (const c of e.channels ?? []) chans.add(c)
+    }
+    const header = `${this.name} (${byRepo.size}):`
+    if (!byRepo.size) return `${header}\n  (none)`
+    const lines = order.map(r => {
+      const chans = byRepo.get(r)!
+      const chansStr = chans.size ? ` + ${[...chans].join(' ')}` : ''
+      return `  ${r}${chansStr}`
+    })
+    return [header, ...lines].join('\n')
+  }
+
+  private formatHelpSection(): string {
+    return [
+      `${this.name} commands (DM only):`,
+      `  watch new-issues <owner>/<repo> [#chan ...]   — watch new-issues feed`,
+      `  unwatch new-issues <owner>/<repo>             — stop watching new-issues feed`,
+      `  watch list                                   — include this plugin's watched repos in the reply`,
+    ].join('\n')
+  }
+
   // Project channel is unioned in by the orchestrator. Explicit per-entry
   // channels are surfaced here so they join at boot.
   desiredChannels(config: OrchestratorConfig): string[] {
@@ -54,9 +166,14 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   // Each watched entry's repo must equal config.repo when set (single mode);
   // the type guarantees repo is present, so the multi-mode missing-repo branch
   // never fires for this plugin. Mirrors the gh-base watched check.
-  assertRepoMode(config: OrchestratorConfig): void {
-    const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
-    const topRepo = config.repo
+  //
+  // The repo-mode invariant runs only against tracked `config.json` entries
+  // — local-overlay entries (DM-driven) bypass it because the DM parser
+  // validates OWNER/REPO shape at write time, leaving the overlay
+  // parser-clean by construction.
+  assertRepoMode(base: OrchestratorConfig): void {
+    const slice = this.pluginConfig<NewIssuesPluginConfig>(base) ?? {}
+    const topRepo = base.repo
     for (const entry of slice.watched ?? []) {
       assertEntryRepoMode(this.name, `(repo=${entry.repo})`, entry.repo, topRepo)
     }

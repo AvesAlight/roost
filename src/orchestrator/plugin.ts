@@ -71,7 +71,12 @@ export interface Plugin {
   // this to enforce their own constraints; plugins that are cross-repo by
   // design (e.g. github-commits) omit it. Throw on violation — the caller
   // surfaces the message. Called after config load and per-tick reload.
-  assertRepoMode?(config: OrchestratorConfig): void
+  //
+  // The repo-mode invariant runs only against tracked `config.json` entries
+  // — local-overlay entries (DM-driven) bypass it because the DM parser
+  // validates OWNER/REPO shape at write time, leaving the overlay
+  // parser-clean by construction.
+  assertRepoMode?(base: OrchestratorConfig): void
 }
 
 export abstract class BasePlugin implements Plugin {
@@ -147,7 +152,8 @@ export function registeredPluginNames(): string[] {
 // Core is plugin-agnostic — it doesn't know about `watched[*].repo` or
 // `slice.repo`; the plugins that own those shapes enforce their own rules.
 // Called by every config-load site so an operator hand-edit is caught on
-// the next tick / DM rather than only at boot.
-export function assertRepoModeAll(plugins: Plugin[], config: OrchestratorConfig): void {
-  for (const p of plugins) p.assertRepoMode?.(config)
+// the next tick / DM rather than only at boot. See `Plugin.assertRepoMode`
+// for the tracked-only contract.
+export function assertRepoModeAll(plugins: Plugin[], base: OrchestratorConfig): void {
+  for (const p of plugins) p.assertRepoMode?.(base)
 }

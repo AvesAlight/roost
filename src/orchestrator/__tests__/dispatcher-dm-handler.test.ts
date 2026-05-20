@@ -36,27 +36,27 @@ describe('splitCommands', () => {
 
 describe('parseCommand', () => {
   it('parses bare watch as target=null', () => {
-    expect(parseCommand('watch 5')).toEqual({ kind: 'watch', target: null, number: 5, channels: [] })
+    expect(parseCommand('watch 5')).toEqual({ kind: 'watch', target: null, number: 5, repo: null, channels: [] })
   })
 
   it('parses watch with channels', () => {
     expect(parseCommand('watch 5 #foo #bar')).toEqual({
-      kind: 'watch', target: null, number: 5, channels: ['#foo', '#bar'],
+      kind: 'watch', target: null, number: 5, repo: null, channels: ['#foo', '#bar'],
     })
   })
 
   it('parses unwatch with target=null', () => {
-    expect(parseCommand('unwatch 5')).toEqual({ kind: 'unwatch', target: null, number: 5 })
+    expect(parseCommand('unwatch 5')).toEqual({ kind: 'unwatch', target: null, number: 5, repo: null })
   })
 
   it('parses target keyword from any non-numeric first token', () => {
-    expect(parseCommand('watch pr 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, channels: [] })
-    expect(parseCommand('watch linear 99')).toEqual({ kind: 'watch', target: 'linear', number: 99, channels: [] })
-    expect(parseCommand('unwatch pr 10')).toEqual({ kind: 'unwatch', target: 'pr', number: 10 })
+    expect(parseCommand('watch pr 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, repo: null, channels: [] })
+    expect(parseCommand('watch linear 99')).toEqual({ kind: 'watch', target: 'linear', number: 99, repo: null, channels: [] })
+    expect(parseCommand('unwatch pr 10')).toEqual({ kind: 'unwatch', target: 'pr', number: 10, repo: null })
   })
 
   it('lowercases the target keyword', () => {
-    expect(parseCommand('watch PR 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, channels: [] })
+    expect(parseCommand('watch PR 10')).toEqual({ kind: 'watch', target: 'pr', number: 10, repo: null, channels: [] })
   })
 
   it('parses watch list', () => {
@@ -68,7 +68,7 @@ describe('parseCommand', () => {
   })
 
   it('is case-insensitive on verbs', () => {
-    expect(parseCommand('WATCH 5')).toEqual({ kind: 'watch', target: null, number: 5, channels: [] })
+    expect(parseCommand('WATCH 5')).toEqual({ kind: 'watch', target: null, number: 5, repo: null, channels: [] })
     expect(parseCommand('Help')).toEqual({ kind: 'help' })
   })
 
@@ -124,17 +124,128 @@ describe('parseCommand', () => {
     expect(cmd.error).toMatch(/unknown command/)
   })
 
-  it('requires a number for watch/unwatch', () => {
+  it('requires a number or repo-shape spec for watch/unwatch', () => {
     expect(parseCommand('watch').kind).toBe('unknown')
     expect(parseCommand('watch pr').kind).toBe('unknown')
+  })
+
+  describe('repo positional on per-N grammar', () => {
+    // Regression for the load-bearing disambiguation: `#chan` after a number
+    // must NOT be misread as a repo positional. Channel sigil is `#`; repo
+    // positional requires `/`. Keep this paired with the `org/repo #chan`
+    // case below — both shapes are the entire reason the repo positional is
+    // safe to add unannotated.
+    it('does NOT grab a #channel as a repo positional', () => {
+      expect(parseCommand('watch pr 5 #chan')).toEqual({
+        kind: 'watch', target: 'pr', number: 5, repo: null, channels: ['#chan'],
+      })
+    })
+
+    it('parses bare <owner>/<repo> after the number', () => {
+      expect(parseCommand('watch pr 5 org/repo')).toEqual({
+        kind: 'watch', target: 'pr', number: 5, repo: 'org/repo', channels: [],
+      })
+    })
+
+    it('parses <owner>/<repo> before channels', () => {
+      expect(parseCommand('watch pr 5 org/repo #chan #other')).toEqual({
+        kind: 'watch', target: 'pr', number: 5, repo: 'org/repo', channels: ['#chan', '#other'],
+      })
+    })
+
+    it('attaches repo to unwatch', () => {
+      expect(parseCommand('unwatch pr 5 org/repo')).toEqual({
+        kind: 'unwatch', target: 'pr', number: 5, repo: 'org/repo',
+      })
+    })
+
+    it('accepts repo without a target keyword', () => {
+      expect(parseCommand('watch 5 org/repo #chan')).toEqual({
+        kind: 'watch', target: null, number: 5, repo: 'org/repo', channels: ['#chan'],
+      })
+    })
+
+    it('only one repo positional allowed; second token is treated as a (malformed) channel', () => {
+      const cmd = parseCommand('watch pr 5 org/a org/b') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/channels must match/)
+    })
+
+    it('rejects a channel before the repo positional (positional must precede channels)', () => {
+      // `#chan` in the repo slot is a #-prefixed token that doesn't match
+      // OWNER_REPO_RE; it falls through to channels and the trailing
+      // `org/r` then fails CHANNEL_RE. Locks in the "repo before channels"
+      // ordering so a future loosening doesn't accidentally accept both.
+      const cmd = parseCommand('watch pr 5 #chan org/r') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/channels must match/)
+    })
+
+    it('rejects unwatch with a trailing channel even when a repo positional is present', () => {
+      // Without repo: `unwatch pr 5 #x` already errors. The repo positional
+      // mustn't carve a loophole that lets channels sneak in.
+      const cmd = parseCommand('unwatch pr 5 org/r #x') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/no channel arguments/)
+    })
+  })
+
+  describe('repo-shape grammar (watch/unwatch <target> <owner>/<repo>[@branch[:path]])', () => {
+    it('parses bare <owner>/<repo>', () => {
+      expect(parseCommand('watch repo org/r')).toEqual({
+        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: null, channels: [],
+      })
+    })
+
+    it('parses @branch', () => {
+      expect(parseCommand('watch repo org/r@develop')).toEqual({
+        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: null, channels: [],
+      })
+    })
+
+    it('parses :path without branch', () => {
+      expect(parseCommand('watch repo org/r:Formula/x.rb')).toEqual({
+        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: null, path: 'Formula/x.rb', channels: [],
+      })
+    })
+
+    it('parses @branch:path', () => {
+      expect(parseCommand('watch repo org/r@develop:Formula/x.rb #chan')).toEqual({
+        kind: 'watch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: 'Formula/x.rb', channels: ['#chan'],
+      })
+    })
+
+    it('parses unwatch-repo with the same shape', () => {
+      expect(parseCommand('unwatch repo org/r@develop:Formula/x.rb')).toEqual({
+        kind: 'unwatch-repo', target: 'repo', repo: 'org/r', branch: 'develop', path: 'Formula/x.rb',
+      })
+    })
+
+    it('accepts non-`repo` target (new-issues style)', () => {
+      expect(parseCommand('watch new-issues org/r #chan')).toEqual({
+        kind: 'watch-repo', target: 'new-issues', repo: 'org/r', branch: null, path: null, channels: ['#chan'],
+      })
+    })
+
+    it('accepts target=null repo-shape (no plugin will claim it but parser is generic)', () => {
+      expect(parseCommand('watch org/r')).toEqual({
+        kind: 'watch-repo', target: null, repo: 'org/r', branch: null, path: null, channels: [],
+      })
+    })
+
+    it('rejects unwatch-repo with channel args', () => {
+      const cmd = parseCommand('unwatch repo org/r #x') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/no channel arguments/)
+    })
   })
 })
 
 describe('parseCommands', () => {
   it('parses multi-line input', () => {
     expect(parseCommands('watch 5; unwatch pr 10')).toEqual([
-      { kind: 'watch', target: null, number: 5, channels: [] },
-      { kind: 'unwatch', target: 'pr', number: 10 },
+      { kind: 'watch', target: null, number: 5, repo: null, channels: [] },
+      { kind: 'unwatch', target: 'pr', number: 10, repo: null },
     ])
   })
 })
@@ -276,13 +387,14 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toBe('issues: list-section\n\nprs: list-section')
   })
 
-  it('broadcasts `help` to every plugin and joins with \\n\\n', async () => {
+  it('broadcasts `help` to every plugin and joins with \\n\\n, prepending the dispatcher synopsis', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'help' })
-    expect(irc.dms[0].text).toBe('issues: help-section\n\nprs: help-section')
+    expect(irc.dms[0].text).toContain('dispatcher DM grammar')
+    expect(irc.dms[0].text).toContain('issues: help-section\n\nprs: help-section')
   })
 
   it('surfaces "no plugin handles" when no plugin claims a target', async () => {
@@ -293,6 +405,22 @@ describe('handleDm — routing', () => {
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear <N>/)
     expect(irc.dms[0].text).toMatch(/enabled plugins: issues/)
+  })
+
+  it('surfaces "no plugin handles" with the repo positional in the grammar shape', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch linear 99 org/r' })
+    expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear <N> <owner>\/<repo>/)
+  })
+
+  it('surfaces "no plugin handles" for a watch-repo when no plugin claims it', async () => {
+    await writeConfig(dir, { project: 'roost', plugins: {} })
+    const issues = new StubPlugin('issues', null)
+    const { deps, irc } = makeDeps(dir, [issues])
+    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch repo org/r' })
+    expect(irc.dms[0].text).toMatch(/no plugin handles `watch repo <owner>\/<repo>/)
   })
 
   it('any parse error aborts the batch — no plugin called', async () => {

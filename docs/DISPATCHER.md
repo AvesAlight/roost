@@ -62,6 +62,12 @@ remove it — the dispatcher will pick it up via a fresh `watch <N>`.
 There's no automatic migration: refusing to mutate tracked entries is
 the contract, not a bug.
 
+Promoting a local entry to tracked is the reverse: hand-edit
+`config.json` to add it, then DM `unwatch <N>` (or `unwatch repo …` /
+`unwatch new-issues …`) to prune the local copy. Skipping the unwatch
+leaves the same key in both files — concat-merge would scrape it twice
+and `watch list` shows the duplicate.
+
 Fields:
 
 | Field | Meaning |
@@ -126,8 +132,8 @@ State files in `.orchestrator/`:
 
 | File | Purpose |
 |---|---|
-| `config.json` | Tracked in git. Shareable project shape (static slices only — `github-new-issues`, `github-commits`). Hand-edited only; the dispatcher never writes here. See "Two-file split" above. |
-| `config.local.json` | Gitignored. Dispatcher-mutated overlay for DM-driven watches (`watch <N>`, `unwatch <N>`, `watch pr <N>`). Concatenated onto config.json's `plugins.<name>.watched`. |
+| `config.json` | Tracked in git. Shareable project shape (operator-curated slices — `github-new-issues`, `github-commits`, plus any per-PR/issue entries the team agrees on). Hand-edited only; the dispatcher never writes here. See "Two-file split" above. |
+| `config.local.json` | Gitignored. Dispatcher-mutated overlay for DM-driven watches. Concatenated onto config.json's `plugins.<name>.watched`. Every first-party plugin can both seed entries via tracked config.json **and** accept DM additions to the overlay — see "DM grammar" below. |
 | `config.example.json` | Tracked. Template for `config.json` in forks (static shape). |
 | `config.local.example.json` | Tracked. Template for `config.local.json` — empty `github-prs` / `github-issues` scaffolds that enable the DM-driven plugins. |
 | `state.json` | Last seen GH state per watched entry. Re-seedable. |
@@ -166,6 +172,61 @@ bin/stop-dispatcher <config-dir>
 ```
 
 Sends SIGTERM and waits up to 30s (override with `STOP_TIMEOUT=<seconds>`). No SIGKILL escalation — if the daemon hangs past 30s, kill it manually. Idempotent — exits 0 if no live dispatcher is found.
+
+## DM grammar
+
+The dispatcher accepts a small command grammar via direct message from
+nicks in `irc.command_senders` (defaults to lead-pm + APM). Plugins claim
+target keywords; the parser is target-agnostic.
+
+```
+watch [<target>] <N> [<owner>/<repo>] [#chan ...]      # github-prs, github-issues
+unwatch [<target>] <N> [<owner>/<repo>]
+watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]  # github-commits (target=repo), github-new-issues (target=new-issues; no @/: allowed)
+unwatch <target> <owner>/<repo>[@<branch>[:<path>]]
+watch list      # every plugin's active entries
+help            # synopsis + per-plugin help
+```
+
+Target keywords currently claimed by first-party plugins:
+
+| `<target>` | Plugin | Grammar |
+|---|---|---|
+| (none) | `github-issues` | `watch <N> [<owner>/<repo>] [#chan ...]` |
+| `pr` | `github-prs` | `watch pr <N> [<owner>/<repo>] [#chan ...]` |
+| `repo` | `github-commits` | `watch repo <owner>/<repo>[@<branch>[:<path>]] [#chan ...]` |
+| `new-issues` | `github-new-issues` | `watch new-issues <owner>/<repo> [#chan ...]` |
+
+Notes:
+
+- The optional `<owner>/<repo>` positional after `<N>` is the cross-repo
+  knob — it pins one PR/issue to a non-default repo. Disambiguated from
+  channels by containing `/` (channels start with `#`). Omitting it
+  inherits `config.repo`; in multi-repo mode (`config.repo` unset) the
+  bare form is rejected.
+- The repo-shape grammar (`<owner>/<repo>[@<branch>[:<path>]]`) mirrors
+  the github-commits state key, so a daemon.log line copy-pastes into a
+  DM. Branch defaults to `main` when omitted; path is optional.
+- DM additions land in `config.local.json` only. Re-watching a tracked
+  entry is idempotent; unwatching a tracked entry is refused with
+  `… in tracked config.json — hand-edit to remove`.
+
+### Repo-mode invariant — tracked-strict, local-loose
+
+The repo-mode invariant runs only against tracked `config.json` entries
+— local-overlay entries (DM-driven) bypass it because the DM parser
+validates OWNER/REPO shape at write time, leaving the overlay
+parser-clean by construction.
+
+Plugins that own a `watched`/`repo` shape enforce a single-vs-multi-repo
+check: in single-repo mode (top-level `repo` set), entries' `repo` must
+be absent or equal `config.repo`; in multi-repo mode (top-level `repo`
+unset), every entry must carry its own `repo`. The tracked-only rule lets
+an operator running a single-repo dispatcher use `watch pr 5 OtherOrg/r`
+to watch a cross-repo PR without losing the typo-guard on hand-edited
+tracked entries. See `Plugin.assertRepoMode`
+(`src/orchestrator/plugin.ts`) for the contract and `assertEntryRepoMode`
+(`src/orchestrator/config.ts`) for the mode invariants.
 
 ## Events dispatched
 
