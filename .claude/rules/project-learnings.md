@@ -43,3 +43,13 @@ When a worker hits a design call mid-plan with two plausible answers, surface it
 ## 2026-05-19: When fixing a prompt failure mode, audit whether the trigger is narrower than the right fix (from #448)
 
 Adding a behavior rule to agent prompts to address a specific failure? Audit whether the failure mode is narrower than the rule needs to be. The #448 trigger was "inline PR thread comment" but the right fix covers all GitHub PR reply surfaces — inline diff threads, top-level review summaries, and PR conversation comments. Phrasing the rule against the trigger example leaves adjacent failure modes unpatched. Generalize at first draft; the reviewer agent will catch over-narrowing, but it's cheaper to think one level up while writing.
+
+## 2026-05-20: Verify external-system behavior empirically before flipping ready (from #449)
+
+When a PR's core logic depends on external system behavior — API field shape, platform feature firing, third-party side effect — unit tests of mocked responses prove your code handles the shape; they don't prove the shape exists in the wild. Verify empirically before lead-review.
+
+Concrete: PR #462 routed cross-repo closure events. 666 mocked tests passed, but nobody had confirmed GitHub's `closingIssuesReferences` actually populates for cross-repo refs. A 15-min throwaway PR + GraphQL query confirmed both same-org and cross-org variants populate.
+
+Gate this in the lead's pre-review pressure-test, not the worker's plan. Question: "what external-system fact is this code load-bearing on, and have we observed it?"
+
+Different from §#410 (artifact-shape): that's about durable artifacts (prompts, conventions). This is about behavior shapes (does the API actually do X). Same load-bearing-assumption muscle.
