@@ -74,6 +74,12 @@ interface GhPluginConfig {
   watched?: WatchedEntry[]
 }
 
+// Shared phrasing for "this watch lives in the tracked file; the dispatcher
+// won't touch it". Centralized so a rename of config.json (or a future
+// path knob) only flips one string.
+const trackedRefusal = (label: string, n: number, action: string) =>
+  `${label} #${n} in tracked config.json — hand-edit to ${action}`
+
 // Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
 // `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
 // slice convention, and `handleCommand` for watch/unwatch/list/help.
@@ -177,7 +183,7 @@ export abstract class GhBase extends GhPluginBase {
     const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []
     const localEntry = localEntries.find(e => e.number === number)
     if (!localEntry) {
-      return `${this.label} #${number} in tracked config.json — hand-edit to add channels`
+      return trackedRefusal(this.label, number, 'add channels')
     }
     const existing = new Set(localEntry.channels ?? [])
     const added: string[] = []
@@ -201,7 +207,7 @@ export abstract class GhBase extends GhPluginBase {
     }
     const inMerged = this.watched(merged).some(e => e.number === number)
     if (inMerged) {
-      return `${this.label} #${number} in tracked config.json — hand-edit to remove`
+      return trackedRefusal(this.label, number, 'remove')
     }
     return `not watching ${this.label} #${number}`
   }

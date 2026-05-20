@@ -52,10 +52,12 @@ contribute live entries. DM commands operate on the local overlay only:
 modify tracked operator/project state.
 
 Existing operators upgrading from the single-file layout: your old
-config.json keeps working as-is. The dispatcher just stops writing to it
-on the next watch; new entries land in config.local.json. Move your
-dynamic `github-prs` / `github-issues` watches over by hand if you want a
-clean separation, or wait — they heal naturally on the next re-watch.
+config.json keeps working as-is. The dispatcher stops writing to it on
+the next watch; new entries land in config.local.json. To bring a
+tracked entry under dispatcher control, hand-edit `config.json` to
+remove it — the dispatcher will pick it up via a fresh `watch <N>`.
+There's no automatic migration: refusing to mutate tracked entries is
+the contract, not a bug.
 
 Fields:
 

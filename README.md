@@ -37,7 +37,7 @@ Bootstrap your project, then kick off lead-pm:
 
 ```bash
 cd ~/Dev/myproject
-roost init                          # writes .orchestrator/config.json + copies role prompts
+roost init                          # writes .orchestrator/{config.json, config.local.json, .gitignore} + copies role prompts
 roost spawn myproject-lead-pm \
   --agent lead-pm \
   --channels '#myproject-leads' \
@@ -179,7 +179,7 @@ to control which issues and PRs are tracked:
 
 ```bash
 cd ~/Dev/myproject
-roost init                              # first-time: writes .orchestrator/config.json + prompts
+roost init                              # first-time: writes .orchestrator/{config.json, config.local.json, .gitignore} + prompts
 CONFIG_DIR="$(pwd)/.orchestrator"
 "$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
 ```
