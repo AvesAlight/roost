@@ -1,29 +1,15 @@
 // Plugin seam. A plugin owns symmetric slices of `state.plugins[name]` and
-// `config.plugins[name]`, declares which IRC channels it wants joined, and on
-// each tick returns pre-routed, pre-formatted events. Event kinds are
-// plugin-internal — the dispatcher iterates `TaggedEvent[]` and writes to IRC,
-// agnostic to the source plugin's event vocabulary.
-//
-// Plugins may also opt in to inbound DM commands via `handleCommand`: see
-// dispatcher-dm-handler.ts for the routing layer. `handleCommand` receives
-// both the merged config (for idempotency / list views) and the local
-// overlay (for mutations) — config.json is read-only from the dispatcher,
-// so any state change must be made on the local overlay.
+// `config.plugins[name]`, declares the IRC channels it wants joined, and per
+// tick returns pre-routed, pre-formatted events.
 import type { Command } from './dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from './config.js'
 
-// Narrow view of the orchestrator config that the plugin seam exposes
-// publicly. External plugins type their method parameters with this so they
-// only see their own slice path — never the wider OrchestratorConfig shape
-// (project/repo/irc/etc.). OrchestratorConfig is structurally assignable to
-// PluginConfig, so internal callers passing OrchestratorConfig still satisfy
-// external implementations that declare PluginConfig.
+// Narrow view of OrchestratorConfig surfaced to external plugins — only the
+// `plugins.<name>` slice path, not the wider shape.
 export interface PluginConfig {
   plugins?: Record<string, unknown>
 }
 
-// Pre-formatted payload variants. Plugins decide one-line vs. multi-line;
-// the dispatcher only knows how to write each variant to IRC.
 export type TaggedEventPayload =
   | { kind: 'oneline'; text: string }
   | { kind: 'multiline'; header: string; body: string; url: string }
@@ -36,46 +22,33 @@ export interface TaggedEvent {
 export interface PluginTickResult {
   state: unknown
   taggedEvents: TaggedEvent[]
-  // Comprehensive channel set the plugin wants joined now — includes dynamic
-  // members only learnable after scraping (PR linked-issues channels), so
-  // the orchestrator picks them up post-tick. Pre-tick boot uses the
-  // synchronous desiredChannels(config) view instead.
-  // Excludes the project/default channel — orchestrator unions that in.
+  // Channels the plugin wants joined post-tick, including dynamic ones only
+  // learnable after scraping (PR linked-issues). Excludes the project channel
+  // — orchestrator unions that in. Boot path uses desiredChannels(config).
   channels: string[]
 }
 
 export interface Plugin {
   readonly name: string
-  // Synchronous, config-only view of channels the plugin wants joined at boot,
-  // before the first tick. Does NOT include the project/default channel —
-  // the orchestrator unions that in itself.
+  // Config-only channel view at boot, before first tick. Excludes the project
+  // channel — orchestrator unions that in.
   desiredChannels(config: OrchestratorConfig): string[]
-  // Per-tick: state slice + tagged events + the live channel set (post-scrape,
-  // including dynamic discoveries like PR linked-issues). Seeding is signaled
-  // by `prevState === null`.
+  // Per tick: next state slice, tagged events, and the live channel set
+  // (post-scrape, including dynamic discoveries). `prevState === null` signals seed.
   runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
-  // Optional: handle a parsed DM command (see dispatcher-dm-handler.ts).
-  // `merged` is the live view (config.json + config.local.json with
-  // `plugins.<name>.watched` arrays concatenated); `local` is the
-  // gitignored overlay this plugin should mutate. Plugins MUST only mutate
-  // `local.plugins[name]` — config.json is read-only from the dispatcher.
-  // Return a reply line when this plugin handles the command, null when it
-  // doesn't apply. Implementations MUST NOT throw: deterministic failures
-  // (e.g. malformed slice) must come back as an `"error: ..."` string. The
-  // router will treat a thrown exception as a bug and surface a
-  // [dispatcher_error]. Both watch list and help are broadcast to every
-  // enabled plugin; replies are joined with `\n\n`.
+  // Optional DM handler. `merged` is the live view; `local` is the gitignored
+  // overlay the plugin mutates (config.json is read-only from the dispatcher).
+  // Returns the reply when handled, null when not ours. MUST NOT throw —
+  // deterministic failures come back as `"error: ..."`. `list`/`help` broadcast
+  // to every plugin; replies join with `\n\n`.
   handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
-  // Optional: assert this plugin's own slice respects the active repo mode
-  // (single vs multi). Plugins that own a `watched`/`repo` shape implement
-  // this to enforce their own constraints; plugins that are cross-repo by
-  // design (e.g. github-commits) omit it. Throw on violation — the caller
-  // surfaces the message. Called after config load and per-tick reload.
+  // Optional repo-mode check for plugins that own a `watched`/`repo` shape.
+  // Throws on violation. Called after every config load.
   //
-  // The repo-mode invariant runs only against tracked `config.json` entries
-  // — local-overlay entries (DM-driven) bypass it because the DM parser
-  // validates OWNER/REPO shape at write time, leaving the overlay
-  // parser-clean by construction.
+  // Tracked-only: local-overlay entries (DM-driven) bypass this check because
+  // the DM parser validates OWNER/REPO shape at write time, leaving the
+  // overlay parser-clean by construction. Single source of truth for the
+  // tracked-vs-overlay distinction lives here — call sites cite this JSDoc.
   assertRepoMode?(base: OrchestratorConfig): void
 }
 
@@ -86,46 +59,47 @@ export abstract class BasePlugin implements Plugin {
   abstract runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
   handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
 
-  // Union auto-detected channels with the entry's declared channels;
-  // fall back to the default channel if both are empty (defensive for any
-  // future entity-less event).
+  // Union auto-detected channels with declared channels; fall back to the
+  // default channel if both are empty (defensive for any entity-less event).
   protected resolveChannels(autoDetected: string[], entryChannels: string[]): string[] {
     const merged = Array.from(new Set([...autoDetected, ...entryChannels]))
     return merged.length ? merged : [this.defaultChannel]
   }
 
-  // Read this plugin's config slice from `config.plugins[name]`. The shape is
-  // plugin-private; callers cast to their own typed interface.
+  // This plugin's config slice from `config.plugins[name]` — shape is plugin-private.
   protected pluginConfig<T>(config: OrchestratorConfig): T | undefined {
     return config.plugins?.[this.name] as T | undefined
+  }
+
+  // Read-or-create the typed slice under `local.plugins[name]`. The one
+  // mutation seam shared by every watch-list plugin.
+  protected localSlice<T extends object>(local: OrchestratorConfig): T {
+    local.plugins ??= {}
+    const existing = local.plugins[this.name]
+    if (existing && typeof existing === 'object') return existing as T
+    const fresh = {} as T
+    local.plugins[this.name] = fresh
+    return fresh
   }
 }
 
 // ---- Registry --------------------------------------------------------------
-// Config-driven instantiation: each plugin module registers a factory keyed
-// on the same name it uses for its state slice. orchestrator.ts iterates
-// `config.plugins` and instantiates via `getPluginFactory`. Side-effect
-// imports in src/orchestrator/registry.ts populate the built-in set.
+// Plugin modules register a factory keyed on the slice name. orchestrator.ts
+// iterates `config.plugins` and instantiates via `getPluginFactory`. Built-ins
+// register via side-effect import of `registry.ts`.
 
-// Diagnostic log sink passed to every plugin factory. Plugins use it for
-// boot-time wiring (e.g., the github plugin pipes its retry trace through
-// this), letting core stay plugin-agnostic.
 export type PluginLogger = (msg: string) => void
 
-// Stderr-only fallback for direct-construction test paths. The real
-// dispatcher modes always supply their own sink via the plugin factory.
+// Stderr fallback for direct-construction test paths. Real dispatcher modes
+// supply their own sink via the plugin factory.
 export const defaultPluginLogger: PluginLogger = (msg) => { process.stderr.write(msg) }
 
 export type PluginFactory = (defaultChannel: string, log: PluginLogger) => Plugin
 
 const REGISTRY = new Map<string, PluginFactory>()
 
-// Throws on duplicate name — silent overwrite would let one plugin
-// shadow another's state slice (registry key === state.plugins[name] key)
-// and cause hours of "where did my events go" debugging. Built-ins register
-// once at process boot via side-effect import of `registry.ts`; external
-// plugins register at top level of their module when loaded by the loader.
-// Test cleanup uses `unregisterPlugin`.
+// Throws on duplicate — silent overwrite would shadow another plugin's state
+// slice (registry key === state.plugins[name] key).
 export function registerPlugin(name: string, factory: PluginFactory): void {
   if (REGISTRY.has(name)) {
     throw new Error(`plugin already registered: ${name}`)
@@ -133,9 +107,7 @@ export function registerPlugin(name: string, factory: PluginFactory): void {
   REGISTRY.set(name, factory)
 }
 
-// Test-only escape hatch. Not exported from `plugin-api.ts` — external
-// plugins have no reason to deregister themselves. Returns true if the name
-// was registered, false if absent.
+// Test-only escape hatch — not exported from `plugin-api.ts`.
 export function unregisterPlugin(name: string): boolean {
   return REGISTRY.delete(name)
 }
@@ -148,12 +120,8 @@ export function registeredPluginNames(): string[] {
   return [...REGISTRY.keys()]
 }
 
-// Iterate plugins and dispatch each one's `assertRepoMode` (if implemented).
-// Core is plugin-agnostic — it doesn't know about `watched[*].repo` or
-// `slice.repo`; the plugins that own those shapes enforce their own rules.
-// Called by every config-load site so an operator hand-edit is caught on
-// the next tick / DM rather than only at boot. See `Plugin.assertRepoMode`
-// for the tracked-only contract.
+// Dispatch each plugin's `assertRepoMode` if implemented. Called by every
+// config-load site so an operator hand-edit is caught on the next tick / DM.
 export function assertRepoModeAll(plugins: Plugin[], base: OrchestratorConfig): void {
   for (const p of plugins) p.assertRepoMode?.(base)
 }

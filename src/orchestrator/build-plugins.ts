@@ -1,13 +1,9 @@
-// Plugin instantiation. Separate module so the config → ordered Plugin[]
-// surface stays focused and testable. A plugin not listed under
-// `config.plugins` is not instantiated — there is no default-on. New
-// projects pick the shipped plugins up via `bin/roost init`'s template.
+// Plugin instantiation. A plugin not listed in `config.plugins` is not built —
+// no default-on. New projects pick up shipped plugins via `bin/roost init`.
 import type { OrchestratorConfig } from './config.js'
 import { getPluginFactory, registeredPluginNames, type Plugin, type PluginLogger } from './plugin.js'
 
-// Instantiate plugins from `config.plugins` via the registry. Order follows
-// `Object.keys` insertion order in the config JSON, so emission order is
-// predictable from the operator's POV.
+// Order follows `Object.keys` insertion order so emission order is predictable.
 export function buildPlugins(config: OrchestratorConfig, defaultChannel: string, log: PluginLogger): Plugin[] {
   const names = Object.keys(config.plugins ?? {})
   return names.map(name => {

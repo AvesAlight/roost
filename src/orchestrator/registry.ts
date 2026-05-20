@@ -1,6 +1,5 @@
-// Built-in plugin registration. Importing this module for side effects
-// populates the registry in plugin.ts with the shipped plugin set.
-// Add a new built-in plugin here; nothing in orchestrator.ts needs to change.
+// Side-effect import populates the registry with the shipped plugin set.
+// Add new built-ins here; nothing else needs to change.
 import { registerPlugin } from './plugin.js'
 import { GitHubPrsPlugin } from './plugins/github/prs-plugin.js'
 import { GitHubIssuesPlugin } from './plugins/github/issues-plugin.js'

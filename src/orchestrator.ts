@@ -20,7 +20,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { assertRepoModeAll, defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
+import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
@@ -28,15 +28,50 @@ import { resolveProjectChannel } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
-// ---- Path setup ------------------------------------------------------------
-
 const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
-
-// ---- Tick ------------------------------------------------------------------
 
 interface TickResult {
   taggedEvents: TaggedEvent[]
   channels: string[]
+}
+
+// Boot dance shared by daemon / --dispatch-irc / one-shot: load config + external
+// plugins, build the plugin set, and run the tracked-only repo-mode check.
+async function loadConfigWithPlugins(
+  stateDir: string,
+  log: PluginLogger,
+): Promise<{ config: OrchestratorConfig; plugins: Plugin[]; projectChannel: string }> {
+  const config = await loadConfig(stateDir)
+  const projectChannel = resolveProjectChannel(config)
+  await loadExternalPlugins(stateDir, config.plugin_paths)
+  const plugins = buildPlugins(config, projectChannel, log)
+  assertRepoModeAll(plugins, await loadConfigBase(stateDir))
+  return { config, plugins, projectChannel }
+}
+
+function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
+  const chans = new Set<string>([projectChannel])
+  for (const plugin of plugins) {
+    for (const c of plugin.desiredChannels(config)) chans.add(c)
+  }
+  return [...chans].sort()
+}
+
+// IRC client shape shared by daemon and --dispatch-irc.
+function newIrcClient(nick: string, channels: string[]): RoostIrcClientImpl {
+  return new RoostIrcClientImpl({
+    nick,
+    autoJoin: channels,
+    historySize: 0,
+    joinHistoryLines: 0,
+    joinHistoryMinutes: 0,
+  })
+}
+
+function requireIrcConfig(config: OrchestratorConfig, mode: string): { nick: string; server: string; port: number } {
+  const ircCfg = config.irc ?? {}
+  if (!ircCfg.nick) throw new Error(`${mode} requires irc.nick in config`)
+  return { nick: ircCfg.nick, server: ircCfg.server ?? '127.0.0.1', port: ircCfg.port ?? 6667 }
 }
 
 async function runOneTick(
@@ -55,9 +90,7 @@ async function runOneTick(
   const allTagged: TaggedEvent[] = []
   const allChannels = new Set<string>()
 
-  // Plugins are independent — share GH rate limits but no in-process state —
-  // so parallel execution is safe and useful for any N≥2. Seeding is signaled
-  // by `prev === null` (loadState skipped above when opts.seed).
+  // Plugins share GH rate limits but no in-process state — parallel-safe.
   const results = await Promise.all(
     plugins.map(async plugin => ({
       plugin,
@@ -79,69 +112,42 @@ async function runOneTick(
   return { taggedEvents: allTagged, channels: [...allChannels] }
 }
 
-function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
-  const chans = new Set<string>([projectChannel])
-  for (const plugin of plugins) {
-    for (const c of plugin.desiredChannels(config)) chans.add(c)
-  }
-  return [...chans].sort()
-}
-
-// ---- Daemon ----------------------------------------------------------------
-
 async function runDaemon(stateDir: string): Promise<void> {
   await mkdir(stateDir, { recursive: true })
-  const logFile = Bun.file(join(stateDir, 'daemon.log'))
-  const logWriter = logFile.writer()
+  const logWriter = Bun.file(join(stateDir, 'daemon.log')).writer()
   const log = (msg: string) => {
     process.stderr.write(msg)
     logWriter.write(msg)
     logWriter.flush()
   }
 
-  // The in-daemon claim is the source of truth for "this dispatcher owns
-  // this stateDir" — exclusive-create on the PID file. bin/start-dispatcher
-  // has its own mkdir lock that serves as the cheap front-door check.
+  // In-daemon source of truth for "this dispatcher owns this stateDir";
+  // bin/start-dispatcher has a cheaper mkdir lock for the front-door check.
   const pidInfo = await writeDispatcherPid(stateDir)
   log(`orchestrator[daemon]: pid ${pidInfo.pid} written to ${stateDir}/dispatcher.pid\n`)
 
-  let config = await loadConfig(stateDir)
-  const ircCfg = config.irc ?? {}
-  const nick = ircCfg.nick
-  if (!nick) throw new Error('daemon mode requires irc.nick in config')
-  const projectChannel = resolveProjectChannel(config)
-  const server = ircCfg.server ?? '127.0.0.1'
-  const port = ircCfg.port ?? 6667
-  const interval = Math.max(5, ircCfg.interval_seconds ?? 60) * 1000
-
-  await loadExternalPlugins(stateDir, config.plugin_paths)
-  const plugins = buildPlugins(config, projectChannel, log)
-  assertRepoModeAll(plugins, await loadConfigBase(stateDir))
+  const { config: initialConfig, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, log)
+  let config = initialConfig
+  const { nick, server, port } = requireIrcConfig(config, 'daemon mode')
+  const interval = Math.max(5, (config.irc?.interval_seconds ?? 60)) * 1000
   const initialChannels = bootChannels(plugins, config, projectChannel)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
-  const client = new RoostIrcClientImpl({
-    nick,
-    autoJoin: initialChannels,
-    historySize: 0,
-    joinHistoryLines: 0,
-    joinHistoryMinutes: 0,
-  })
-
+  const client = newIrcClient(nick, initialChannels)
   await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, initialChannels)
   log('orchestrator[daemon]: connected\n')
 
-  // DM command handler. Channel messages are ignored; DMs flow through
-  // the allowlist + parser + mutateConfig pipeline in dispatcher-dm-handler.ts.
+  const trySay = (ch: string, text: string) => {
+    try { client.say(ch, text) } catch { /* best-effort */ }
+  }
+
   const dmHandlerDeps = {
     stateDir,
     plugins,
-    dm: (nick: string, text: string) => {
-      try { client.say(nick, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) }
+    dm: (target: string, text: string) => {
+      try { client.say(target, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) }
     },
-    postProjectError: (text: string) => {
-      try { client.say(projectChannel, text) } catch { /* best-effort */ }
-    },
+    postProjectError: (text: string) => trySay(projectChannel, text),
     log: (line: string) => log(`${line}\n`),
   }
 
@@ -187,36 +193,29 @@ async function runDaemon(stateDir: string): Promise<void> {
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
-      try { client.say(projectChannel, `[dispatcher_error] ${msg}`) } catch { /* best-effort */ }
+      trySay(projectChannel, `[dispatcher_error] ${msg}`)
       // Fall back to the config-only channel view so a transient GH/scrape
       // blip doesn't part every #issue-N until the next success.
       result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
     }
 
-    // Sync IRC membership against the plugin's reported desired set + project channel.
+    // Reconcile IRC membership against plugins' desired set, then snapshot.
+    // On reconcile failure, re-query so the snapshot reflects reality.
     const desired = new Set<string>([projectChannel, ...result.channels])
-    let joinedSnapshot: string[] | null = null
+    let joined: string[] | null = null
     try {
-      const currentlyJoined = (await client.whoisChannels()) ?? []
-      for (const ch of currentlyJoined) {
+      for (const ch of (await client.whoisChannels()) ?? []) {
         if (!desired.has(ch)) await client.leave(ch)
       }
       for (const ch of desired) {
         if (!client.isJoined(ch)) await client.join(ch)
       }
-      // Reconcile succeeded — `desired` is what we should be in. Avoid a
-      // second whoisChannels round-trip just to snapshot.
-      joinedSnapshot = [...desired].sort()
+      joined = [...desired].sort()
     } catch (e) {
       log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
     }
-
-    // Snapshot of channels we believe we're joined to, for operator
-    // readiness checks. Freshness is "last successful tick", not "now".
-    // On reconcile failure, re-query so the snapshot reflects reality.
     try {
-      const joined = joinedSnapshot ?? ((await client.whoisChannels()) ?? []).sort()
-      await writeJoinedChannels(stateDir, joined)
+      await writeJoinedChannels(stateDir, joined ?? ((await client.whoisChannels()) ?? []).sort())
     } catch (e) {
       log(`orchestrator[daemon]: joined-channels snapshot failed: ${e}\n`)
     }
@@ -227,7 +226,7 @@ async function runDaemon(stateDir: string): Promise<void> {
         log(`orchestrator[daemon]: tick dispatched ${result.taggedEvents.length} event(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
       } catch (e) {
         log(`orchestrator[daemon]: dispatch error: ${e}\n`)
-        try { client.say(projectChannel, `[dispatcher_error] dispatch: ${e}`) } catch { /* best-effort */ }
+        trySay(projectChannel, `[dispatcher_error] dispatch: ${e}`)
       }
     } else {
       log(`orchestrator[daemon]: tick clean, 0 events in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
@@ -242,30 +241,12 @@ async function runDaemon(stateDir: string): Promise<void> {
   log('orchestrator[daemon]: exited cleanly\n')
 }
 
-// ---- One-shot dispatch -----------------------------------------------------
-
 async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
-  const config = await loadConfig(stateDir)
-  const ircCfg = config.irc ?? {}
-  const nick = ircCfg.nick
-  if (!nick) throw new Error('--dispatch-irc requires irc.nick in config')
-  const projectChannel = resolveProjectChannel(config)
-  const server = ircCfg.server ?? '127.0.0.1'
-  const port = ircCfg.port ?? 6667
-
-  await loadExternalPlugins(stateDir, config.plugin_paths)
-  const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
-  assertRepoModeAll(plugins, await loadConfigBase(stateDir))
+  const { config, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, defaultPluginLogger)
+  const { nick, server, port } = requireIrcConfig(config, '--dispatch-irc')
   const channels = bootChannels(plugins, config, projectChannel)
 
-  const client = new RoostIrcClientImpl({
-    nick,
-    autoJoin: channels,
-    historySize: 0,
-    joinHistoryLines: 0,
-    joinHistoryMinutes: 0,
-  })
-
+  const client = newIrcClient(nick, channels)
   await connectAndWait(client, { host: server, port, nick }, channels)
   try {
     const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false })
@@ -280,8 +261,6 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   }
 }
 
-// ---- Main ------------------------------------------------------------------
-
 async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
@@ -294,27 +273,19 @@ async function main(): Promise<void> {
     },
   })
 
-  const stateDir = values['config-dir']
-    ? values['config-dir'] as string
-    : DEFAULT_STATE_DIR
+  const stateDir = (values['config-dir'] as string | undefined) ?? DEFAULT_STATE_DIR
 
   try {
     if (values['daemon']) {
       await runDaemon(stateDir)
       process.exit(0)
     }
-
     if (values['dispatch-irc']) {
       await runDispatchIrc(stateDir, values['seed'] as boolean)
       process.exit(0)
     }
-
-    // One-shot: fetch + diff, print events JSON
-    const config = await loadConfig(stateDir)
-    const projectChannel = resolveProjectChannel(config)
-    await loadExternalPlugins(stateDir, config.plugin_paths)
-    const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
-    assertRepoModeAll(plugins, await loadConfigBase(stateDir))
+    // One-shot: fetch + diff, print events JSON.
+    const { config, plugins } = await loadConfigWithPlugins(stateDir, defaultPluginLogger)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,

@@ -17,8 +17,6 @@ export class GitHubIssuesPlugin extends GhBase {
     return this.entryChannels(config, this.watched(config))
   }
 
-  // Auto-detected channel for an issue event: the issue's own channel.
-  // `slug` is the multi-repo slug (undefined in single-repo mode).
   private static issueEventChannels(project: string, event: OrchestratorEvent, slug: string | undefined): string[] {
     return event.issue != null ? [issueChannel(project, event.issue, slug)] : []
   }
@@ -36,9 +34,8 @@ export class GitHubIssuesPlugin extends GhBase {
     const prev = prevState as IssuePluginState | null
     const scraper = new GhScraper(this.client, agentLogins)
 
-    // Scrape all issues in parallel — each entry is independent. Preserve
-    // config order for taggedEvents so output is stable. prevIssue semantics:
-    // undefined = seeding; null = new to watch list; IssueSnap = normal diff.
+    // Scrape in parallel — entries are independent. Preserve config order.
+    // prevIssue: undefined = seed; null = new entry; IssueSnap = normal diff.
     const scraped = await Promise.all(watched.map(async entry => {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
@@ -54,7 +51,6 @@ export class GitHubIssuesPlugin extends GhBase {
       const slug = channelSlug(config, snap.repo)
       for (const event of events) {
         if (event.kind === 'issue_added_to_watch') {
-          // Issues always get a confirmation — no no-linked-issues analogue here.
           const routingChannels = this.resolveChannels(
             GitHubIssuesPlugin.issueEventChannels(project, event, slug),
             entryChannels

@@ -1,32 +1,18 @@
-// Project-level issue triage feed. Polls a configured list of repos for open
-// issues and emits a oneline announcement to the per-entry channels the first
-// time a given issue number is observed in that repo. Sibling to
-// `github-issues`: that plugin routes activity for hand-watched issues; this
-// one surfaces brand-new issues so the team doesn't have to notice them
-// manually.
+// Project-level new-issue triage feed. Polls watched repos for open issues
+// and announces the first time a given (repo, number) is observed.
 //
-// Enabled by an explicit `plugins.github-new-issues` slice in config.
-// Empty or absent `watched` is a no-op (matches commits-plugin). `bin/roost
-// init` writes one for new projects; existing projects need an operator edit
-// (or the example.json refresh) to pick this up.
+// DM grammar: claims target=`new-issues` — `watch new-issues <owner>/<repo>
+// [#chan ...]`. `@branch`/`:path` are rejected (entries are repo-only).
 //
-// DM grammar: claims target=`new-issues`. Operators can `watch new-issues
-// <owner>/<repo> [#chan ...]` / `unwatch new-issues <owner>/<repo>`.
-// `@branch`/`:path` are not accepted — new-issues entries are repo-only.
-//
-// State slice: `{ repos: Record<string, number[]> }` keyed by repo slug.
-// Seeding (`prev===null`) and first-observation of a new repo entry
-// (`prev.repos[repo]===undefined`) both capture the current open set without
-// emitting — only ticks after seed announce. Removed entries are carried
-// forward in state (matches commits-plugin) so remove-then-readd doesn't
-// replay history. Closed issues that re-open will re-announce only if pruned
-// from `seen` (we don't prune today; the operator can `watch <N>` for it).
+// State slice: `{ repos: Record<string, number[]> }`. Seeding (`prev===null`)
+// and first-observation of a new repo entry both capture without emitting.
+// Removed entries are carried forward so remove-then-readd doesn't replay.
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
-import { trackedRefusal } from '../_shared.js'
+import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -66,58 +52,33 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     return null
   }
 
-  private localSlice(local: OrchestratorConfig): NewIssuesPluginConfig {
-    local.plugins ??= {}
-    const existing = local.plugins[this.name]
-    if (existing && typeof existing === 'object') return existing as NewIssuesPluginConfig
-    const fresh: NewIssuesPluginConfig = {}
-    local.plugins[this.name] = fresh
-    return fresh
-  }
-
   private mergedWatched(config: OrchestratorConfig): NewIssuesWatchEntry[] {
     return this.pluginConfig<NewIssuesPluginConfig>(config)?.watched ?? []
   }
 
   private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, repo: string, channels: string[]): string {
     const labelStr = `new-issues ${repo}`
-    const inMerged = this.mergedWatched(merged).find(e => e.repo === repo)
-    if (!inMerged) {
-      const slice = this.localSlice(local)
+    const match = (e: NewIssuesWatchEntry) => e.repo === repo
+    if (!this.mergedWatched(merged).some(match)) {
+      const slice = this.localSlice<NewIssuesPluginConfig>(local)
       slice.watched ??= []
       const entry: NewIssuesWatchEntry = { repo }
       if (channels.length) entry.channels = [...channels]
       slice.watched.push(entry)
-      return channels.length
-        ? `watching ${labelStr} + ${channels.join(' ')}`
-        : `watching ${labelStr}`
+      return channels.length ? `watching ${labelStr} + ${channels.join(' ')}` : `watching ${labelStr}`
     }
-    if (!channels.length) return `already watching ${labelStr}`
-    const localEntries = this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? []
-    const localEntry = localEntries.find(e => e.repo === repo)
-    if (!localEntry) {
-      return trackedRefusal(labelStr, 'add channels')
-    }
-    const existing = new Set(localEntry.channels ?? [])
-    const added: string[] = []
-    for (const c of channels) if (!existing.has(c)) { existing.add(c); added.push(c) }
-    if (!added.length) return `${labelStr} channels unchanged`
-    localEntry.channels = [...existing]
-    return `${labelStr} + ${added.join(' ')}`
+    const localEntry = (this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? []).find(match)
+    if (!localEntry) return channels.length ? trackedRefusal(labelStr, 'add channels') : `already watching ${labelStr}`
+    return addChannelsToEntry(localEntry, channels, labelStr)
   }
 
   private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, repo: string): string {
-    const labelStr = `new-issues ${repo}`
-    const localEntries = this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? []
-    const localIdx = localEntries.findIndex(e => e.repo === repo)
-    if (localIdx >= 0) {
-      localEntries.splice(localIdx, 1)
-      return `unwatched ${labelStr}`
-    }
-    if (this.mergedWatched(merged).some(e => e.repo === repo)) {
-      return trackedRefusal(labelStr, 'remove')
-    }
-    return `not watching ${labelStr}`
+    return applyUnwatchEntry<NewIssuesWatchEntry>(
+      this.mergedWatched(merged),
+      this.pluginConfig<NewIssuesPluginConfig>(local)?.watched ?? [],
+      e => e.repo === repo,
+      `new-issues ${repo}`,
+    )
   }
 
   private formatListSection(merged: OrchestratorConfig): string {
@@ -152,8 +113,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     ].join('\n')
   }
 
-  // Project channel is unioned in by the orchestrator. Explicit per-entry
-  // channels are surfaced here so they join at boot.
+  // Project channel is unioned in by the orchestrator; per-entry channels join at boot.
   desiredChannels(config: OrchestratorConfig): string[] {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     const chans = new Set<string>()
@@ -163,14 +123,8 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     return [...chans]
   }
 
-  // Each watched entry's repo must equal config.repo when set (single mode);
-  // the type guarantees repo is present, so the multi-mode missing-repo branch
-  // never fires for this plugin. Mirrors the gh-base watched check.
-  //
-  // The repo-mode invariant runs only against tracked `config.json` entries
-  // — local-overlay entries (DM-driven) bypass it because the DM parser
-  // validates OWNER/REPO shape at write time, leaving the overlay
-  // parser-clean by construction.
+  // Tracked-only; see `Plugin.assertRepoMode` for rationale. The repo field
+  // is statically required, so the multi-mode missing-repo branch never fires.
   assertRepoMode(base: OrchestratorConfig): void {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(base) ?? {}
     const topRepo = base.repo
@@ -182,18 +136,14 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     const watchEntries = slice.watched ?? []
-    // Empty or absent watched is a no-op — matches commits-plugin semantics so
-    // an init-stub `{ "watched": [] }` is harmless.
     if (!watchEntries.length) return { state: prevState ?? { repos: {} }, taggedEvents: [], channels: [] }
 
-    // State migration: old flat format (`seen_issue_numbers` present, `repos` absent) re-seeds cleanly.
+    // Re-seed cleanly from older shapes (no `repos` key).
     const prev = (prevState != null && typeof prevState === 'object' && 'repos' in prevState)
       ? prevState as NewIssuesPluginState
       : null
 
     const taggedEvents: TaggedEvent[] = []
-    // Carry forward all repos from prev (matches commits-plugin state retention:
-    // remove-then-readd doesn't replay history).
     const nextRepos: Record<string, number[]> = prev ? { ...prev.repos } : {}
 
     for (const entry of watchEntries) {
@@ -218,8 +168,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
           .sort((a, b) => (a.number ?? 0) - (b.number ?? 0))
         for (const issue of newIssues) {
           taggedEvents.push({
-            // Per-event copy so a downstream mutation of one event's channel
-            // list can't leak into siblings.
+            // Per-event copy so a downstream mutation can't leak across siblings.
             channels: [...announcementChannels],
             payload: { kind: 'oneline', text: formatNewIssue(repo, issue) },
           })

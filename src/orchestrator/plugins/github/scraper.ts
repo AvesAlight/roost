@@ -1,21 +1,17 @@
-// Scraper — fetches a PR/issue snapshot and diffs it against the previous one
-// to produce events. Snapshot construction (fetch + index for diff lookups)
-// is module-private here; the only public surfaces are `GhScraper` (the
-// per-tick handle plugins use), `computePrEvents`/`computeIssueEvents` (pure
-// event computation tested directly), and the `*Internal` snapshot types that
-// `diff.ts` consumes.
+// Scraper — fetch a PR/issue snapshot and diff against the previous one.
+// Public surface: `GhScraper` (per-tick handle), `computePrEvents` /
+// `computeIssueEvents` (tested directly), `*Internal` snapshot types (diff.ts).
 //
 // prevSnap meanings:
-//   undefined → seeding tick (global --seed or no prior state); emit nothing
-//   null      → entity is new to the watch list; emit seed/backlog events
-//   PrSnap    → normal tick; diff against prev and emit change events
+//   undefined → seeding (global --seed or no prior state); emit nothing
+//   null      → new to watch list; emit seed/backlog events
+//   PrSnap    → normal tick; diff and emit change events
 import type { PrSnap, IssueSnap } from './types.js'
 import type { GhClient, GhComment, GhReview } from './github-api.js'
 import { labelNames } from './github-api.js'
 import { diffPr, diffIssue, type OrchestratorEvent } from './diff.js'
 
-// ---- Snapshot types & helpers (module-private outside the *Internal types,
-// which diff.ts imports) ----------------------------------------------------
+// ---- Snapshot types & helpers ---------------------------------------------
 
 export interface PrSnapInternal extends PrSnap {
   _review_comments_by_id: Record<number, GhComment>
@@ -63,10 +59,10 @@ async function snapshotPr(
   ])
 
   const curHead = view.head_oid
-  const linkedIssues =
-    prevSnap && prevSnap.head_oid === curHead
-      ? prevSnap.linked_issues ?? []
-      : await client.fetchPrLinkedIssues(repo, number)
+  // Re-fetch linked issues only on head_oid change — saves a graphql call per tick.
+  const linkedIssues = prevSnap && prevSnap.head_oid === curHead
+    ? prevSnap.linked_issues ?? []
+    : await client.fetchPrLinkedIssues(repo, number)
 
   return {
     repo,
@@ -121,16 +117,13 @@ export function computePrEvents(
 ): { events: OrchestratorEvent[], nextWarnedNoLinked: boolean } {
   const linked = snap.linked_issues ?? []
 
-  if (prevSnap === undefined) return { events: [], nextWarnedNoLinked: false }  // seeding tick
-
-  if (prevSnap !== null) {
-    return { events: diffPr(prevSnap, snap, agentLogins), nextWarnedNoLinked: linked.length === 0 }
-  }
+  if (prevSnap === undefined) return { events: [], nextWarnedNoLinked: false }  // seeding
+  if (prevSnap !== null) return { events: diffPr(prevSnap, snap, agentLogins), nextWarnedNoLinked: !linked.length }
 
   // New PR added to watch list
-  const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : {}) }
+  const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : undefined) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
-  if (linked.length === 0) events.push({ kind: 'pr_no_linked_issues', ...base })
+  if (!linked.length) events.push({ kind: 'pr_no_linked_issues', ...base })
   const existingRev = snap.seen_review_comment_ids.length
   const existingConv = snap.seen_conversation_comment_ids.length
   if (existingRev || existingConv) {
@@ -139,7 +132,7 @@ export function computePrEvents(
   if (snap.ci_state === 'SUCCESS' || snap.ci_state === 'FAILURE') {
     events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, ...base })
   }
-  return { events, nextWarnedNoLinked: linked.length === 0 }
+  return { events, nextWarnedNoLinked: !linked.length }
 }
 
 export function computeIssueEvents(
@@ -147,25 +140,22 @@ export function computeIssueEvents(
   prevIssue: IssueSnap | null | undefined,
   agentLogins: Set<string>
 ): OrchestratorEvent[] {
-  if (prevIssue === undefined) return []  // seeding tick — no events
+  if (prevIssue === undefined) return []  // seeding — no events
   if (prevIssue !== null) return diffIssue(prevIssue, snap, agentLogins)
 
-  // New issue added to watch list
-  const events: OrchestratorEvent[] = [
-    { kind: 'issue_added_to_watch', repo: snap.repo, issue: snap.number, url: snap.url ?? '', title: snap.title ?? '' },
-  ]
+  // New to watch list
+  const base = { repo: snap.repo, issue: snap.number, url: snap.url ?? '', title: snap.title ?? '' }
+  const events: OrchestratorEvent[] = [{ kind: 'issue_added_to_watch', ...base }]
   if (snap.seen_comment_ids.length) {
-    events.push({ kind: 'issue_has_existing_comments', repo: snap.repo, issue: snap.number, url: snap.url ?? '', title: snap.title ?? '', comment_count: snap.seen_comment_ids.length })
+    events.push({ kind: 'issue_has_existing_comments', comment_count: snap.seen_comment_ids.length, ...base })
   }
   return events
 }
 
-// ---- GhScraper — per-tick handle bundling client + agentLogins ------------
+// ---- GhScraper ------------------------------------------------------------
 //
-// Plugins construct one per `runTick` (agentLogins can drift between ticks
-// when an operator edits config), then call `scrapePr`/`scrapeIssue` per
-// watched entry. Replaces threading `client` and `agentLogins` through every
-// scrape callsite.
+// Per-tick handle bundling client + agentLogins. agentLogins can drift between
+// ticks (operator config edit), so plugins build a fresh one per runTick.
 
 export class GhScraper {
   constructor(
