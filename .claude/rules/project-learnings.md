@@ -53,3 +53,9 @@ Concrete: PR #462 routed cross-repo closure events. 666 mocked tests passed, but
 Gate this in the lead's pre-review pressure-test, not the worker's plan. Question: "what external-system fact is this code load-bearing on, and have we observed it?"
 
 Different from §#410 (artifact-shape): that's about durable artifacts (prompts, conventions). This is about behavior shapes (does the API actually do X). Same load-bearing-assumption muscle.
+
+## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
+
+When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
+
+Concrete: PreCompact fired 4× during one milestone, each invocation queued another /compact in tmux; none drained because each new IRC message triggered another auto-compact. Fix was atomic mkdir lock at injection; PR #471.
