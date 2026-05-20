@@ -170,6 +170,24 @@ describe('parseCommand', () => {
       expect(cmd.kind).toBe('unknown')
       expect(cmd.error).toMatch(/channels must match/)
     })
+
+    it('rejects a channel before the repo positional (positional must precede channels)', () => {
+      // `#chan` in the repo slot is a #-prefixed token that doesn't match
+      // OWNER_REPO_RE; it falls through to channels and the trailing
+      // `org/r` then fails CHANNEL_RE. Locks in the "repo before channels"
+      // ordering so a future loosening doesn't accidentally accept both.
+      const cmd = parseCommand('watch pr 5 #chan org/r') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/channels must match/)
+    })
+
+    it('rejects unwatch with a trailing channel even when a repo positional is present', () => {
+      // Without repo: `unwatch pr 5 #x` already errors. The repo positional
+      // mustn't carve a loophole that lets channels sneak in.
+      const cmd = parseCommand('unwatch pr 5 org/r #x') as Extract<Command, { kind: 'unknown' }>
+      expect(cmd.kind).toBe('unknown')
+      expect(cmd.error).toMatch(/no channel arguments/)
+    })
   })
 
   describe('repo-shape grammar (watch/unwatch <target> <owner>/<repo>[@branch[:path]])', () => {

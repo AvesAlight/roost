@@ -3,6 +3,7 @@ import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger, type TaggedEvent } from '../../plugin.js'
+import { trackedRefusal } from '../_shared.js'
 import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
 
 // Thin shared base for any plugin that needs GhClient but not watch-list
@@ -92,12 +93,6 @@ function effectiveRepo(entryRepo: string | undefined, defaultRepo: string | unde
   return entryRepo ?? defaultRepo ?? null
 }
 
-// Shared phrasing for "this watch lives in the tracked file; the dispatcher
-// won't touch it". Centralized so a rename of config.json (or a future
-// path knob) only flips one string.
-const trackedRefusal = (labelStr: string, action: string) =>
-  `${labelStr} in tracked config.json — hand-edit to ${action}`
-
 // Watch-list scaffolding for the two GitHub plugins (PRs, issues). Owns the
 // `<issue-channel> + entry.channels` collector, `{ watched?: WatchedEntry[] }`
 // slice convention, and `handleCommand` for watch/unwatch/list/help.
@@ -121,9 +116,14 @@ export abstract class GhBase extends GhPluginBase {
   // entry's repo (when set) must equal config.repo; in multi mode every entry
   // must carry its own repo. The dispatcher calls this after every config
   // load — boot, tick reload, and DM snapshot.
-  assertRepoMode(config: OrchestratorConfig): void {
-    const topRepo = config.repo
-    for (const entry of this.watched(config)) {
+  //
+  // The repo-mode invariant runs only against tracked `config.json` entries
+  // — local-overlay entries (DM-driven) bypass it because the DM parser
+  // validates OWNER/REPO shape at write time, leaving the overlay
+  // parser-clean by construction.
+  assertRepoMode(base: OrchestratorConfig): void {
+    const topRepo = base.repo
+    for (const entry of this.watched(base)) {
       const id = typeof entry.number === 'number' ? `#${entry.number}` : '(unknown)'
       assertEntryRepoMode(this.name, id, entry.repo, topRepo)
     }
@@ -183,7 +183,8 @@ export abstract class GhBase extends GhPluginBase {
     const defaultRepo = merged.repo
     const effective = effectiveRepo(repo ?? undefined, defaultRepo)
     if (effective === null) {
-      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`watch <N>\` has no repo; supply \`watch ${this.target ?? '<target>'} <N> <owner>/<repo>\``
+      const verbForm = this.target ? `watch ${this.target} <N>` : 'watch <N>'
+      return `error: cannot watch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`${verbForm}\` has no repo; supply \`${verbForm} <owner>/<repo>\``
     }
     // Dedup by (number, effective repo) — `watch pr 5` and `watch pr 5
     // org/other` are distinct entries in single-repo mode.
@@ -223,7 +224,8 @@ export abstract class GhBase extends GhPluginBase {
     const defaultRepo = merged.repo
     const effective = effectiveRepo(repo ?? undefined, defaultRepo)
     if (effective === null) {
-      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`unwatch <N>\` has no repo; supply \`unwatch ${this.target ?? '<target>'} <N> <owner>/<repo>\``
+      const verbForm = this.target ? `unwatch ${this.target} <N>` : 'unwatch <N>'
+      return `error: cannot unwatch ${this.label} #${number} in multi-repo mode (no config.repo) — bare \`${verbForm}\` has no repo; supply \`${verbForm} <owner>/<repo>\``
     }
     const labelStr = formatEntryLabel(this.label, number, effective, defaultRepo)
     const localEntries = this.pluginConfig<GhPluginConfig>(local)?.watched ?? []

@@ -72,13 +72,10 @@ export interface Plugin {
   // design (e.g. github-commits) omit it. Throw on violation — the caller
   // surfaces the message. Called after config load and per-tick reload.
   //
-  // `base` is the TRACKED config.json contents only — local-overlay entries
-  // (config.local.json) bypass this check by design. The mode invariant is
-  // a typo guard for operator hand-edits; local-overlay entries are written
-  // exclusively through the DM parser (which validates OWNER/REPO shape) and
-  // so are parser-clean by construction. Loosening the invariant for local
-  // entries is what lets `watch pr 5 org/other` land in single-repo mode
-  // without forcing the operator to leave config.repo unset.
+  // The repo-mode invariant runs only against tracked `config.json` entries
+  // — local-overlay entries (DM-driven) bypass it because the DM parser
+  // validates OWNER/REPO shape at write time, leaving the overlay
+  // parser-clean by construction.
   assertRepoMode?(base: OrchestratorConfig): void
 }
 
@@ -155,11 +152,8 @@ export function registeredPluginNames(): string[] {
 // Core is plugin-agnostic — it doesn't know about `watched[*].repo` or
 // `slice.repo`; the plugins that own those shapes enforce their own rules.
 // Called by every config-load site so an operator hand-edit is caught on
-// the next tick / DM rather than only at boot.
-//
-// `base` is the TRACKED config.json contents — local-overlay entries skip
-// this check by design (parser-validated on write). See the doc comment on
-// `Plugin.assertRepoMode` for the rationale.
+// the next tick / DM rather than only at boot. See `Plugin.assertRepoMode`
+// for the tracked-only contract.
 export function assertRepoModeAll(plugins: Plugin[], base: OrchestratorConfig): void {
   for (const p of plugins) p.assertRepoMode?.(base)
 }

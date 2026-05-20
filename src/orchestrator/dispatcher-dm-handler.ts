@@ -220,6 +220,19 @@ function describeCommand(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'wa
 // every plugin abstained — caller surfaces "no plugin handles ...").
 // watch/unwatch should match exactly one plugin; list/help broadcast to
 // all and join with `\n\n`.
+
+const HELP_SYNOPSIS = [
+  'dispatcher DM grammar (one per line, or `;`/`,`-separated):',
+  '  watch [<target>] <N> [<owner>/<repo>] [#chan ...]',
+  '  unwatch [<target>] <N> [<owner>/<repo>]',
+  '  watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]',
+  '  unwatch <target> <owner>/<repo>[@<branch>[:<path>]]',
+  '  watch list                 — every plugin\'s active entries',
+  '  help                       — this synopsis + per-plugin commands',
+  '',
+  '<target> is plugin-claimed (`pr`, `repo`, `new-issues`, …). per-plugin help:',
+].join('\n')
+
 async function routeOne(
   merged: OrchestratorConfig,
   local: OrchestratorConfig,
@@ -241,18 +254,6 @@ async function routeOne(
   const sep = cmd.kind === 'list' ? '\n\n' : '\n'
   return replies.join(sep)
 }
-
-const HELP_SYNOPSIS = [
-  'dispatcher DM grammar (one per line, or `;`/`,`-separated):',
-  '  watch [<target>] <N> [<owner>/<repo>] [#chan ...]',
-  '  unwatch [<target>] <N> [<owner>/<repo>]',
-  '  watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]',
-  '  unwatch <target> <owner>/<repo>[@<branch>[:<path>]]',
-  '  watch list                 — every plugin\'s active entries',
-  '  help                       — this synopsis + per-plugin commands',
-  '',
-  '<target> is plugin-claimed (`pr`, `repo`, `new-issues`, …). per-plugin help:',
-].join('\n')
 
 function unmatchedReply(cmd: Extract<Command, { kind: 'watch' | 'unwatch' | 'watch-repo' | 'unwatch-repo' }>, plugins: Plugin[]): string {
   const names = plugins.map(p => p.name).sort().join(', ') || '(none)'

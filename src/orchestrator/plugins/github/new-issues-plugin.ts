@@ -26,6 +26,7 @@ import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
+import { trackedRefusal } from '../_shared.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -41,9 +42,6 @@ interface NewIssuesPluginConfig {
 export interface NewIssuesPluginState {
   repos: Record<string, number[]>
 }
-
-const trackedRefusal = (labelStr: string, action: string) =>
-  `${labelStr} in tracked config.json — hand-edit to ${action}`
 
 export class GitHubNewIssuesPlugin extends GhPluginBase {
   readonly name = 'github-new-issues'
@@ -168,9 +166,14 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   // Each watched entry's repo must equal config.repo when set (single mode);
   // the type guarantees repo is present, so the multi-mode missing-repo branch
   // never fires for this plugin. Mirrors the gh-base watched check.
-  assertRepoMode(config: OrchestratorConfig): void {
-    const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
-    const topRepo = config.repo
+  //
+  // The repo-mode invariant runs only against tracked `config.json` entries
+  // — local-overlay entries (DM-driven) bypass it because the DM parser
+  // validates OWNER/REPO shape at write time, leaving the overlay
+  // parser-clean by construction.
+  assertRepoMode(base: OrchestratorConfig): void {
+    const slice = this.pluginConfig<NewIssuesPluginConfig>(base) ?? {}
+    const topRepo = base.repo
     for (const entry of slice.watched ?? []) {
       assertEntryRepoMode(this.name, `(repo=${entry.repo})`, entry.repo, topRepo)
     }

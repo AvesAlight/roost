@@ -207,20 +207,20 @@ Notes:
 
 ### Repo-mode invariant — tracked-strict, local-loose
 
-Plugins that own a `watched`/`repo` shape enforce a single-vs-multi-repo
-invariant: in single-repo mode (top-level `repo` set), entries' `repo`
-must be absent or equal `config.repo`; in multi-repo mode (top-level
-`repo` unset), every entry must carry its own `repo`. **This check
-runs only against tracked `config.json` entries.** Local-overlay
-entries (DM-driven) bypass it — the DM parser validates OWNER/REPO
-shape at write time, so the overlay is parser-clean by construction.
+The repo-mode invariant runs only against tracked `config.json` entries
+— local-overlay entries (DM-driven) bypass it because the DM parser
+validates OWNER/REPO shape at write time, leaving the overlay
+parser-clean by construction.
 
-The split lets an operator running a single-repo dispatcher use
-`watch pr 5 OtherOrg/other` to watch a cross-repo PR without losing
-the typo-guard on hand-edited tracked entries. See
-`Plugin.assertRepoMode` (`src/orchestrator/plugin.ts`) for the
-contract and `assertEntryRepoMode` (`src/orchestrator/config.ts`) for
-the mode invariants.
+Plugins that own a `watched`/`repo` shape enforce a single-vs-multi-repo
+check: in single-repo mode (top-level `repo` set), entries' `repo` must
+be absent or equal `config.repo`; in multi-repo mode (top-level `repo`
+unset), every entry must carry its own `repo`. The tracked-only rule lets
+an operator running a single-repo dispatcher use `watch pr 5 OtherOrg/r`
+to watch a cross-repo PR without losing the typo-guard on hand-edited
+tracked entries. See `Plugin.assertRepoMode`
+(`src/orchestrator/plugin.ts`) for the contract and `assertEntryRepoMode`
+(`src/orchestrator/config.ts`) for the mode invariants.
 
 ## Events dispatched
 

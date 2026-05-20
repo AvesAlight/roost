@@ -24,6 +24,7 @@ import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
+import { trackedRefusal } from '../_shared.js'
 import type { GhCommit } from './github-api.js'
 import { GhPluginBase } from './base.js'
 
@@ -74,9 +75,6 @@ function matchesEntry(e: CommitWatchEntry, repo: string, branch: string | null, 
     && (e.branch ?? DEFAULT_BRANCH) === (branch ?? DEFAULT_BRANCH)
     && (e.path ?? null) === path
 }
-
-const trackedRefusal = (labelStr: string, action: string) =>
-  `${labelStr} in tracked config.json — hand-edit to ${action}`
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7)
