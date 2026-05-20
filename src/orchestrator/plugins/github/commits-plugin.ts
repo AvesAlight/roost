@@ -13,6 +13,11 @@
 // Seeding (prev === null) and new-entry first-observation (prev !== null but
 // no prior key) both record the head sha without announcing — same pattern
 // as github-new-issues.
+//
+// No `assertRepoMode` — every entry already requires `repo` statically
+// (`CommitWatchEntry.repo: string`), and the use case is cross-repo by design
+// (the tap-bump dance polls a different repo than the dispatcher's own). The
+// per-watch plugins' single-vs-multi invariant does not apply here.
 
 import type { OrchestratorConfig } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'

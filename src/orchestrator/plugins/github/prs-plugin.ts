@@ -1,6 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
-import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
+import { channelSlug, defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { GhScraper } from './scraper.js'
@@ -19,13 +19,22 @@ export class GitHubPrsPlugin extends GhBase {
 
   // Auto-detected channels for a PR event: linked-issue channels, project
   // channel for no-linked-issues warnings, or PR's own issue channel as fallback.
-  private static prEventChannels(project: string, event: OrchestratorEvent, projectChannel: string): string[] {
+  // `slug` is the multi-repo slug (undefined in single-repo mode). Linked issues
+  // are assumed to live in the same repo as the PR — cross-repo closures
+  // (gh's `closingIssuesReferences` supports them) would route to a wrong-slug
+  // channel; flagged as a known footgun.
+  private static prEventChannels(
+    project: string,
+    event: OrchestratorEvent,
+    projectChannel: string,
+    slug: string | undefined,
+  ): string[] {
     if (event.pr == null) return []
     if (event.kind === 'pr_no_linked_issues') return [projectChannel]
     const linked = event.linked_issues ?? []
     return linked.length
-      ? linked.map(n => issueChannel(project, n))
-      : [issueChannel(project, event.pr)]
+      ? linked.map(n => issueChannel(project, n, slug))
+      : [issueChannel(project, event.pr, slug)]
   }
 
   async runTick(
@@ -57,6 +66,7 @@ export class GitHubPrsPlugin extends GhBase {
     const taggedEvents: TaggedEvent[] = []
     for (const { key, snap, events, entryChannels } of scraped) {
       curState.prs[key] = snap
+      const slug = channelSlug(config, snap.repo)
       for (const event of events) {
         if (event.kind === 'pr_added_to_watch') {
           const linked = event.linked_issues ?? []
@@ -64,7 +74,7 @@ export class GitHubPrsPlugin extends GhBase {
           // with the clearer "events won't be routed" message on the same tick.
           if (linked.length) {
             const routingChannels = this.resolveChannels(
-              GitHubPrsPlugin.prEventChannels(project, event, projectChannel),
+              GitHubPrsPlugin.prEventChannels(project, event, projectChannel, slug),
               entryChannels
             ).filter(ch => ch !== projectChannel)
             taggedEvents.push({
@@ -76,17 +86,19 @@ export class GitHubPrsPlugin extends GhBase {
         }
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event, projectChannel), entryChannels),
+          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(project, event, projectChannel, slug), entryChannels),
           payload: formatPayload(event),
         })
       }
     }
 
     // Comprehensive channel set: static (config) + dynamic (linked-issues
-    // discovered during scrape).
+    // discovered during scrape). Slug each linked-issue channel against the
+    // PR's own repo — same-repo assumption as prEventChannels.
     const channels = new Set<string>(this.desiredChannels(config))
     for (const snap of Object.values(curState.prs)) {
-      for (const n of snap.linked_issues ?? []) channels.add(issueChannel(project, n))
+      const slug = channelSlug(config, snap.repo)
+      for (const n of snap.linked_issues ?? []) channels.add(issueChannel(project, n, slug))
     }
 
     taggedEvents.push(...await this.observeRateLimit(projectChannel))

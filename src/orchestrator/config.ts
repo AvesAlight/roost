@@ -65,7 +65,36 @@ export async function loadConfig(stateDir: string): Promise<OrchestratorConfig> 
   const path = join(stateDir, 'config.json')
   const file = Bun.file(path)
   if (!(await file.exists())) throw new Error(`config missing: ${path}`)
-  return file.json() as Promise<OrchestratorConfig>
+  return (await file.json()) as OrchestratorConfig
+}
+
+// Per-entry/per-slice repo-mode check shared by plugins that have an
+// inheritable repo (e.g. github-prs/github-issues watched entries,
+// github-new-issues' slice repo). Throws on violation with a uniform
+// error message; plugins call it inside their own `assertRepoMode`.
+//
+// Mode invariants:
+//   single-repo (topRepo set):   entryRepo must be absent or equal topRepo.
+//   multi-repo  (topRepo unset): entryRepo must be set — no inherit target.
+export function assertEntryRepoMode(
+  pluginName: string,
+  entryId: string,
+  entryRepo: string | undefined,
+  topRepo: string | undefined,
+): void {
+  if (topRepo) {
+    if (entryRepo != null && entryRepo !== topRepo) {
+      throw new Error(
+        `single-repo mode (config.repo=${topRepo}) but ${pluginName} ${entryId} pins repo=${entryRepo}; remove or align`
+      )
+    }
+  } else {
+    if (!entryRepo) {
+      throw new Error(
+        `multi-repo mode (no config.repo) requires repo on every entry — ${pluginName} ${entryId} is missing one`
+      )
+    }
+  }
 }
 
 export async function loadState(stateDir: string): Promise<OrchestratorState | null> {

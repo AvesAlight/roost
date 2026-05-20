@@ -11,8 +11,12 @@ receive dispatcher messages exactly like any other channel message.
 This ships as an example. Run it from a Roost clone (or fork) and point the
 config at your own repo / channel set.
 
-Each watched item routes to `#<project>-issue-{number}`. The project channel
-(default `#<project>-leads`) is a fallback for errors and project-level events.
+Each watched item routes to `#<project>-issue-{number}` in single-repo mode
+(top-level `config.repo` set). In multi-repo mode (no `config.repo`) the
+channel picks up a slug segment: `#<project>-<slug>-issue-{number}`, where
+`<slug>` is the lowercased basename of the entry's `repo`. Worker /
+reviewer nicks pick up the same slug. The project channel (default
+`#<project>-leads`) is a fallback for errors and project-level events.
 See `src/orchestrator/naming.ts` for the full namespacing convention.
 
 ## Setup
@@ -27,8 +31,8 @@ Fields:
 
 | Field | Meaning |
 |---|---|
-| `project` | Lowercase slug used to namespace IRC nicks/channels (`<project>-worker-N`, `#<project>-issue-N`). Falls back to the basename of `repo`. Must match `^[a-z0-9][a-z0-9-]*$`. |
-| `repo` | Default `OWNER/NAME` for watched items. Per-entry `repo` overrides. |
+| `project` | Lowercase slug used to namespace IRC nicks/channels (`<project>-worker-N`, `#<project>-issue-N`). Falls back to the basename of `repo` when set. Required in multi-repo mode. Must match `^[a-z0-9][a-z0-9-]*$`. |
+| `repo` | Default `OWNER/NAME` for watched items in single-repo mode; per-entry `repo` may omit (inherits) or match this value, but cannot diverge. **Leave unset to enable multi-repo mode**, where every watched entry must carry its own `repo` and per-issue artifacts pick up a `<slug>` segment derived from the entry's repo basename. |
 | `agent_logins` | GitHub logins whose comments are tagged `is_worker_reply: true` (informational). |
 | `irc.nick` | Nick the dispatcher uses on the IRC server. Convention: `<project>-dispatcher`. |
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
@@ -41,9 +45,10 @@ Fields:
 | `plugins.github-new-issues.watched` | `[{"repo": "OWNER/NAME", "channels"?: [...]}]`. Multi-repo new-issue feed — `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
 
-For watched entries, `repo` defaults to the top-level value. `channels` adds
-destinations on top of the auto-routed `#<project>-issue-N` (PR events also go
-to `#<project>-issue-N` for each linked issue).
+For watched entries, `repo` defaults to the top-level value in single-repo
+mode and is required per entry in multi-repo mode. `channels` adds
+destinations on top of the auto-routed issue channel (PR events also route
+to each linked issue's channel, slugged the same way in multi-repo mode).
 
 A plugin not listed under `plugins` is not instantiated — there is no top-level
 fallback. The first-party set shipped in this repo is `github-prs`,

@@ -16,7 +16,7 @@
 
 import { loadConfig, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
-import type { Plugin } from './plugin.js'
+import { assertRepoModeAll, type Plugin } from './plugin.js'
 
 export type Command =
   | { kind: 'watch'; target: string | null; number: number; channels: string[] }
@@ -203,6 +203,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
   let snapshot: OrchestratorConfig
   try {
     snapshot = await loadConfig(deps.stateDir)
+    assertRepoModeAll(deps.plugins, snapshot)
   } catch (e) {
     deps.log(`dispatcher-dm-handler: config load failed for ${dm.sender}: ${e}`)
     deps.postProjectError(`[dispatcher_error] config load: ${e}`)

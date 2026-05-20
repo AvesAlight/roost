@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig, writeConfig, mutateConfig } from '../config.js'
+import { loadConfig, writeConfig, mutateConfig, assertEntryRepoMode } from '../config.js'
 
 let dir: string
 
@@ -82,5 +82,29 @@ describe('mutateConfig', () => {
     // Queue not poisoned: next mutate succeeds
     await mutateConfig(dir, (c) => { c.project = 'after-error' })
     expect((await loadConfig(dir)).project).toBe('after-error')
+  })
+})
+
+describe('assertEntryRepoMode', () => {
+  it('accepts a single-repo entry whose repo is omitted', () => {
+    expect(() => assertEntryRepoMode('plug', '#1', undefined, 'org/main')).not.toThrow()
+  })
+
+  it('accepts a single-repo entry whose repo matches', () => {
+    expect(() => assertEntryRepoMode('plug', '#1', 'org/main', 'org/main')).not.toThrow()
+  })
+
+  it('rejects a single-repo entry whose repo diverges', () => {
+    expect(() => assertEntryRepoMode('plug', '#1', 'org/other', 'org/main'))
+      .toThrow(/single-repo mode.*plug #1 pins repo=org\/other/)
+  })
+
+  it('accepts a multi-repo entry that carries its own repo', () => {
+    expect(() => assertEntryRepoMode('plug', '#1', 'org/a', undefined)).not.toThrow()
+  })
+
+  it('rejects a multi-repo entry that is missing its repo', () => {
+    expect(() => assertEntryRepoMode('plug', '#1', undefined, undefined))
+      .toThrow(/multi-repo mode.*plug #1 is missing one/)
   })
 })

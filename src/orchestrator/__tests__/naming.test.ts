@@ -9,6 +9,9 @@ import {
   leadPmNick,
   apmNick,
   dispatcherNick,
+  repoSlug,
+  channelSlug,
+  isMultiRepo,
 } from '../naming.js'
 
 describe('validateProject', () => {
@@ -34,13 +37,52 @@ describe('defaultProject', () => {
     expect(() => defaultProject({ project: 'BAD NAME' })).toThrow(/invalid project/)
   })
 
-  it('throws when no project and no parseable repo', () => {
-    expect(() => defaultProject({})).toThrow(/no project/)
+  it('throws when multi-mode and project is not set', () => {
+    expect(() => defaultProject({})).toThrow(/multi-repo mode.*requires.*config\.project/)
+  })
+})
+
+describe('isMultiRepo', () => {
+  it('is true when config.repo is unset', () => {
+    expect(isMultiRepo({ project: 'p' })).toBe(true)
+  })
+  it('is false when config.repo is set', () => {
+    expect(isMultiRepo({ project: 'p', repo: 'org/x' })).toBe(false)
+  })
+})
+
+describe('repoSlug', () => {
+  it.each([
+    ['AvesAlight/Roost', 'roost'],
+    ['Org/multi-word-name', 'multi-word-name'],
+    ['Org/abc123', 'abc123'],
+  ])('lowercases the basename of %p → %p', (repo, slug) => {
+    expect(repoSlug(repo)).toBe(slug)
+  })
+
+  it('throws when the slug would not match the project pattern', () => {
+    expect(() => repoSlug('Org/bad name')).toThrow(/cannot derive slug/)
+    expect(() => repoSlug('Org/-leading-dash')).toThrow(/cannot derive slug/)
+  })
+})
+
+describe('channelSlug', () => {
+  it('returns undefined in single-repo mode regardless of repo', () => {
+    expect(channelSlug({ project: 'p', repo: 'org/x' }, 'org/x')).toBeUndefined()
+    expect(channelSlug({ project: 'p', repo: 'org/x' }, 'org/anything-else')).toBeUndefined()
+  })
+
+  it('returns the slug in multi-repo mode', () => {
+    expect(channelSlug({ project: 'p' }, 'Org/Foo')).toBe('foo')
+  })
+
+  it('throws in multi-repo mode when no repo is given', () => {
+    expect(() => channelSlug({ project: 'p' }, undefined)).toThrow(/multi-repo mode requires repo/)
   })
 })
 
 describe('name helpers', () => {
-  it('format names with the project prefix', () => {
+  it('format names with the project prefix (single-repo: no slug)', () => {
     expect(issueChannel('roost', 196)).toBe('#roost-issue-196')
     expect(leadsChannel('roost')).toBe('#roost-leads')
     expect(workerNick('roost', 196)).toBe('roost-worker-196')
@@ -48,5 +90,17 @@ describe('name helpers', () => {
     expect(leadPmNick('roost')).toBe('roost-lead-pm')
     expect(apmNick('roost')).toBe('roost-apm')
     expect(dispatcherNick('roost')).toBe('roost-dispatcher')
+  })
+
+  it('thread the slug segment when set (multi-repo) — slug sits between project and role', () => {
+    expect(issueChannel('roost', 196, 'foo')).toBe('#roost-foo-issue-196')
+    expect(workerNick('roost', 196, 'foo')).toBe('roost-foo-worker-196')
+    expect(reviewerNick('roost', 200, 'foo')).toBe('roost-foo-reviewer-200')
+  })
+
+  it('keep the single-repo shape when slug is undefined', () => {
+    expect(issueChannel('roost', 196, undefined)).toBe('#roost-issue-196')
+    expect(workerNick('roost', 196, undefined)).toBe('roost-worker-196')
+    expect(reviewerNick('roost', 200, undefined)).toBe('roost-reviewer-200')
   })
 })

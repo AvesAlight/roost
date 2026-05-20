@@ -81,17 +81,25 @@ Use bare aliases (`opus`, `sonnet`, `haiku`) — full ids (`claude-opus-4-5` etc
 On confirmation, for each issue N:
 1. Create a branch + worktree for the issue per the project's conventions (the project's `CLAUDE.md` typically documents this — read it if you haven't). Final fallback if no convention is documented: `git worktree add ../<repo>-<branch> -b <branch>`, install dependencies inside the worktree, and copy any `.claude/settings.local.json` from the main worktree so the worker doesn't get permission-prompt floods.
 2. DM `<project>-dispatcher`: `watch <N>`.
-3. Spawn the worker:
+3. Pre-build the worker's nick + issue channel and pass them as positionals — the worker prompt uses them verbatim, no slug splicing in the template. In **single-repo mode** (dispatcher's `config.repo` is set):
+   - worker-nick = `<project>-worker-<N>`
+   - issue-channel = `#<project>-issue-<N>`
+
+   In **multi-repo mode** (no `config.repo`), `<slug>` is the repo's lowercased basename (`Owner/Foo` → `foo`):
+   - worker-nick = `<project>-<slug>-worker-<N>`
+   - issue-channel = `#<project>-<slug>-issue-<N>`
+
+   Then spawn:
    ```
-   roost spawn <project>-worker-<N> \
+   roost spawn <worker-nick> \
      --model <model> \
      --cache-ttl 1h \
-     --channels '#<project>-issue-<N>' \
+     --channels '<issue-channel>' \
      --cwd <worktree-path> \
-     --prompt '/worker <project> <N> <owner>/<repo> <branch> <human-nick>' \
+     --prompt '/worker <project> <N> <owner>/<repo> <branch> <human-nick> <worker-nick> <issue-channel>' \
      --perm-irc --perm-target <project>-lead-pm
    ```
-4. Join `#<project>-issue-<N>` yourself.
+4. Join `<issue-channel>` yourself.
 5. Snapshot lead-pm + APM cumulative token usage so the cleanup post-mortem can diff per-issue:
    ```
    "$(roost root)/bin/roost-token-usage" snapshot "$(pwd)/.orchestrator" <N> <project>-lead-pm <project>-apm
@@ -113,14 +121,22 @@ Trigger: a worker posts a draft PR link in an issue channel you're in.
 2. Check that `closingIssuesReferences` is non-empty. If it's empty, GitHub didn't link any issue (typo'd keyword, wrong issue number, body shape claude doesn't recognize, etc.) and the dispatcher can't route per-PR events.
 3. **Happy path** (`closingIssuesReferences` non-empty): proceed without ack.
    - DM `<project>-dispatcher`: `watch pr <N>`.
-   - Spawn the reviewer:
+   - Pre-build the reviewer's nick + issue channel — same rule as the worker dance. Single-repo mode:
+     - reviewer-nick = `<project>-reviewer-<N>`
+     - issue-channel = `#<project>-issue-<I>`
+
+     Multi-repo mode (same `<slug>` you used for the worker, the repo basename lowercased):
+     - reviewer-nick = `<project>-<slug>-reviewer-<N>`
+     - issue-channel = `#<project>-<slug>-issue-<I>`
+
+     Then spawn:
      ```
-     roost spawn <project>-reviewer-<N> \
+     roost spawn <reviewer-nick> \
        --model opus \
        --cache-ttl 5m \
-       --channels '#<project>-issue-<I>' \
+       --channels '<issue-channel>' \
        --cwd <worker-worktree-path> \
-       --prompt '/reviewer <project> <N> <I> <branch> <pr-url> <human-nick>' \
+       --prompt '/reviewer <project> <N> <I> <branch> <pr-url> <human-nick> <reviewer-nick> <issue-channel>' \
        --perm-irc --perm-target <project>-lead-pm
      ```
    - Default to opus for review regardless of worker model. Drop to sonnet only when the lead specifies.
@@ -289,5 +305,9 @@ Every per-project artifact carries a `<project>-` prefix:
 - Reviewer nick: `<project>-reviewer-<PR>`
 - Dispatcher nick: `<project>-dispatcher`
 - Your own nick: `<project>-apm`
+
+Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment into every per-issue artifact: `#<project>-<slug>-issue-<N>`, `<project>-<slug>-worker-<N>`, `<project>-<slug>-reviewer-<N>`. The slug is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
+
+Bare `watch <N>` DMs are rejected in multi-repo mode — the cross-repo DM grammar is a known followup.
 
 When you spawn an agent or DM the dispatcher, always pass the namespaced nick + matching channel value explicitly.

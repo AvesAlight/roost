@@ -41,6 +41,8 @@ Every per-project artifact carries a `<project>-` prefix:
 - Associate-pm nick: `<project>-apm`
 - Dispatcher nick: `<project>-dispatcher` (set in `.orchestrator/config.json`)
 
+Multi-repo mode (no top-level `config.repo`) inserts a `<slug>` segment into every per-issue artifact: `#<project>-<slug>-issue-<N>`, `<project>-<slug>-worker-<N>`, `<project>-<slug>-reviewer-<N>`. The slug is the lowercased repo basename (`Owner/Foo` → `foo`). Cross-org name overlap (`Org1/foo` + `Org2/foo`) is a known footgun. Single-repo mode (with `config.repo` set) keeps the bare `<project>-issue-<N>` shape.
+
 The prefix exists for **IRC nick uniqueness** across projects sharing one ergo, and for **GitHub comment attribution** (agents share one GH account, so `[<project>-worker-N]` disambiguates which project the comment came from). It is *not* an in-chat speaker label — IRC nicks already show who said what.
 
 When you spawn an agent, always pass the namespaced nick + the matching `--channels` value explicitly.

@@ -1,6 +1,6 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
-import { defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
+import { channelSlug, defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { GhScraper } from './scraper.js'
@@ -18,8 +18,9 @@ export class GitHubIssuesPlugin extends GhBase {
   }
 
   // Auto-detected channel for an issue event: the issue's own channel.
-  private static issueEventChannels(project: string, event: OrchestratorEvent): string[] {
-    return event.issue != null ? [issueChannel(project, event.issue)] : []
+  // `slug` is the multi-repo slug (undefined in single-repo mode).
+  private static issueEventChannels(project: string, event: OrchestratorEvent, slug: string | undefined): string[] {
+    return event.issue != null ? [issueChannel(project, event.issue, slug)] : []
   }
 
   async runTick(
@@ -50,11 +51,12 @@ export class GitHubIssuesPlugin extends GhBase {
     const taggedEvents: TaggedEvent[] = []
     for (const { key, snap, events, entryChannels } of scraped) {
       curState.issues[key] = snap
+      const slug = channelSlug(config, snap.repo)
       for (const event of events) {
         if (event.kind === 'issue_added_to_watch') {
           // Issues always get a confirmation — no no-linked-issues analogue here.
           const routingChannels = this.resolveChannels(
-            GitHubIssuesPlugin.issueEventChannels(project, event),
+            GitHubIssuesPlugin.issueEventChannels(project, event, slug),
             entryChannels
           ).filter(ch => ch !== projectChannel)
           taggedEvents.push({
@@ -65,7 +67,7 @@ export class GitHubIssuesPlugin extends GhBase {
         }
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(project, event), entryChannels),
+          channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(project, event, slug), entryChannels),
           payload: formatPayload(event),
         })
       }

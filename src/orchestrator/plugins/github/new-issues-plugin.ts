@@ -18,6 +18,7 @@
 // replay history. Closed issues that re-open will re-announce only if pruned
 // from `seen` (we don't prune today; the operator can `watch <N>` for it).
 import type { OrchestratorConfig } from '../../config.js'
+import { assertEntryRepoMode } from '../../config.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
@@ -48,6 +49,17 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       for (const c of entry.channels ?? []) chans.add(c)
     }
     return [...chans]
+  }
+
+  // Each watched entry's repo must equal config.repo when set (single mode);
+  // the type guarantees repo is present, so the multi-mode missing-repo branch
+  // never fires for this plugin. Mirrors the gh-base watched check.
+  assertRepoMode(config: OrchestratorConfig): void {
+    const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
+    const topRepo = config.repo
+    for (const entry of slice.watched ?? []) {
+      assertEntryRepoMode(this.name, `(repo=${entry.repo})`, entry.repo, topRepo)
+    }
   }
 
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {

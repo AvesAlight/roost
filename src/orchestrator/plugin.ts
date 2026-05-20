@@ -63,6 +63,12 @@ export interface Plugin {
   // list and help are broadcast to every enabled plugin; replies are joined
   // with `\n\n`.
   handleCommand?(config: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
+  // Optional: assert this plugin's own slice respects the active repo mode
+  // (single vs multi). Plugins that own a `watched`/`repo` shape implement
+  // this to enforce their own constraints; plugins that are cross-repo by
+  // design (e.g. github-commits) omit it. Throw on violation — the caller
+  // surfaces the message. Called after config load and per-tick reload.
+  assertRepoMode?(config: OrchestratorConfig): void
 }
 
 export abstract class BasePlugin implements Plugin {
@@ -132,4 +138,13 @@ export function getPluginFactory(name: string): PluginFactory | undefined {
 
 export function registeredPluginNames(): string[] {
   return [...REGISTRY.keys()]
+}
+
+// Iterate plugins and dispatch each one's `assertRepoMode` (if implemented).
+// Core is plugin-agnostic — it doesn't know about `watched[*].repo` or
+// `slice.repo`; the plugins that own those shapes enforce their own rules.
+// Called by every config-load site so an operator hand-edit is caught on
+// the next tick / DM rather than only at boot.
+export function assertRepoModeAll(plugins: Plugin[], config: OrchestratorConfig): void {
+  for (const p of plugins) p.assertRepoMode?.(config)
 }

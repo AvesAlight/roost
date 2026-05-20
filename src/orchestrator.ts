@@ -19,7 +19,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
+import { assertRepoModeAll, defaultPluginLogger, type Plugin, type TaggedEvent } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
@@ -115,6 +115,7 @@ async function runDaemon(stateDir: string): Promise<void> {
 
   await loadExternalPlugins(stateDir, config.plugin_paths)
   const plugins = buildPlugins(config, projectChannel, log)
+  assertRepoModeAll(plugins, config)
   const initialChannels = bootChannels(plugins, config, projectChannel)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
@@ -172,7 +173,9 @@ async function runDaemon(stateDir: string): Promise<void> {
   while (!stop) {
     const tickStart = Date.now()
     try {
-      config = await loadConfig(stateDir)
+      const next = await loadConfig(stateDir)
+      assertRepoModeAll(plugins, next)
+      config = next
     } catch (e) {
       log(`orchestrator[daemon]: config load failed: ${e}\n`)
     }
@@ -251,6 +254,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
 
   await loadExternalPlugins(stateDir, config.plugin_paths)
   const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
+  assertRepoModeAll(plugins, config)
   const channels = bootChannels(plugins, config, projectChannel)
 
   const client = new RoostIrcClientImpl({
@@ -309,6 +313,7 @@ async function main(): Promise<void> {
     const projectChannel = resolveProjectChannel(config)
     await loadExternalPlugins(stateDir, config.plugin_paths)
     const plugins = buildPlugins(config, projectChannel, defaultPluginLogger)
+    assertRepoModeAll(plugins, config)
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,
