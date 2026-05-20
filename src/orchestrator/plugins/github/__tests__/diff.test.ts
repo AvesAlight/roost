@@ -194,14 +194,14 @@ describe('diffPr — pr_no_linked_issues', () => {
 
   it('does not emit pr_no_linked_issues when linked_issues is non-empty', () => {
     const prev: PrSnap = { ...basePrSnap({ linked_issues: [] }) }
-    const cur = basePrSnap({ linked_issues: [42] })
+    const cur = basePrSnap({ linked_issues: [{ repo: 'org/repo', number: 42 }] })
     const events = diffPr(prev, cur)
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
   })
 
   it('warns again after linked_issues cleared ([N] → [] transition)', () => {
     // prev had linked issues so warned_no_linked was reset to false
-    const prev: PrSnap = { ...basePrSnap({ linked_issues: [42], warned_no_linked: false }) }
+    const prev: PrSnap = { ...basePrSnap({ linked_issues: [{ repo: 'org/repo', number: 42 }], warned_no_linked: false }) }
     const cur = basePrSnap({ linked_issues: [] })
     const events = diffPr(prev, cur)
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(true)
@@ -226,7 +226,7 @@ describe('computePrEvents — pr_no_linked_issues', () => {
   })
 
   it('does not emit pr_no_linked_issues and clears flag for new PR with linked issues', () => {
-    const snap = basePrSnap({ linked_issues: [5] })
+    const snap = basePrSnap({ linked_issues: [{ repo: 'org/repo', number: 5 }] })
     const { events, nextWarnedNoLinked } = computePrEvents(snap, null, new Set())
     expect(events.some(e => e.kind === 'pr_no_linked_issues')).toBe(false)
     expect(nextWarnedNoLinked).toBe(false)

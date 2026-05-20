@@ -34,11 +34,11 @@ describe('GitHubPrsPlugin.runTick', () => {
       repo: 'org/repo', pr: 25, url: 'https://example.com/p/25',
       author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
       comment_id: 1, comment_url: 'https://example.com/c/1',
-      linked_issues: [14],
+      linked_issues: [{ repo: 'org/repo', number: 14 }],
     } as OrchestratorEvent
 
     const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
-      snap: fakePrSnap({ linked_issues: [14] }),
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 14 }] }),
       events: [commentEv],
     })
     try {
@@ -61,7 +61,7 @@ describe('GitHubPrsPlugin.runTick', () => {
 
   it('persists scraped PR state under its own slice', async () => {
     const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
-      snap: fakePrSnap({ linked_issues: [7] }), events: [],
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }] }), events: [],
     })
     try {
       const cfg: OrchestratorConfig = {
@@ -74,7 +74,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, null)
       const state = result.state as { prs: Record<string, PrSnap> }
-      expect(state.prs['org/repo#25']?.linked_issues).toEqual([7])
+      expect(state.prs['org/repo#25']?.linked_issues).toEqual([{ repo: 'org/repo', number: 7 }])
       expect(result.channels).toContain('#proj-issue-7')
     } finally { spy.mockRestore() }
   })
@@ -119,10 +119,10 @@ describe('GitHubPrsPlugin.runTick', () => {
   it('emits now-watching to project channel when pr_added_to_watch has linked issues', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
-      linked_issues: [7, 14],
+      linked_issues: [{ repo: 'org/repo', number: 7 }, { repo: 'org/repo', number: 14 }],
     } as OrchestratorEvent
     const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
-      snap: fakePrSnap({ linked_issues: [7, 14] }), events: [seedEv],
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }, { repo: 'org/repo', number: 14 }] }), events: [seedEv],
     })
     try {
       const cfg: OrchestratorConfig = {
@@ -142,10 +142,10 @@ describe('GitHubPrsPlugin.runTick', () => {
   it('includes entry channels in now-watching routing list', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
-      linked_issues: [7],
+      linked_issues: [{ repo: 'org/repo', number: 7 }],
     } as OrchestratorEvent
     const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
-      snap: fakePrSnap({ linked_issues: [7] }), events: [seedEv],
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }] }), events: [seedEv],
     })
     try {
       const cfg: OrchestratorConfig = {
@@ -296,10 +296,10 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
       repo: 'org/foo', pr: 25, url: 'u',
       author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
       comment_id: 1, comment_url: 'cu',
-      linked_issues: [14],
+      linked_issues: [{ repo: 'org/foo', number: 14 }],
     } as OrchestratorEvent
     const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
-      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [14] }),
+      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/foo', number: 14 }] }),
       events: [commentEv],
     })
     try {
@@ -352,6 +352,123 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-50'])
+    } finally { spy.mockRestore() }
+  })
+})
+
+describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
+  it('multi-mode: PR in repoA closing issue in repoB routes to repoB slug', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/foo', pr: 25, url: 'u',
+      author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'cu',
+      linked_issues: [{ repo: 'org/bar', number: 14 }],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }] }),
+      events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-bar-issue-14'])
+      expect(result.channels).toContain('#proj-bar-issue-14')
+    } finally { spy.mockRestore() }
+  })
+
+  it('multi-mode: PR with mixed same-repo + cross-repo linked issues routes to both slugged channels', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/foo', pr: 25, url: 'u',
+      author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'cu',
+      linked_issues: [{ repo: 'org/bar', number: 14 }, { repo: 'org/foo', number: 7 }],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }, { repo: 'org/foo', number: 7 }] }),
+      events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#proj-bar-issue-14', '#proj-foo-issue-7'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('single-mode: foreign-repo linked issue is dropped from routing and logged to stderr', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/main', pr: 25, url: 'u',
+      author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'cu',
+      linked_issues: [{ repo: 'org/other', number: 14 }],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/main', number: 25, linked_issues: [{ repo: 'org/other', number: 14 }] }),
+      events: [commentEv],
+    })
+    const logs: string[] = []
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/main',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).runTick(cfg, { prs: {} })
+      // Foreign repo dropped → falls back to the PR's own issue channel.
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+      // The cross-repo channel must not appear in the desired-channel set.
+      expect(result.channels).not.toContain('#proj-issue-14')
+      // Operator-visible stderr warning naming both sides + the remediation.
+      const dropWarn = logs.find(l => l.includes('cross-repo closure not routed'))
+      expect(dropWarn).toContain('org/main#25')
+      expect(dropWarn).toContain('org/other#14')
+      expect(dropWarn).toContain('add org/other to config')
+    } finally { spy.mockRestore() }
+  })
+
+  it('single-mode: same-repo linked issue retained, foreign one dropped (mixed case)', async () => {
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/main', pr: 25, url: 'u',
+      author: 'a', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'cu',
+      linked_issues: [{ repo: 'org/main', number: 7 }, { repo: 'org/other', number: 14 }],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/main', linked_issues: [{ repo: 'org/main', number: 7 }, { repo: 'org/other', number: 14 }] }),
+      events: [commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/main',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      // Same-repo issue routes normally; cross-repo dropped.
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-7'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('multi-mode: snap.linked_issues populates the dispatcher channel set for cross-repo issues', async () => {
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }] }),
+      events: [],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.channels).toContain('#proj-bar-issue-14')
     } finally { spy.mockRestore() }
   })
 })

@@ -5,9 +5,10 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
-// Schema version 3: GitHub plugin split into Prs/Issues; each owns its
-// own state slice. Schema bumps trigger a one-time re-seed via loadState().
-export const SCHEMA_VERSION = 3
+// Schema version 4: PrSnap.linked_issues carries per-issue repo (was bare
+// number[]); cross-repo PR closures route to the linked issue's own repo
+// slug. Schema bumps trigger a one-time re-seed via loadState().
+export const SCHEMA_VERSION = 4
 
 export interface WatchedEntry {
   repo?: string

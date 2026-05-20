@@ -364,13 +364,17 @@ export class GhClient {
     return (await this.api(`repos/${repo}/pulls/${number}/reviews?per_page=100`, true) ?? []) as GhReview[]
   }
 
-  async fetchPrLinkedIssues(repo: string, number: number): Promise<number[]> {
+  // Returns `{repo, number}` per linked issue — `closingIssuesReferences` can
+  // cross repos (a PR in repo A closing an issue in repo B), so the repo is
+  // load-bearing for downstream channel routing. Sorted by `(repo, number)`
+  // for deterministic order.
+  async fetchPrLinkedIssues(repo: string, number: number): Promise<Array<{ repo: string; number: number }>> {
     const [owner, name] = repo.split('/', 2)
     const query = (
       'query($owner:String!,$name:String!,$number:Int!){' +
       'repository(owner:$owner,name:$name){' +
       'pullRequest(number:$number){' +
-      'closingIssuesReferences(first:25){nodes{number}}}}}'
+      'closingIssuesReferences(first:25){nodes{number,repository{nameWithOwner}}}}}}'
     )
     const result = await this.graphql(query, { owner, name, number })
     if (!result) return []
@@ -378,11 +382,11 @@ export class GhClient {
     const nodes = (
       ((r.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)
         ?.pullRequest as Record<string, unknown> | undefined
-    )?.closingIssuesReferences as { nodes?: Array<{ number?: number }> } | undefined
+    )?.closingIssuesReferences as { nodes?: Array<{ number?: number; repository?: { nameWithOwner?: string } }> } | undefined
     return (nodes?.nodes ?? [])
-      .filter(n => n.number != null)
-      .map(n => n.number as number)
-      .sort((a, b) => a - b)
+      .filter(n => n.number != null && n.repository?.nameWithOwner)
+      .map(n => ({ repo: n.repository!.nameWithOwner as string, number: n.number as number }))
+      .sort((a, b) => a.repo === b.repo ? a.number - b.number : a.repo.localeCompare(b.repo))
   }
 
   async fetchIssue(repo: string, number: number): Promise<GhIssue> {

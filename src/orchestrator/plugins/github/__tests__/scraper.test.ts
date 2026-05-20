@@ -56,10 +56,10 @@ describe('computePrEvents — new watch entry (prevSnap = null)', () => {
   })
 
   it('includes linked_issues in seed event when present', () => {
-    const snap = basePrInternal({ linked_issues: [5, 6] })
+    const snap = basePrInternal({ linked_issues: [{ repo: 'org/repo', number: 5 }, { repo: 'org/repo', number: 6 }] })
     const { events } = computePrEvents(snap, null, new Set())
-    const ev = events.find(e => e.kind === 'pr_added_to_watch') as { linked_issues?: number[] } | undefined
-    expect(ev?.linked_issues).toEqual([5, 6])
+    const ev = events.find(e => e.kind === 'pr_added_to_watch') as { linked_issues?: Array<{ repo: string; number: number }> } | undefined
+    expect(ev?.linked_issues).toEqual([{ repo: 'org/repo', number: 5 }, { repo: 'org/repo', number: 6 }])
   })
 
   it('emits pr_has_existing_comments when review comments exist', () => {

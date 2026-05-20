@@ -1,4 +1,4 @@
-import type { PrSnap, IssueSnap } from './types.js'
+import type { PrSnap, IssueSnap, LinkedIssue } from './types.js'
 import type { PrSnapInternal, IssueSnapInternal } from './scraper.js'
 import type { GhComment, GhReview } from './github-api.js'
 
@@ -11,7 +11,7 @@ export interface BaseEvent {
   issue?: number
   url?: string
   title?: string
-  linked_issues?: number[]
+  linked_issues?: LinkedIssue[]
 }
 
 export interface LabelEvent extends BaseEvent {
@@ -129,7 +129,7 @@ export function formatCommentEvent(
     issue?: number
     url: string
     agentLogins?: Set<string>
-    linkedIssues?: number[]
+    linkedIssues?: LinkedIssue[]
   }
 ): CommentEvent {
   const author = c.user?.login
