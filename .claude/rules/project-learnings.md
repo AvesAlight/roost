@@ -68,6 +68,10 @@ When extracting N inline copies into one shared helper, add arg validation to th
 
 When migrating N call sites to a new helper, scan each migrated function for *every* invocation of the old primitive — including within-function retry/fallback branches that weren't the initial migration target. The #473 worker migrated `writeDispatcherPid`'s initial `wx` attempt to `exclusiveCreate` but left the function's stale-retry path on raw `writeFile(wx)`. Distinct from §#419 (adjacent files): same file, same function, different code branch. Migration is incomplete until every callsite of the old primitive within migrated scope uses the new helper.
 
+## 2026-05-20: Filing a followup: check if it's service-of-future-milestone work before defaulting to current (from #458)
+
+When filing a followup issue, ask whether the work is primarily in service of a future milestone before defaulting to the current one. If the followup's value lands in a later wave (e.g., a boot-time priority-tie warning is most useful when the Linear plugin lands in 0.8.0, not during a 0.7.0 cleanup pass), file it in that future milestone. The concrete test: "when does this followup's primary consumer arrive?"
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
