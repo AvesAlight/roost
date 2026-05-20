@@ -249,6 +249,34 @@ else
 fi
 teardown_tmpdir
 
+# -- Test 11: PostCompact injects channel-verify directive via tmux ------------
+# When ROOST_IRC_NICK is set and tmux session is live, the hook should
+# background a load-buffer/paste-buffer/send-keys chain carrying the
+# channel_list verification directive.
+
+setup_tmpdir
+perl -e '$SIG{USR2} = sub { exit 0 }; sleep 5' &
+victim_pid=$!
+sleep 0.1
+echo "$victim_pid" > "$TDIR/mcp.pid"
+env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$POST_HOOK" >/dev/null 2>/dev/null
+sleep 0.5
+kill "$victim_pid" 2>/dev/null || true
+wait 2>/dev/null || true
+
+if [ -s "$TRACE" ] \
+    && grep -q "has-session" "$TRACE" \
+    && grep -q "load-buffer" "$TRACE" \
+    && grep -q "paste-buffer" "$TRACE" \
+    && grep -q "send-keys.*Enter" "$TRACE" \
+    && grep -qF 'channel_list' "$TRACE" \
+    && grep -qF 'rejoin' "$TRACE"; then
+  ok "post-compact: channel-verify directive injected via tmux"
+else
+  fail "post-compact: channel-verify directive injected via tmux" "trace=$(cat "$TRACE" 2>/dev/null)"
+fi
+teardown_tmpdir
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
