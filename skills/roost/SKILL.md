@@ -33,7 +33,8 @@ roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
-                   [--perm-irc --perm-target NICK]
+                   [--perm-irc --perm-target NICK] \
+                   [--ask-irc CHANNEL --ask-target NICK]
 roost shutdown <nick>
 roost list
 roost attach <nick>
@@ -122,6 +123,23 @@ cat "$dir/permbot.log"
 ```
 
 The data dir is also printed by `roost spawn` as "data dir: ...".
+
+## AskUserQuestion routing (--ask-irc)
+
+Routes AskUserQuestion calls to a channel instead of blocking the terminal; pair with --ask-target (the nick whose replies count).
+
+```bash
+# Lead-pm routes questions to the leads channel (human answers):
+roost spawn myproject-lead-pm --agent lead-pm \
+  --ask-irc '#myproject-leads' --ask-target <your-nick>
+
+# APM routes questions to the leads channel (lead-pm answers):
+roost spawn myproject-apm --agent associate-pm \
+  --ask-irc '#myproject-leads' --ask-target myproject-lead-pm
+```
+
+`--ask-target` defaults to `--perm-target` when both are set. See
+`roost spawn --help` ("Agent class guidance") for the full role→flag heuristic.
 
 ## Prerequisites
 

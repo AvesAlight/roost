@@ -42,6 +42,7 @@ roost spawn myproject-lead-pm \
   --agent lead-pm \
   --channels '#myproject-leads' \
   --steer-compact --cache-ttl 1h \
+  --ask-irc '#myproject-leads' --ask-target <your-nick> \
   --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 ```
 

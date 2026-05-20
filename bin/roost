@@ -184,16 +184,22 @@ Options:
                              Use for --chrome, --system-prompt, etc.
 
 Agent class guidance:
-  Pick --cache-ttl and --steer-compact by session lifetime and cache
-  reuse. 1h cache writes cost 2x the 5m rate, so reach for 1h only when
+  Pick --cache-ttl, --steer-compact, and --ask-irc by session lifetime,
+  cache reuse, and whether AskUserQuestion calls should route via IRC.
+  1h cache writes cost 2x the 5m rate, so reach for 1h only when
   the session genuinely idles past 5 minutes. --steer-compact preserves
   runtime state across auto-compact; long-running agents need it,
   short-lived ones don't (auto-compact rarely fires in their lifetime).
+  --ask-irc routes AskUserQuestion calls to a channel instead of blocking
+  the terminal; pair with --ask-target (the nick whose replies count).
 
   PM agents (lead-pm, associate-pm) — long-running, idle through review
   loops and message-relay timescales that blow past 5m; runtime state
-  would be lost across a directive-less auto-compact:
-    --steer-compact --cache-ttl 1h
+  would be lost across a directive-less auto-compact; AskUserQuestion
+  should route via IRC so a blocked question surfaces in the leads channel
+  instead of freezing the terminal:
+    --steer-compact --cache-ttl 1h \
+    --ask-irc '#<project>-leads' --ask-target <answerer>
   Workers — multi-turn through reviewer + human review cycles that
   routinely exceed 5 minutes, so \`--cache-ttl 1h\`. But short-lived
   enough that auto-compact rarely fires, so no \`--steer-compact\`:
