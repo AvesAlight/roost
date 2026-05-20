@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { tryClaimPerN, tryClaimPerRepo, splitCommands, tokenizeVerbLine } from '../grammar.js'
+import { tryClaimPerN, tryClaimPerRepo, splitCommands } from '../grammar.js'
 
 // ---- splitCommands --------------------------------------------------------
 
@@ -11,18 +11,8 @@ describe('splitCommands', () => {
   })
 })
 
-// ---- tokenizeVerbLine -----------------------------------------------------
-
-describe('tokenizeVerbLine', () => {
-  it('returns null for non-watch/unwatch verbs', () => {
-    expect(tokenizeVerbLine('help')).toBeNull()
-    expect(tokenizeVerbLine('foo bar')).toBeNull()
-    expect(tokenizeVerbLine('')).toBeNull()
-  })
-  it('lowercases verb and slices tokens', () => {
-    expect(tokenizeVerbLine('WATCH pr 5')).toEqual({ verb: 'watch', tokens: ['pr', '5'] })
-  })
-})
+// tokenizeVerbLine is a grammar.ts internal — exercised end-to-end via the
+// tryClaim* helpers below. No standalone test.
 
 // ---- tryClaimPerN (target=null — bare watch <N>) --------------------------
 
@@ -60,7 +50,7 @@ describe('tryClaimPerN — bare (target=null)', () => {
 
   it('errors on missing number after the verb', () => {
     const r = tryClaimPerN(null, 'watch')
-    expect(r).toEqual({ kind: 'error', message: 'watch requires an issue/PR number' })
+    expect(r).toEqual({ kind: 'error', message: 'watch requires an issue/PR number or <owner>/<repo> spec' })
   })
 
   it('defers on a first token that\'s neither a digit-string, repo-shape, nor channel', () => {
@@ -153,7 +143,7 @@ describe('tryClaimPerN — target=pr', () => {
 
   it('errors when target matches but number is missing', () => {
     const r = tryClaimPerN('pr', 'watch pr')
-    expect(r).toEqual({ kind: 'error', message: 'watch requires an issue/PR number' })
+    expect(r).toEqual({ kind: 'error', message: 'watch requires an issue/PR number or <owner>/<repo> spec' })
   })
 
   it('claims `watch pr 10 org/r #chan`', () => {

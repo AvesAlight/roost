@@ -7,7 +7,6 @@ import {
   parseCommand,
   parseCommands,
   resolveAllowlist,
-  splitCommands,
   type Command,
   type HandlerDeps,
 } from '../dispatcher-dm-handler.js'
@@ -25,14 +24,7 @@ afterEach(async () => {
 })
 
 // ---- Parser ----------------------------------------------------------------
-
-describe('splitCommands', () => {
-  it('splits on newlines, semicolons, commas; trims; drops empties', () => {
-    expect(splitCommands('watch 5\n watch 6 ; watch 7, ,\nhelp')).toEqual([
-      'watch 5', 'watch 6', 'watch 7', 'help',
-    ])
-  })
-})
+// splitCommands is covered in plugins/__tests__/grammar.test.ts (canonical home).
 
 // A minimal Plugin that claims a target keyword via a per-N parser. Records
 // every handleCommand call so tests can assert routing precisely.

@@ -30,9 +30,11 @@ export interface PluginTickResult {
 
 // Result of a plugin's `parseCommand`. The cmd payload is plugin-owned and
 // opaque to the dispatcher — it's threaded back to the same plugin's
-// `handleCommand` unchanged.
-export type ParseResult =
-  | { kind: 'ok'; cmd: unknown }
+// `handleCommand` unchanged. Parameterized so helpers (`tryClaimPerN`,
+// `tryClaimPerRepo`) can advertise their concrete shape; the dispatcher
+// surface stays `ParseResult<unknown>` because cmd payloads vary per plugin.
+export type ParseResult<T = unknown> =
+  | { kind: 'ok'; cmd: T }
   | { kind: 'error'; message: string }
 
 export interface Plugin {

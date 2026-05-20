@@ -3,6 +3,8 @@
 // + shape disambiguation. Plugins own which targets they claim; the dispatcher
 // stays grammar-agnostic.
 
+import type { ParseResult } from '../plugin.js'
+
 const CHANNEL_RE = /^#[^\s,#]+$/
 
 // Bare `<owner>/<repo>` — optional repo positional in the per-N grammar.
@@ -17,13 +19,6 @@ const REPO_SPEC_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)(
 const VERBS = new Set(['watch', 'unwatch', 'help'])
 
 export type Verb = 'watch' | 'unwatch'
-
-// Returned to the dispatcher. `null` = not my shape, try next plugin.
-// `error` = claimed-but-malformed; dispatcher aborts iteration (no other plugin
-// gets a second crack at a line whose shape this plugin already owned).
-export type ParseResult<T> =
-  | { kind: 'ok'; cmd: T }
-  | { kind: 'error'; message: string }
 
 export interface PerNCommand {
   verb: Verb
@@ -40,7 +35,10 @@ export interface PerRepoCommand {
   channels: string[]
 }
 
-// Split a DM body into individual command lines. Newlines, semicolons, commas separate.
+// Split a DM body into individual command lines. Newlines, semicolons, commas
+// separate. Internal — exported so `dispatcher-dm-handler.ts` can import it
+// from the same place plugins' parsers do; not re-exported via
+// `plugin-api.ts` because plugin parsers receive a single already-split line.
 export function splitCommands(text: string): string[] {
   return text
     .split(/[\n;,]+/)
@@ -48,10 +46,10 @@ export function splitCommands(text: string): string[] {
     .filter(Boolean)
 }
 
-// Tokenize a single line: lowercase verb + raw tail tokens.
-// Returns null when the line doesn't start with watch/unwatch (so plugins
-// short-circuit on lines they obviously don't own).
-export function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
+// Tokenize a single line: lowercase verb + raw tail tokens. Returns null
+// when the line doesn't start with watch/unwatch so plugins short-circuit
+// on lines they obviously don't own. Private to this module.
+function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
   const tokens = line.split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
   const verb = tokens[0].toLowerCase()
@@ -76,16 +74,16 @@ export function tryClaimPerN(target: string | null, line: string): ParseResult<P
   const specTok = rest[0]
   if (specTok === undefined) {
     // Verb + target with no spec — claim the shape, fail the body.
-    return { kind: 'error', message: `${verb} requires an issue/PR number` }
+    return { kind: 'error', message: `${verb} requires an issue/PR number or <owner>/<repo> spec` }
   }
   // Repo-shape token here is not a per-N claim — a per-repo plugin owns it.
   if (REPO_SPEC_RE.test(specTok)) return null
   if (!/^\d+$/.test(specTok)) {
-    return { kind: 'error', message: `${verb}: "${specTok}" is not a positive integer` }
+    return { kind: 'error', message: `${verb}: "${specTok}" is not a positive integer or <owner>/<repo> spec` }
   }
   const number = parseInt(specTok, 10)
   if (number <= 0) {
-    return { kind: 'error', message: `${verb}: "${specTok}" is not a positive integer` }
+    return { kind: 'error', message: `${verb}: "${specTok}" is not a positive integer or <owner>/<repo> spec` }
   }
 
   let i = 1

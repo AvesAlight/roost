@@ -10,6 +10,7 @@
 import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
 import { assertRepoModeAll, type Plugin } from './plugin.js'
+import { splitCommands } from './plugins/grammar.js'
 
 // `plugin` carries an opaque cmd payload — the plugin that produced it is the
 // only one that handles it. `list` / `help` broadcast to every plugin.
@@ -38,14 +39,6 @@ export interface HandlerDeps {
 const RESERVED_TARGETS = new Set(['watch', 'unwatch', 'help'])
 
 // ---- Parser ----------------------------------------------------------------
-
-// Split a body into command lines. Newlines, semicolons, and commas separate.
-export function splitCommands(text: string): string[] {
-  return text
-    .split(/[\n;,]+/)
-    .map(s => s.trim())
-    .filter(Boolean)
-}
 
 // Sort plugins for parse-claim iteration: higher grammarPriority first, ties
 // resolved by the original `plugins` array order (which mirrors

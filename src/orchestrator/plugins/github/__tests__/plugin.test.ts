@@ -588,7 +588,7 @@ describe('GhBase.handleCommand — issues plugin (target=null)', () => {
     expect(merged.plugins?.['github-issues']).toBeUndefined()
   })
 
-  it('ignores `watch pr` (returns null)', () => {
+  it('ignores cmds routed to a different plugin', () => {
     const local: OrchestratorConfig = {}
     const out = issues().handleCommand!(singleRepo(), local, watchCmd('github-prs', 5, null, []))
     expect(out).toBeNull()
@@ -760,7 +760,7 @@ describe('GhBase.handleCommand — prs plugin (target=pr)', () => {
     expect(local.plugins?.['github-issues']).toBeUndefined()
   })
 
-  it('ignores bare watch (returns null)', () => {
+  it('ignores cmds routed to a different plugin', () => {
     const out = prs().handleCommand!({ repo: 'org/r' }, {}, watchCmd('github-issues', 10, null, []))
     expect(out).toBeNull()
   })
