@@ -81,3 +81,7 @@ Concrete: PreCompact fired 4× during one milestone, each invocation queued anot
 ## 2026-05-21: "Describes output, not mechanism" gap means the research hasn't happened yet (from #424)
 
 When an issue's body describes the output (add X to file Y) but not how the underlying primitive works, the deliverable is research — probe + document, not mechanical config. Size opus. The "describes output, not mechanism" gap is the research that hasn't happened yet.
+
+## 2026-05-21: Treat reviewer "narrower than the failure mode" as a blocker, not a fyi (from #486)
+
+Treat reviewer "fyi: this is narrower than the failure mode" as a blocker on the current PR, not a fyi to defer. §#448 covered this for prompts; same logic for code/test checks. Asymmetry: widening at plan/review costs a paragraph; shipping narrow costs a re-cycle (worker respawn, push, re-CI, re-review). The reviewer's narrowness flag is the signal, whether the artifact is a prompt rule or a code check.
