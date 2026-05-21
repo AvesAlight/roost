@@ -483,6 +483,42 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 26: loopback host injects permissions.allow into roost-settings.json --
+# Non-perm-irc non-automode sessions would otherwise hit an in-pane permission
+# dialog for every roost-irc MCP call. Gated on the same loopback check as
+# trust injection so remote ergo doesn't get blanket auto-allow.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"mcp__plugin_roost_roost-irc__*"' "$data_dir/roost-settings.json" \
+    && grep -qF '"mcp__roost-irc__*"' "$data_dir/roost-settings.json" \
+    && grep -qF '"permissions"' "$data_dir/roost-settings.json"; then
+  ok "loopback: roost-settings.json has permissions.allow with both roost-irc wildcards"
+else
+  fail "loopback: roost-settings.json has permissions.allow with both roost-irc wildcards" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 27: non-loopback host omits permissions block from roost-settings.json -
+# Remote ergo is outside the trusted single-user local environment; no auto-allow.
+
+setup
+out="$(ROOST_IRC_SERVER=192.0.2.1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"permissions"' "$data_dir/roost-settings.json"; then
+  ok "non-loopback: roost-settings.json has no permissions block"
+else
+  fail "non-loopback: roost-settings.json has no permissions block" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

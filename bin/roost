@@ -840,8 +840,18 @@ cmd_spawn() {
     done
     pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
+  # Allow roost-irc MCP tools without a permission prompt on loopback sessions
+  # (same gate as trust injection below). Remote ergo doesn't get the allow.
+  # "permissions" is the only top-level key added here alongside "hooks"; keep
+  # it that way to avoid duplicate-key collisions in the written JSON.
+  local permissions_json=""
+  case "${IRC_HOST}" in
+    127.0.0.1|::1|localhost)
+      permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
+      ;;
+  esac
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}${permissions_json}}" > "${ROOST_SETTINGS}"
   # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators
