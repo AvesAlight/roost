@@ -11,7 +11,7 @@ import {
 } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerLinearId, type PerLinearIdCommand } from '../grammar.js'
-import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../_rate-limit.js'
+import { observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
 import { LinearClient } from './linear-api.js'
 import { LinearScraper } from './scraper.js'
 import { formatLinearPayload } from './format.js'
@@ -34,11 +34,8 @@ export class LinearIssuesPlugin extends BasePlugin {
   private _client: LinearClientLike | null
   private _envClient: LinearClient | null = null
 
-  // Rate-limit warning state — mirrors GhPluginBase. History is per-instance;
-  // the warn-cooldown is static so multi-plugin Linear futures don't double-warn.
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
-  private static _warnedAt: number | null = null
-  private static readonly WARN_COOLDOWN_MS = 10 * 60_000
+  private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
   constructor(
     defaultChannel: string,
@@ -218,36 +215,14 @@ export class LinearIssuesPlugin extends BasePlugin {
   }
 
   // End-of-tick threshold check — reads `getLastRateLimit()` from the client
-  // (already populated by spawnLinear on each successful call). Mirrors
-  // `GhPluginBase.observeRateLimit`: history ring, projection via
-  // computeRateLimitWarning, cooldown-gated emit. Only called after a
+  // (already populated by each successful call). Only called after a
   // watched-entry tick, so `getClient()` is guaranteed to have been seeded.
   protected observeRateLimit(projectChannel: string): TaggedEvent[] {
     const info = this.getClient().getLastRateLimit()
     if (!info) return []
-
-    const now = Date.now()
-    const cutoff = now - RATE_LIMIT_WINDOW_MS
-    this._rateLimitHistory = this._rateLimitHistory.filter(h => h.ts >= cutoff)
-
-    const prev = this._rateLimitHistory.length > 0
-      ? this._rateLimitHistory[this._rateLimitHistory.length - 1]
-      : null
-    const delta = prev != null ? prev.remaining - info.remaining : null
-    const deltaStr = delta != null ? ` (Δ=${delta} since prev sample)` : ''
-    const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
-    this.log(`[ratelimit] linear: remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
-
-    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now, 'Linear')
-    this._rateLimitHistory.push({ remaining: info.remaining, ts: now })
-    if (!warning) return []
-
-    const cooldownElapsed = LinearIssuesPlugin._warnedAt == null
-      || now - LinearIssuesPlugin._warnedAt > LinearIssuesPlugin.WARN_COOLDOWN_MS
-    if (!cooldownElapsed) return []
-
-    LinearIssuesPlugin._warnedAt = now
-    return [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }]
+    const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearIssuesPlugin._statics, this.log, projectChannel, 'Linear')
+    this._rateLimitHistory = history
+    return events
   }
 }
 

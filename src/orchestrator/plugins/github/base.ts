@@ -6,7 +6,7 @@ import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, t
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
 import { GhClient, fetchRateLimit } from './github-api.js'
-import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../_rate-limit.js'
+import { observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
 // scaffolding; non-watching plugins (e.g. GitHubNewIssuesPlugin) extend directly.
@@ -16,10 +16,8 @@ export abstract class GhPluginBase extends BasePlugin {
 
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
-  // Cross-instance — one warning per 10 min total. 60-min reset window means
-  // ~6 signals max, enough without spamming.
-  private static _warnedAt: number | null = null
-  private static readonly WARN_COOLDOWN_MS = 10 * 60_000
+  // Cross-instance cooldown handle — one warning per 10 min total.
+  private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
   constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
@@ -40,28 +38,9 @@ export abstract class GhPluginBase extends BasePlugin {
   ): Promise<TaggedEvent[]> {
     const info = await _fetch(this.log)
     if (!info) return []
-
-    const now = Date.now()
-    const cutoff = now - RATE_LIMIT_WINDOW_MS
-    this._rateLimitHistory = this._rateLimitHistory.filter(h => h.ts >= cutoff)
-
-    const prev = this._rateLimitHistory.length > 0
-      ? this._rateLimitHistory[this._rateLimitHistory.length - 1]
-      : null
-    const delta = prev != null ? prev.remaining - info.remaining : null
-    const deltaStr = delta != null ? ` (Δ=${delta} since prev sample)` : ''
-    const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
-    this.log(`[ratelimit] remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
-
-    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now, 'GH')
-    this._rateLimitHistory.push({ remaining: info.remaining, ts: now })
-    if (!warning) return []
-
-    const cooldownElapsed = GhPluginBase._warnedAt == null || now - GhPluginBase._warnedAt > GhPluginBase.WARN_COOLDOWN_MS
-    if (!cooldownElapsed) return []
-
-    GhPluginBase._warnedAt = now
-    return [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }]
+    const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')
+    this._rateLimitHistory = history
+    return events
   }
 }
 

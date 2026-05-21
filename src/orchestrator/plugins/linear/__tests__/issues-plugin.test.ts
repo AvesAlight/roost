@@ -5,6 +5,7 @@ import type { Command } from '../../../dispatcher-dm-handler.js'
 import type { LinearIssuePluginState, LinearIssueSnap, LinearIssueTombstone } from '../types.js'
 import { isTombstone } from '../types.js'
 import type { RawLinearIssue } from '../diff.js'
+import { RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 // ---- Test scaffolding ----------------------------------------------------
 
@@ -297,5 +298,63 @@ describe('isTombstone helper', () => {
     expect(isTombstone(tomb)).toBe(true)
     expect(isTombstone(null)).toBe(false)
     expect(isTombstone(undefined)).toBe(false)
+  })
+})
+
+// ---- rate-limit observation -----------------------------------------------
+
+function rlClient(rl: RateLimitInfo | null): LinearClientLike {
+  return {
+    graphql: async () => ({ issue: null }),
+    getLastRateLimit: () => rl,
+  }
+}
+
+function rlInfo(remaining: number, resetInMs = 60 * 60_000): RateLimitInfo {
+  return {
+    remaining,
+    limit: 2500,
+    resetAt: Math.floor((Date.now() + resetInMs) / 1000),
+  }
+}
+
+describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
+  it('emits a warning when rolling rate predicts exhaustion before reset', () => {
+    const p = plugin(rlClient(rlInfo(100)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(p as any)._rateLimitHistory = [
+      { remaining: 2500, ts: Date.now() - 160_000 },
+    ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (p as any).observeRateLimit('#proj-leads')
+    const warnings = events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.channels).toEqual(['#proj-leads'])
+    expect(warnings[0]?.payload.text).toContain('Linear')
+  })
+
+  it('no warning on cold start (empty history)', () => {
+    const p = plugin(rlClient(rlInfo(100)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (p as any).observeRateLimit('#proj-leads')
+    expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
+  })
+
+  it('no warning when getLastRateLimit returns null', () => {
+    const p = plugin(rlClient(null))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (p as any).observeRateLimit('#proj-leads')
+    expect(events).toEqual([])
+  })
+
+  it('prunes stale history — no warning after a long gap', () => {
+    const p = plugin(rlClient(rlInfo(100)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(p as any)._rateLimitHistory = [
+      { remaining: 2500, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
+    ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const events = (p as any).observeRateLimit('#proj-leads')
+    expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
   })
 })
