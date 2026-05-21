@@ -7,7 +7,7 @@
     "project_channel": "#roost-leads",
     "server": "127.0.0.1",
     "port": 6667,
-    "interval_seconds": 10
+    "interval_seconds": 30
   },
   "plugins": {
     "github-new-issues": { "watched": [{ "repo": "AvesAlight/roost" }] },
