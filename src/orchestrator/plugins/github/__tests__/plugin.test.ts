@@ -185,14 +185,32 @@ describe('GitHubPrsPlugin.runTick', () => {
 describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
   stubRateLimit()
 
-  function plugin(query: ((ids: string[]) => Promise<Array<{ identifier: string; attachments: { nodes: Array<{ id: string; sourceType: string | null; url: string | null }> } | null }>>) | null): GitHubPrsPlugin {
+  type Attachment = { id: string; sourceType: string | null; url: string | null }
+  type IssueNode = { identifier: string; attachments: { nodes: Attachment[] } | null }
+  type QueryResult = { nodes: IssueNode[]; hasNextPage: boolean }
+  type QueryFn = (teamKey: string, numbers: number[]) => Promise<QueryResult>
+
+  function plugin(query: QueryFn | null): GitHubPrsPlugin {
     const p = new GitHubPrsPlugin('#proj')
     p._setLinearQueryForTest(query)
     return p
   }
 
-  function attachment(prUrl: string): { id: string; sourceType: string | null; url: string | null } {
+  function attachment(prUrl: string): Attachment {
     return { id: `att-${prUrl}`, sourceType: 'github', url: prUrl }
+  }
+
+  // Helper: build a query stub from a flat identifier-keyed map of attachments
+  // (test-side convenience — resolver does the team grouping internally).
+  function stubFromMap(byId: Record<string, Attachment[]>): QueryFn {
+    return async (team, numbers) => {
+      const nodes: IssueNode[] = []
+      for (const n of numbers) {
+        const id = `${team}-${n}`
+        if (byId[id] !== undefined) nodes.push({ identifier: id, attachments: { nodes: byId[id] } })
+      }
+      return { nodes, hasNextPage: false }
+    }
   }
 
   it('routes a PR event to the Linear-issue channel when an attachment matches the PR URL', async () => {
@@ -215,9 +233,9 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
           'linear-issues': { watched: [{ identifier: 'C-758' }] },
         },
       }
-      const result = await plugin(async () => [
-        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
-      ]).runTick(cfg, { prs: {} })
+      const result = await plugin(stubFromMap({
+        'C-758': [attachment('https://github.com/org/repo/pull/25')],
+      })).runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#proj-issue-25', '#proj-issue-c-758'])
       expect(result.channels).toContain('#proj-issue-c-758')
@@ -237,7 +255,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     })
     try {
       let calls = 0
-      const queryFn = async () => { calls++; return [] }
+      const queryFn: QueryFn = async () => { calls++; return { nodes: [], hasNextPage: false } }
       const cfg: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
@@ -270,8 +288,8 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       }
       let attached = true
       const p = plugin(async () => attached
-        ? [{ identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } }]
-        : [{ identifier: 'C-758', attachments: { nodes: [] } }])
+        ? { nodes: [{ identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } }], hasNextPage: false }
+        : { nodes: [{ identifier: 'C-758', attachments: { nodes: [] } }], hasNextPage: false })
       const tick1 = await p.runTick(cfg, { prs: {} })
       expect(tick1.taggedEvents[0]?.channels).toContain('#proj-issue-c-758')
       attached = false
@@ -281,7 +299,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('issues exactly one Linear query per tick regardless of N watched PRs', async () => {
+  it('issues exactly one query per Linear team regardless of N watched PRs or N watched same-team identifiers', async () => {
     const ev: OrchestratorEvent = {
       kind: 'pr_review_comment',
       repo: 'org/repo', pr: 0, url: 'u',
@@ -294,10 +312,10 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       events: [{ ...ev, pr: num } as OrchestratorEvent],
     }))
     try {
-      let calls = 0
-      const queryFn = async (ids: string[]) => {
-        calls++
-        return ids.map(id => ({ identifier: id, attachments: { nodes: [] } }))
+      const teamCalls: string[] = []
+      const queryFn: QueryFn = async (team) => {
+        teamCalls.push(team)
+        return { nodes: [], hasNextPage: false }
       }
       const cfg: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
@@ -307,7 +325,36 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         },
       }
       await plugin(queryFn).runTick(cfg, { prs: {} })
-      expect(calls).toBe(1)
+      expect(teamCalls).toEqual(['C'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('issues one query per distinct Linear team when watched identifiers span teams', async () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'org/repo', pr: 25, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [ev],
+    })
+    try {
+      const teamCalls: string[] = []
+      const queryFn: QueryFn = async (team) => {
+        teamCalls.push(team)
+        return { nodes: [], hasNextPage: false }
+      }
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }, { identifier: 'M-7' }, { identifier: 'C-2' }] },
+        },
+      }
+      await plugin(queryFn).runTick(cfg, { prs: {} })
+      expect(teamCalls.sort()).toEqual(['C', 'M'])
     } finally { spy.mockRestore() }
   })
 
@@ -330,10 +377,10 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
           'linear-issues': { watched: [{ identifier: 'C-1' }, { identifier: 'C-2' }] },
         },
       }
-      const result = await plugin(async () => [
-        { identifier: 'C-1', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
-        { identifier: 'C-2', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
-      ]).runTick(cfg, { prs: {} })
+      const result = await plugin(stubFromMap({
+        'C-1': [attachment('https://github.com/org/repo/pull/25')],
+        'C-2': [attachment('https://github.com/org/repo/pull/25')],
+      })).runTick(cfg, { prs: {} })
       expect(result.taggedEvents[0]?.channels.sort()).toEqual([
         '#proj-issue-25', '#proj-issue-c-1', '#proj-issue-c-2',
       ])
@@ -355,9 +402,9 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
           'linear-issues': { watched: [{ identifier: 'C-758' }] },
         },
       }
-      const result = await plugin(async () => [
-        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
-      ]).runTick(cfg, { prs: {} })
+      const result = await plugin(stubFromMap({
+        'C-758': [attachment('https://github.com/org/repo/pull/25')],
+      })).runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
       const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
       expect(text).toContain('#proj-issue-c-758')
@@ -379,9 +426,9 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
           'linear-issues': { watched: [{ identifier: 'C-758' }] },
         },
       }
-      const result = await plugin(async () => [
-        { identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } },
-      ]).runTick(cfg, { prs: {} })
+      const result = await plugin(stubFromMap({
+        'C-758': [attachment('https://github.com/org/repo/pull/25')],
+      })).runTick(cfg, { prs: {} })
       const warn = result.taggedEvents.find(e => (e.payload as { kind: string }).kind === 'oneline')
       expect(warn?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
