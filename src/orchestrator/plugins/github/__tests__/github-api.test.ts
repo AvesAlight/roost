@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit } from '../github-api.js'
+import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -234,43 +235,43 @@ describe('computeRateLimitWarning', () => {
   }
 
   it('returns null when history is empty', () => {
-    expect(computeRateLimitWarning(makeInfo(1000), [], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(1000), [], T0, 'GH')).toBeNull()
   })
 
   it('returns null when remaining is unchanged (no consumption)', () => {
     const prev = { remaining: 1000, ts: T0 - 15 * SEC }
-    expect(computeRateLimitWarning(makeInfo(1000), [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(1000), [prev], T0, 'GH')).toBeNull()
   })
 
   it('returns null when remaining went up (reset happened between ticks)', () => {
     const prev = { remaining: 100, ts: T0 - 15 * SEC }
-    expect(computeRateLimitWarning(makeInfo(5000), [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(5000), [prev], T0, 'GH')).toBeNull()
   })
 
   it('returns null when reset is already in the past', () => {
     const info = { remaining: 10, limit: 5000, resetAt: Math.floor((T0 - MIN) / 1000) }
     const prev = { remaining: 100, ts: T0 - 15 * SEC }
-    expect(computeRateLimitWarning(info, [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(info, [prev], T0, 'GH')).toBeNull()
   })
 
   it('returns null when trajectory is fine (exhaustion after reset)', () => {
     // 10 consumed in 15s → ~40/min. 2000 remaining → 50 min to exhaustion. reset in 30min.
     // exhaustion (50m) > reset (30m) → no warning
     const prev = { remaining: 2010, ts: T0 - 15 * SEC }
-    expect(computeRateLimitWarning(makeInfo(2000, 30), [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(2000, 30), [prev], T0, 'GH')).toBeNull()
   })
 
   it('returns null when history spans less than half the rolling window', () => {
     // 100s < RATE_LIMIT_WINDOW_MS/2 (150s) — not enough history to trust rate.
     const prev = { remaining: 5000, ts: T0 - 100 * SEC }
-    expect(computeRateLimitWarning(makeInfo(100, 30), [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(100, 30), [prev], T0, 'GH')).toBeNull()
   })
 
   it('returns warning string when exhaustion is predicted before reset', () => {
     // 400 consumed in 160s → 150/min. 200 remaining → ~1.3 min exhaustion. reset in 30min.
     const prev = { remaining: 600, ts: T0 - 160 * SEC }
-    const warning = computeRateLimitWarning(makeInfo(200, 30), [prev], T0)
-    expect(warning).toMatch(/rate limit warning/)
+    const warning = computeRateLimitWarning(makeInfo(200, 30), [prev], T0, 'GH')
+    expect(warning).toMatch(/GH rate limit warning/)
     expect(warning).toMatch(/200 calls remaining/)
     expect(warning).toMatch(/reset in 30m/)
     expect(warning).toMatch(/~150\/min/)
@@ -279,21 +280,21 @@ describe('computeRateLimitWarning', () => {
   it('warning includes projected exhaustion time', () => {
     // 160 consumed in 160s → 60/min. 60 remaining → 1 min to exhaustion. reset in 30min.
     const prev = { remaining: 220, ts: T0 - 160 * SEC }
-    const warning = computeRateLimitWarning(makeInfo(60, 30), [prev], T0)
+    const warning = computeRateLimitWarning(makeInfo(60, 30), [prev], T0, 'GH')
     expect(warning).toMatch(/projected exhaustion in 1m/)
   })
 
   it('shows seconds for sub-minute projected exhaustion', () => {
     // 1600 consumed in 160s → 600/min. 100 remaining → ~10s to exhaustion. reset in 30min.
     const prev = { remaining: 1700, ts: T0 - 160 * SEC }
-    const warning = computeRateLimitWarning(makeInfo(100, 30), [prev], T0)
+    const warning = computeRateLimitWarning(makeInfo(100, 30), [prev], T0, 'GH')
     expect(warning).toMatch(/projected exhaustion in 10s/)
   })
 
   it('cold-start single entry: no warn when nothing consumed', () => {
     // One history entry, remaining unchanged — graceful no-op.
     const prev = { remaining: 5000, ts: T0 - 30 * SEC }
-    expect(computeRateLimitWarning(makeInfo(5000), [prev], T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(5000), [prev], T0, 'GH')).toBeNull()
   })
 
   it('uses oldest history entry as anchor, smoothing across the window', () => {
@@ -307,7 +308,7 @@ describe('computeRateLimitWarning', () => {
     ]
     // tick-to-tick from last entry: 0 consumed in 10s → no warn (consumed<=0)
     // but anchor-based: 200 consumed in 300s → 40/min → 4800/40=120m > 60m reset → no warn
-    expect(computeRateLimitWarning(makeInfo(4800), history, T0)).toBeNull()
+    expect(computeRateLimitWarning(makeInfo(4800), history, T0, 'GH')).toBeNull()
   })
 
   it('rolling window: a genuine sustained spike still warns', () => {
@@ -317,8 +318,8 @@ describe('computeRateLimitWarning', () => {
       { remaining: 260, ts: T0 - 200 * SEC },
       { remaining: 160, ts: T0 - 100 * SEC },
     ]
-    const warning = computeRateLimitWarning(makeInfo(60, 30), history, T0)
-    expect(warning).toMatch(/rate limit warning/)
+    const warning = computeRateLimitWarning(makeInfo(60, 30), history, T0, 'GH')
+    expect(warning).toMatch(/GH rate limit warning/)
     expect(warning).toMatch(/~60\/min/)
   })
 

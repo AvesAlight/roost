@@ -5,7 +5,8 @@ import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
-import { GhClient, fetchRateLimit, computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from './github-api.js'
+import { GhClient, fetchRateLimit } from './github-api.js'
+import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../_rate-limit.js'
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
 // scaffolding; non-watching plugins (e.g. GitHubNewIssuesPlugin) extend directly.
@@ -52,7 +53,7 @@ export abstract class GhPluginBase extends BasePlugin {
     const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
     this.log(`[ratelimit] remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
 
-    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now)
+    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now, 'GH')
     this._rateLimitHistory.push({ remaining: info.remaining, ts: now })
     if (!warning) return []
 

@@ -1,4 +1,5 @@
 import type { PluginLogger } from '../../plugin.js'
+import type { RateLimitInfo } from '../_rate-limit.js'
 
 // Stderr patterns we retry on. 404/401/422/etc. throw on first attempt; 422
 // is logged verbatim in spawnGh so a 422-as-race shows in dispatcher logs.
@@ -111,12 +112,6 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
 
 // ---- Rate limit observability ----------------------------------------------
 
-export interface RateLimitInfo {
-  remaining: number
-  limit: number
-  resetAt: number  // unix seconds
-}
-
 // `gh api /rate_limit` — exempt endpoint, no token cost. `attempts: 1` because
 // retries would burn the budget we're trying to measure. Null on any failure.
 export async function fetchRateLimit(
@@ -134,40 +129,6 @@ export async function fetchRateLimit(
   } catch {
     return null
   }
-}
-
-// 5 minute rolling window — stable cross-tick average without missing spikes.
-export const RATE_LIMIT_WINDOW_MS = 5 * 60_000
-
-// Returns a warning string when the rolling rate predicts exhaustion before
-// reset; null otherwise. `history` is window-pruned by the caller, oldest first.
-export function computeRateLimitWarning(
-  current: RateLimitInfo,
-  history: ReadonlyArray<{ remaining: number; ts: number }>,
-  now: number
-): string | null {
-  if (history.length === 0) return null
-  const anchor = history[0]
-  const consumed = anchor.remaining - current.remaining
-  if (consumed <= 0) return null
-  const intervalMs = now - anchor.ts
-  if (intervalMs <= 0) return null
-  // Need at least half the window before trusting the rate estimate.
-  if (intervalMs < RATE_LIMIT_WINDOW_MS / 2) return null
-  const ratePerMin = consumed / (intervalMs / 60_000)
-  const minToReset = (current.resetAt * 1000 - now) / 60_000
-  if (minToReset <= 0) return null
-  const minToExhaustion = current.remaining / ratePerMin
-  if (minToExhaustion >= minToReset) return null
-  const exhaustionStr = minToExhaustion < 1
-    ? `${Math.round(minToExhaustion * 60)}s`
-    : `${Math.round(minToExhaustion)}m`
-  return (
-    `[dispatcher] GH rate limit warning: ${current.remaining} calls remaining,` +
-    ` reset in ${Math.round(minToReset)}m,` +
-    ` current rate ~${Math.round(ratePerMin)}/min —` +
-    ` projected exhaustion in ${exhaustionStr}`
-  )
 }
 
 export interface GhLabel {
