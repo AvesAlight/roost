@@ -218,18 +218,21 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
    ```
    printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
    ```
-3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If no extractable insight, skip this step silently.
+3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If the lesson is clearly narrow to a code area (subsystem, test surface, single tool), append a scope suggestion on the same line: `(suggested paths: <glob>; topic: <slug>)` — `<slug>` becomes the rule filename. If no extractable insight, skip this step silently.
 4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
-   - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim
-   - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version
+   - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim, applying the suggested path scope if any
+   - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version, applying the suggested path scope if any
+   - Affirmative with explicit scope (e.g., "file paths=src/orchestrator/** topic=orchestrator", optionally combined with `with: <text>`) → commit using the lead's `paths` and `topic`, overriding any suggestion
    - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
    - Anything else (critique, question) → revise and re-propose
 5. When filing a learning:
-   - Write the formatted learning block to `.claude/rules/project-learnings.md` using Edit/Write. If the file or directory doesn't exist, create them. Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
+   - **Unscoped** (no `paths:`): append the formatted block to `.claude/rules/project-learnings.md`.
+   - **Path-scoped** (lead ratified a `paths:` glob and `topic` slug): write to `.claude/rules/<slug>.md`. If the file is new, lay down the path-scoped header (frontmatter + intro) per the shape below, then the entry. If it already exists, append the new entry under the existing header — do not duplicate the frontmatter and do not silently rewrite the existing `paths:` line; if the new entry needs a different glob, flag it in `#<project>-leads` before writing.
+   - Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
    - Commit and push:
      ```
      mkdir -p .claude/rules
-     git add .claude/rules/project-learnings.md
+     git add .claude/rules/<file>.md
      git commit -m "add learning from #<I>"
      git push origin main
      ```
@@ -250,8 +253,9 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
 - One-shot fix ("don't use `cat` in script X")
 - Vague platitude ("be careful with refactors")
 - Process theater (rules nobody will follow)
+- Over-narrow `paths:` scope (e.g. a single file like `paths: src/foo.ts`) — the rule loads only when that exact file is Read, and a learning the reader can't reach is dead history. Aim for a directory- or module-shaped glob the rule actually applies to.
 
-Learning file shape (`.claude/rules/project-learnings.md`):
+Unscoped learning file shape (`.claude/rules/project-learnings.md`):
 
 ```markdown
 # Project Learnings
@@ -262,6 +266,25 @@ Patterns extracted from postmortems. Auto-loaded into worker/reviewer sessions.
 
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
+
+Path-scoped learning file shape (`.claude/rules/<slug>.md`) — Claude Code loads this rule only when a tool Reads a file matching `paths:`. Globs are repo-relative (resolved against the repo root, not the agent's cwd):
+
+```markdown
+---
+paths:
+  - <glob>
+---
+
+# <Slug> Learnings
+
+Patterns extracted from postmortems. Loads when files matching `<glob>` are read.
+
+## YYYY-MM-DD: <one-line lesson> (from #<I>)
+
+<2-3 sentences: what happened, why it matters, what to do differently>
+```
+
+Subsequent entries in the same scoped file just append a new `## YYYY-MM-DD: ...` block under the existing header — the frontmatter stays at the top.
 
 Learnings are sparse — not every postmortem yields one.
 
