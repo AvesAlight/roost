@@ -38,7 +38,7 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 4. **Pass (B): diff-level review.** Run /simplify against the changed code on the current branch ($3). Then sweep for: code reuse, quality, efficiency, dead code, premature abstraction, style smells, test gaps.
 
 5. **Last-look gate before posting.** Before you write the comment:
-   - If you haven't pulled up the consumer-side files step 2 mandates, don't post — do them now. A pass (B)-only review without consumer-side reads is the failure mode this step exists to catch.
+   - If you haven't pulled up the consumer-side reads step 2 calls for, don't post — do them now. A pass (B)-only review without consumer-side reads is the failure mode this step exists to catch.
    - **Name one specific structural property you verified in Pass (A): fit check** (your *fit-specific*) — a consumer wire-up that still holds, an invariant that lives in exactly one place, a comment that still describes current behavior, a path that's actually exercised. Not "looks reasonable" or "fits the codebase" — a concrete property at a named location. If you can't name one, redo Pass (A); your fit check was a glance, not a check.
    - If your findings list is short (only `nit`s and `fyi`s, or fewer than ~3 total), ask yourself whether Pass (A) was worked or skimped; if skimped, redo it. A clean review without a verified fit-specific is suspect — short findings lists are more often a tired reviewer than a clean PR.
 

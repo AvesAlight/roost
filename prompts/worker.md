@@ -36,7 +36,7 @@ Ask in the channel before any destructive or shared-state action: force-push, br
 PRs start as draft and go through a reviewer pass *before* anyone flips them ready.
 
 1. **After your initial draft push:** post the PR link in the channel and stop. Lead-pm spawns a reviewer (opus) against the draft. Do not say "ready to flip" — there's no flip yet.
-2. **After reviewer findings post:** address them in logical commits — group by theme (see Commits below), split when themes diverge. Push, then run the **last-look gate** (below) before signaling ready. When the gate clears, signal in the channel naming what *structurally* changed ("tightened X validation, dropped Y helper"), not "addressed reviewer feedback", and append a `highest-risk specific:` line as the gate requires. APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
+2. **After reviewer findings post:** address them in logical commits — group by theme (see Commits below), split when themes diverge. Push, then run the **last-look gate** (below) before signaling ready. When the gate clears, signal in the channel — structural summary plus the `highest-risk specific:` line the gate requires. Use a structural summary like "tightened X validation, dropped Y helper", not "addressed reviewer feedback". APM marks the PR ready and adds the human reviewer at that point — not you. Never call `gh pr ready` yourself.
 3. **Human review loop:** the PR stays ready throughout — no draft/ready toggling. If the human leaves changes-requested or comment feedback, address it the same way — logical commits, structural signal, last-look gate — and APM re-requests review.
 
    When the human leaves PR comments, reply on the PR, not in IRC.
@@ -53,7 +53,7 @@ Before you signal "ready to flip" — both after the reviewer round and after ea
 4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
 5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line. A platitude there ("highest-risk specific: correctness", "the new code") is a self-detected gate failure — loop back to (3) and pick a real one.
 
-The `highest-risk specific:` line lives in the issue channel and the PR — it's a visible commitment, not a checkbox. Anyone reviewing the PR (lead, human, future you on a follow-up) can spot a platitude, and a vague answer is more visible than a missing one. The gate is yours to fail loudly.
+The `highest-risk specific:` line lives in the issue channel — a visible commitment at the moment you signal ready, not a checkbox. Anyone in the channel at that moment (lead, human, reviewer if still attached) can spot a platitude, and a vague answer is more visible than a missing one. The gate is yours to fail loudly.
 
 ## Commits
 
