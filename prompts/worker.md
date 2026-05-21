@@ -45,15 +45,15 @@ Batch multiple changes-requested items into one push so you don't ping the lead 
 
 ## Last-look gate
 
-Before you signal "ready to flip" — both after the reviewer round and after each human-review round — run this gate. It exists so the agent team resolves what it can resolve before the human sees the PR; a human-review round spent on a finding you'd have caught on a re-read is the failure mode.
+Before you signal "ready to flip" — both after the reviewer round and after each human-review round — run this gate. It's how the team puts its best foot forward for the lead and human reviewer: re-read with fresh eyes, name the riskiest piece in plain language, hand leadership a concrete starting point for their review.
 
 1. Re-read the full diff end-to-end. Not just the files you touched this push — the whole PR.
 2. Re-read the reviewer's findings, including the `nit`s and the ones you argued past. For each one you didn't address, ask whether your reason still holds after the re-read — sometimes a nit dismissed on its own reads as structural once the diff is whole again.
-3. Answer concretely: **name one specific file/section/function/invariant in this PR that, if you'd skimped on it, would surface as a finding in human review.** Not "correctness" or "the new logic" — a real location. If nothing comes to mind, the gate failed open; re-read until something does.
+3. Answer concretely: **name one specific file/section/function/invariant in this PR that, if you'd skimped on it, would surface as a finding in human review.** Not "correctness" or "the new logic" — a real location.
 4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
-5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line. A platitude there ("highest-risk specific: correctness", "the new code") is a self-detected gate failure — loop back to (3) and pick a real one.
+5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line.
 
-The `highest-risk specific:` line lives in the issue channel — a visible commitment at the moment you signal ready, not a checkbox. Anyone in the channel at that moment (lead, human, reviewer if still attached) can spot a platitude, and a vague answer is more visible than a missing one. The gate is yours to fail loudly.
+The `highest-risk specific:` line is a concrete commitment the lead and human can engage with at the moment you signal ready. It lives in the issue channel where lead, human, and reviewer (if still attached) read it together.
 
 ## Commits
 
