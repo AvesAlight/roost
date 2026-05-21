@@ -26,6 +26,9 @@ coverage/
 .orchestrator/token-snapshots.json
 .orchestrator/.token-snapshots.*.tmp
 
+# Local-machine memory (loaded by Claude Code alongside CLAUDE.md)
+CLAUDE.local.md
+
 # Python bytecode cache
 __pycache__/
 *.pyc

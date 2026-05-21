@@ -94,6 +94,17 @@ else
   echo "No .claude/settings.local.json found in main worktree, skipping"
 fi
 
+# Copy CLAUDE.local.md from main worktree if it exists (loaded by Claude Code
+# alongside CLAUDE.md; gitignored; carries per-machine config such as secret
+# retrieval flows).
+claude_local_src="${main_tree}/CLAUDE.local.md"
+if [ -f "$claude_local_src" ]; then
+  cp "$claude_local_src" "$worktree_path/CLAUDE.local.md"
+  echo "Copied CLAUDE.local.md"
+else
+  echo "No CLAUDE.local.md found in main worktree, skipping"
+fi
+
 echo ""
 echo "Worktree ready at: $worktree_path"
 echo ""
