@@ -7,8 +7,8 @@
 # negotiates the relevant caps and falls back to a chunk-and-buffer
 # heuristic for any peer that doesn't speak them.
 #
-# Working dir is <roost-root>/var/ergo when launched per README.
-# All relative paths in this file resolve there.
+# Working dir is ~/roost-ircd (or whatever the operator chose) when
+# launched per README. All relative paths in this file resolve there.
 
 network:
     name: roost
@@ -164,7 +164,7 @@ datastore:
     autoupgrade: true
 
 languages:
-    enabled: true
+    enabled: false
     default: en
     path: languages
 

@@ -77,7 +77,7 @@ from a working directory of your choice — relative paths in the config
 (`logs/`, `ircd.db`, etc.) resolve from there:
 
 ```bash
-mkdir -p ~/roost-ircd && cd ~/roost-ircd
+mkdir -p ~/roost-ircd/logs && cd ~/roost-ircd
 nohup ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
 ```
 
@@ -117,6 +117,17 @@ roost status
 after forwards to claude verbatim). Default channel is `#roost`;
 default model is `opus` (Opus 4.7 — required for `--permission-mode
 auto`, which the wrapper always passes).
+
+### Debugging a failed spawn
+
+If you need to invoke `claude` directly to debug a failed `roost spawn`, the `--dangerously-load-development-channels` flag (hidden from `claude --help`) takes a server-id. The format depends on how roost is loaded:
+
+- Via plugin loader (installed via brew): `server:plugin:roost:roost-irc`
+- As a bare MCP server (dev checkout, manual `--mcp-config`): `server:roost-irc`
+
+```bash
+claude --dangerously-load-development-channels server:plugin:roost:roost-irc
+```
 
 ### Observe as a human (no Claude needed)
 
