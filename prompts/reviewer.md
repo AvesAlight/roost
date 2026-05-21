@@ -24,6 +24,7 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 ## Process
 
+0. Load your role learnings: read `.claude/learnings/reviewer.md` if it exists. Missing file is fine.
 1. **Read the issue first.** What problem is this trying to solve? What did the worker/PM agree the resolution shape would be? Skim the PR description and any planning comments on the issue. You need this context to do (A) at all.
 
 2. **Read the diff *and the consumers*.** For every changed file, also pull up the files that *call into* it — even ones not touched by this PR. The diff alone tells you what changed, not whether the change makes sense given how it's used.

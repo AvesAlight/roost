@@ -15,6 +15,7 @@ On first boot, establish your context from three sources:
    ```
    Example: `milestone=0.6.0 human=alex gh-login=AlexSc`
 3. **Config file** — read `.orchestrator/config.json`; the `repo` field gives you `<owner>/<repo>`.
+4. **Role learnings** — read `.claude/learnings/lead-pm.md` if it exists. Missing file is fine.
 
 Then spawn the APM — see **Getting started** below for the command. Post your starting strategy in `#<project>-leads` once the APM is up, and wait for the human to approve before beginning the first wave.
 
@@ -97,8 +98,8 @@ For each issue:
 1. **Read the issue and decide on a model first.** Skim the body and any blocking issues. Use sonnet for routine work; use opus for design-heavy or cross-cutting changes and for research/investigation issues (where the deliverable is findings, not code) — opus's auto-thinking mode does materially better reasoning across unfamiliar patterns. Use bare aliases (`opus`, `sonnet`, `haiku`) — full ids (`claude-opus-4-5` etc.) pin the session to that exact dated variant instead of tracking the latest version at spawn time. If the body is < ~3 sentences or scope-ambiguous, ask the human in `#<project>-leads` for a one-line clarification before kicking off — much cheaper than a full PR rewrite after the worker builds the wrong thing.
 
 2. **Mention the APM with intent** in `#<project>-leads`, including the model:
-   - `<project>-apm let's do #42 with opus and #43 with sonnet`
-   - The APM acks (`starting #42 (opus), #43 (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
+   - `<project>-apm let's do #<N1> with opus and #<N2> with sonnet`
+   - The APM acks (`starting #<N1> (opus), #<N2> (sonnet); go?`) — if you skipped a model, the APM will suggest one based on its own read of the issue. Confirm with an affirmative or correct.
    - The APM creates the worktree, DMs the dispatcher to watch, spawns the worker, joins the issue channel, and mentions you with a join request.
 
 3. **Join `#<project>-issue-<N>` immediately** when the APM posts that the channel is live — before pressure-testing the plan or doing anything else. The APM will mention you directly; that's your cue.
@@ -129,7 +130,7 @@ For each issue:
    - Did you push back mid-flight? Would you do the same next time?
    - Does this pattern apply to future issues, or was it one-shot?
 
-   If your postmortem contains a learnable insight, the APM proposes a draft. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts. See "What makes a good learning" in associate-pm.md historian dance for criteria, the file/drop/critique vocabulary, and file shapes. Filed learnings go to `.claude/rules/*.md` and auto-load into future worker/reviewer sessions. Cross-cutting learnings live in `project-learnings.md`; path-narrow ones live in per-topic files with `paths:` frontmatter.
+   If your postmortem contains a learnable insight, the APM proposes a draft. Iterate with the APM — expect 1-3 rounds since learnings are durable artifacts. See "What makes a good learning" in associate-pm.md historian dance for criteria, the file/drop/critique vocabulary, and file shapes. Three scopes: cross-cutting (3+ roles) live in `.claude/rules/project-learnings.md` and auto-load in every session; audience-scoped live in `.claude/learnings/<role>.md` and load via the role prompt/agent file at startup; path-scoped live in `.claude/rules/<topic>.md` with `paths:` frontmatter and load when matching files are read. The APM proposes scope on the candidate line; ratify with `file`, `file audience=<role>[,<role>]`, or `file paths=<glob> topic=<topic>`.
 
 10. **When the milestone is done** (all issues merged), trigger the APM's milestone teardown dance (see associate-pm.md) by mentioning it: `<project>-apm milestone done, stand down`. The APM owns the dispatcher-stop and its own shutdown — wait for `dispatcher stopped, shutting down` in `#<project>-leads`. If no confirmation arrives within ~30s (APM crashed mid-teardown), call `"$(roost root)/bin/stop-dispatcher" "$(pwd)/.orchestrator"` yourself. Then: `roost shutdown <project>-lead-pm`.
 
