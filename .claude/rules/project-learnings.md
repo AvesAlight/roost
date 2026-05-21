@@ -77,3 +77,7 @@ When filing a followup issue, ask whether the work is primarily in service of a 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
 
 Concrete: PreCompact fired 4× during one milestone, each invocation queued another /compact in tmux; none drained because each new IRC message triggered another auto-compact. Fix was atomic mkdir lock at injection; PR #471.
+
+## 2026-05-21: "Describes output, not mechanism" gap means the research hasn't happened yet (from #424)
+
+When an issue's body describes the output (add X to file Y) but not how the underlying primitive works, the deliverable is research — probe + document, not mechanical config. Size opus. The "describes output, not mechanism" gap is the research that hasn't happened yet.
