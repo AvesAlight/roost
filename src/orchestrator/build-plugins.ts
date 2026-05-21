@@ -3,21 +3,14 @@
 import type { OrchestratorConfig } from './config.js'
 import { getPluginFactory, priorityOf, registeredPluginNames, type Plugin, type PluginLogger } from './plugin.js'
 
-// Representative lines covering the two bare-grammar shapes defined by
-// tryClaimPerN / tryClaimPerRepo in plugins/grammar.ts. Keyword-prefixed
-// plugins (e.g. `watch pr 1`) only claim lines starting with their keyword,
-// so they can't tie on these probes unless two plugins share a keyword.
-// Extend this set when grammar.ts gains a new bare-grammar shape.
-const PROBE_LINES = ['watch 1', 'watch org/repo']
-
-type ParseablePlugin = Plugin & { parseCommand: NonNullable<Plugin['parseCommand']> }
-
-function isParseable(p: Plugin): p is ParseablePlugin {
+function isParseable(p: Plugin): p is Plugin & { parseCommand: NonNullable<Plugin['parseCommand']> } {
   return typeof p.parseCommand === 'function'
 }
 
-// Warn once per conflicting pair: same effective priority AND both claim the
-// same probe line. Points operators at `plugin_priorities` in config.json.
+// Warn for every pair of configured plugins where both implement parseCommand
+// and share the same effective priority. The dispatcher resolves ties by
+// config order, silently shadowing the later plugin. Points operators at
+// plugin_priorities in config.json.
 export function warnPriorityTies(plugins: Plugin[], config: OrchestratorConfig, log: PluginLogger): void {
   const parseable = plugins.filter(isParseable)
   for (let i = 0; i < parseable.length; i++) {
@@ -26,16 +19,11 @@ export function warnPriorityTies(plugins: Plugin[], config: OrchestratorConfig, 
       const b = parseable[j]
       const pri = priorityOf(a, config)
       if (pri !== priorityOf(b, config)) continue
-      for (const probe of PROBE_LINES) {
-        if (a.parseCommand(probe)?.kind === 'ok' && b.parseCommand(probe)?.kind === 'ok') {
-          log(
-            `[priority-tie] "${a.name}" and "${b.name}" both claim "${probe}" at priority ${pri};` +
-            ` "${b.name}" shadowed by config order.` +
-            ` set plugin_priorities.${a.name} or plugin_priorities.${b.name} in config.json to resolve.\n`
-          )
-          break
-        }
-      }
+      log(
+        `[priority-tie] "${a.name}" and "${b.name}" both define parseCommand at priority ${pri};` +
+        ` "${b.name}" shadowed by config order if their grammars overlap.` +
+        ` set plugin_priorities.${a.name} or plugin_priorities.${b.name} in config.json to resolve.\n`
+      )
     }
   }
 }

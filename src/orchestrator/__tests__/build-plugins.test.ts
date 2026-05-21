@@ -88,11 +88,11 @@ describe('buildPlugins', () => {
 // ---- warnPriorityTies -------------------------------------------------------
 
 // Minimal stub — no registry, no factory. Tests exercise warnPriorityTies directly.
-function makePlugin(name: string, claims: string[], grammarPriority?: number): Plugin {
+function makePlugin(name: string, grammarPriority?: number): Plugin {
   return {
     name,
     grammarPriority,
-    parseCommand: (line: string) => claims.includes(line) ? { kind: 'ok', cmd: {} } : null,
+    parseCommand: () => null,
     desiredChannels: () => [],
     runTick: async (): Promise<PluginTickResult> => ({ state: null, taggedEvents: [], channels: [] }),
   }
@@ -113,22 +113,13 @@ describe('warnPriorityTies', () => {
     expect(logs).toHaveLength(0)
   })
 
-  it('no warning when same-priority plugins claim different lines', () => {
+  it('warns when two parseable plugins share the same priority (regardless of what they claim)', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'])
-    const b = makePlugin('b', ['watch org/repo'])
-    warnPriorityTies([a, b], {}, msg => logs.push(msg))
-    expect(logs).toHaveLength(0)
-  })
-
-  it('warns when two plugins both claim the same probe line at the same priority', () => {
-    const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'])
-    const b = makePlugin('b', ['watch 1'])
+    const a = makePlugin('a')
+    const b = makePlugin('b')
     warnPriorityTies([a, b], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(1)
     expect(logs[0]).toContain('"a"')
-    expect(logs[0]).toContain('"watch 1"')
     expect(logs[0]).toContain('"b" shadowed')
     expect(logs[0]).toContain('plugin_priorities.a')
     expect(logs[0]).toContain('plugin_priorities.b')
@@ -136,43 +127,38 @@ describe('warnPriorityTies', () => {
 
   it('no warning when priorities differ', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'], 10)
-    const b = makePlugin('b', ['watch 1'], 0)
+    const a = makePlugin('a', 10)
+    const b = makePlugin('b', 0)
     warnPriorityTies([a, b], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(0)
   })
 
   it('plugin_priorities override resolves a tie', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'])
-    const b = makePlugin('b', ['watch 1'])
+    const a = makePlugin('a')
+    const b = makePlugin('b')
     const config: OrchestratorConfig = { plugin_priorities: { a: 5 } }
     warnPriorityTies([a, b], config, msg => logs.push(msg))
     expect(logs).toHaveLength(0)
   })
 
-  it('warns once per conflicting pair even when multiple probe lines tie', () => {
+  it('warns once per pair', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1', 'watch org/repo'])
-    const b = makePlugin('b', ['watch 1', 'watch org/repo'])
-    warnPriorityTies([a, b], {}, msg => logs.push(msg))
+    warnPriorityTies([makePlugin('a'), makePlugin('b')], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(1)
   })
 
   it('warns for each conflicting pair independently', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'])
-    const b = makePlugin('b', ['watch 1'])
-    const c = makePlugin('c', ['watch 1'])
-    warnPriorityTies([a, b, c], {}, msg => logs.push(msg))
+    warnPriorityTies([makePlugin('a'), makePlugin('b'), makePlugin('c')], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(3)
   })
 
   it('only pairs where both have parseCommand are checked', () => {
     const logs: string[] = []
-    const a = makePlugin('a', ['watch 1'])
+    const a = makePlugin('a')
     const plain = makePlainPlugin('plain')
-    const b = makePlugin('b', ['watch 1'])
+    const b = makePlugin('b')
     warnPriorityTies([a, plain, b], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(1)
     expect(logs[0]).toContain('"a"')
