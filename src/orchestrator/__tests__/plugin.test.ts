@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import {
   BasePlugin,
+  priorityOf,
+  type Plugin,
   type PluginTickResult,
   type TaggedEvent,
   registerPlugin,
@@ -167,6 +169,34 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
     await import('../registry.js')
     expect(getPluginFactory('github-prs')!('#x', () => {}).name).toBe('github-prs')
     expect(getPluginFactory('github-issues')!('#x', () => {}).name).toBe('github-issues')
+  })
+})
+
+describe('priorityOf', () => {
+  const base: Plugin = {
+    name: 'p',
+    desiredChannels: () => [],
+    runTick: async (): Promise<PluginTickResult> => ({ state: null, taggedEvents: [], channels: [] }),
+  }
+
+  it('returns 0 when no grammarPriority and no override', () => {
+    expect(priorityOf(base, {})).toBe(0)
+  })
+
+  it('returns grammarPriority when set and no override', () => {
+    expect(priorityOf({ ...base, grammarPriority: 5 }, {})).toBe(5)
+  })
+
+  it('config.plugin_priorities override replaces grammarPriority outright', () => {
+    expect(priorityOf({ ...base, grammarPriority: 5 }, { plugin_priorities: { p: 99 } })).toBe(99)
+  })
+
+  it('override of 0 wins over a non-zero grammarPriority (no max/sum)', () => {
+    expect(priorityOf({ ...base, grammarPriority: 10 }, { plugin_priorities: { p: 0 } })).toBe(0)
+  })
+
+  it('throws when plugin is falsy', () => {
+    expect(() => priorityOf(null as unknown as Plugin, {})).toThrow('priorityOf: plugin is required')
   })
 })
 
