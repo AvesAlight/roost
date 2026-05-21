@@ -13,7 +13,7 @@ import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
-import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS } from '../_rate-limit.js'
+import { observeRateLimitFromInfo, type RateLimitStatics } from '../_rate-limit.js'
 import { tryClaimPerLinearTeam, type PerLinearTeamCommand } from '../grammar.js'
 import { LinearClient, type LinearIssueNode } from './linear-api.js'
 
@@ -37,8 +37,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private readonly client: LinearClient
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
-  private static _warnedAt: number | null = null
-  private static readonly WARN_COOLDOWN_MS = 10 * 60_000
+  private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
   constructor(
     defaultChannel: string,
@@ -195,28 +194,9 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private observeLinearRateLimit(projectChannel: string): TaggedEvent[] {
     const info = this.client.getLastRateLimit()
     if (!info) return []
-
-    const now = Date.now()
-    const cutoff = now - RATE_LIMIT_WINDOW_MS
-    this._rateLimitHistory = this._rateLimitHistory.filter(h => h.ts >= cutoff)
-
-    const prev = this._rateLimitHistory.length > 0
-      ? this._rateLimitHistory[this._rateLimitHistory.length - 1]
-      : null
-    const delta = prev != null ? prev.remaining - info.remaining : null
-    const deltaStr = delta != null ? ` (Δ=${delta} since prev sample)` : ''
-    const resetMin = Math.round((info.resetAt * 1000 - now) / 60_000)
-    this.log(`[ratelimit] linear remaining=${info.remaining}/${info.limit}${deltaStr} reset_in=${resetMin}m\n`)
-
-    const warning = computeRateLimitWarning(info, this._rateLimitHistory, now, 'Linear')
-    this._rateLimitHistory.push({ remaining: info.remaining, ts: now })
-    if (!warning) return []
-
-    const cooldownElapsed = LinearNewIssuesPlugin._warnedAt == null || now - LinearNewIssuesPlugin._warnedAt > LinearNewIssuesPlugin.WARN_COOLDOWN_MS
-    if (!cooldownElapsed) return []
-
-    LinearNewIssuesPlugin._warnedAt = now
-    return [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }]
+    const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearNewIssuesPlugin._statics, this.log, projectChannel, 'Linear')
+    this._rateLimitHistory = history
+    return events
   }
 }
 
