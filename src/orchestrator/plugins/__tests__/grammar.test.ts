@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, splitCommands } from '../grammar.js'
+import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, tryClaimPerLinearTeam, splitCommands } from '../grammar.js'
 
 // ---- splitCommands --------------------------------------------------------
 
@@ -310,5 +310,72 @@ describe('tryClaimPerLinearId', () => {
     const r = tryClaimPerLinearId('watch linear C-758 notachannel')
     expect(r?.kind).toBe('error')
     expect((r as { kind: 'error'; message: string }).message).toMatch(/channels must match/)
+  })
+})
+
+// ---- tryClaimPerLinearTeam ------------------------------------------------
+
+describe('tryClaimPerLinearTeam — target=linear-team', () => {
+  it('claims `watch linear-team C`', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', channels: [] },
+    })
+  })
+
+  it('claims multi-letter team key', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team MAR')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', team: 'MAR', channels: [] },
+    })
+  })
+
+  it('claims with channels', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C #triage #leads')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', channels: ['#triage', '#leads'] },
+    })
+  })
+
+  it('claims `unwatch linear-team C`', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'unwatch linear-team C')).toEqual({
+      kind: 'ok', cmd: { verb: 'unwatch', team: 'C', channels: [] },
+    })
+  })
+
+  it('errors on lowercase team key', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team c')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toContain('"c"')
+    expect((r as { kind: 'error'; message: string }).message).toContain('uppercase')
+  })
+
+  it('errors on mixed-case team key', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team Car')
+    expect(r?.kind).toBe('error')
+  })
+
+  it('errors on missing team after target', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toContain('team key')
+  })
+
+  it('errors on unwatch with trailing channel', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'unwatch linear-team C #foo')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toContain('no channel arguments')
+  })
+
+  it('errors on malformed channel', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C notachannel')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toContain('channels must match')
+  })
+
+  it('defers when target keyword is absent', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch C')).toBeNull()
+    expect(tryClaimPerLinearTeam('linear-team', 'watch new-issues org/repo')).toBeNull()
+  })
+
+  it('defers on non-watch/unwatch verbs', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'help linear-team C')).toBeNull()
   })
 })

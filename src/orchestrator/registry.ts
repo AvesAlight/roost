@@ -6,9 +6,11 @@ import { GitHubIssuesPlugin } from './plugins/github/issues-plugin.js'
 import { GitHubNewIssuesPlugin } from './plugins/github/new-issues-plugin.js'
 import { GitHubCommitsPlugin } from './plugins/github/commits-plugin.js'
 import { LinearIssuesPlugin } from './plugins/linear/issues-plugin.js'
+import { LinearNewIssuesPlugin } from './plugins/linear/new-issues-plugin.js'
 
 registerPlugin('github-prs', (defaultChannel, log) => new GitHubPrsPlugin(defaultChannel, log))
 registerPlugin('github-issues', (defaultChannel, log) => new GitHubIssuesPlugin(defaultChannel, log))
 registerPlugin('github-new-issues', (defaultChannel, log) => new GitHubNewIssuesPlugin(defaultChannel, log))
 registerPlugin('github-commits', (defaultChannel, log) => new GitHubCommitsPlugin(defaultChannel, log))
 registerPlugin('linear-issues', (defaultChannel, log) => new LinearIssuesPlugin(defaultChannel, log))
+registerPlugin('linear-new-issues', (defaultChannel, log) => new LinearNewIssuesPlugin(defaultChannel, log))

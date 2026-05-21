@@ -282,6 +282,32 @@ export async function spawnLinear(
   throw new LinearError(`spawnLinear: loop exited without result for ${cmd}`)
 }
 
+// ---- New-issues shape -----------------------------------------------------
+
+export interface LinearIssueNode {
+  id: string           // UUID
+  identifier: string   // "C-758"
+  title: string | null
+  labels: { nodes: Array<{ name: string }> } | null
+  url: string | null
+}
+
+function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
+  if (v == null || typeof v !== 'object') return false
+  const nodes = (v as Record<string, unknown>).nodes
+  return Array.isArray(nodes)
+}
+
+const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!) {
+  teams(filter: { key: { eq: $teamKey } }) {
+    nodes {
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }) {
+        nodes { id identifier title labels { nodes { name } } url }
+      }
+    }
+  }
+}`
+
 // ---- Probe shape ----------------------------------------------------------
 
 export interface LinearProbeResult {
@@ -343,6 +369,28 @@ export class LinearClient {
       )
     }
     return result.body.data
+  }
+
+  // Fetch open (not completed, not canceled) issues for a team identified by key
+  // (e.g. "C", "MAR"). Returns an empty array when the team key is not found —
+  // caller is responsible for logging the missing-team warning.
+  async fetchTeamOpenIssues(teamKey: string): Promise<LinearIssueNode[]> {
+    const data = (await this.graphql(TEAM_OPEN_ISSUES_QUERY, { teamKey })) as {
+      teams?: { nodes?: Array<{ issues?: { nodes?: unknown[] } }> }
+    } | undefined | null
+    const teamNode = data?.teams?.nodes?.[0]
+    if (!teamNode) return []
+    const nodes = teamNode.issues?.nodes ?? []
+    return nodes
+      .filter((n): n is Record<string, unknown> => n != null && typeof n === 'object')
+      .map(n => ({
+        id: typeof n.id === 'string' ? n.id : '',
+        identifier: typeof n.identifier === 'string' ? n.identifier : '',
+        title: typeof n.title === 'string' ? n.title : null,
+        labels: isLabelsShape(n.labels) ? n.labels : null,
+        url: typeof n.url === 'string' ? n.url : null,
+      }))
+      .filter(n => n.id && n.identifier)
   }
 
   // Boot probe: confirms auth + identifies the workspace and teams. Throws

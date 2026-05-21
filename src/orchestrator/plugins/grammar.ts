@@ -192,6 +192,53 @@ export function tryClaimPerLinearId(line: string): ParseResult<PerLinearIdComman
   return { kind: 'ok', cmd: { verb, identifier, channels } }
 }
 
+export interface PerLinearTeamCommand {
+  verb: Verb
+  team: string
+  channels: string[]
+}
+
+// Try to claim a per-Linear-team line for `target`. Returns:
+//   - `null` if the line isn't watch/unwatch, or doesn't lead with this target.
+//   - `{kind:'ok',cmd}` on a clean claim.
+//   - `{kind:'error',msg}` when the line claimed this plugin's target but the
+//     body fails validation (bad team key, malformed channel, etc.). Unlike
+//     `tryClaimPerN`/`tryClaimPerRepo`, there is no shape-based defer — `linear-team`
+//     is an unambiguous keyword; no other plugin claims it.
+export function tryClaimPerLinearTeam(target: string, line: string): ParseResult<PerLinearTeamCommand> | null {
+  const parsed = tokenizeVerbLine(line)
+  if (!parsed) return null
+  const { verb, tokens } = parsed
+  const targetMatch = matchTarget(target, tokens)
+  if (targetMatch === null) return null
+  const rest = tokens.slice(targetMatch)
+
+  const specTok = rest[0]
+  if (specTok === undefined) {
+    return { kind: 'error', message: `${verb} requires a team key (e.g. C, MAR)` }
+  }
+
+  const TEAM_RE = /^[A-Z]+$/
+  if (!TEAM_RE.test(specTok)) {
+    return {
+      kind: 'error',
+      message: `${verb}: "${specTok}" is not a valid team key — must be uppercase letters only (e.g. C, MAR)`,
+    }
+  }
+
+  const channels = rest.slice(1)
+  if (verb === 'unwatch') {
+    if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
+    return { kind: 'ok', cmd: { verb, team: specTok, channels: [] } }
+  }
+  for (const c of channels) {
+    if (!CHANNEL_RE.test(c)) {
+      return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
+    }
+  }
+  return { kind: 'ok', cmd: { verb, team: specTok, channels } }
+}
+
 // Returns the index of the first non-target token in `tokens`, or null when
 // `target` is set but doesn't appear at position 0. `target=null` means the
 // plugin claims bare verbs; we still reject a leading reserved verb so
