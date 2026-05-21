@@ -9,6 +9,7 @@
 //   LinearIssueTombstone → already-disappeared; skip fetch + re-emit
 import type { LinearIssueSnap, LinearIssueState } from './types.js'
 import { isTombstone } from './types.js'
+import { LinearError } from './linear-api.js'
 import {
   buildLinearSnap,
   diffLinearIssue,
@@ -47,6 +48,29 @@ export interface LinearGraphqlSurface {
   graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>
 }
 
+// Linear's not-found shape — HTTP 200 with errors[]:
+//   { message: "Entity not found: Issue", path: ["issue"],
+//     extensions: { code: "INPUT_ERROR", type: "invalid input" } }
+// Empirically confirmed against api.linear.app. The LinearClient turns the
+// errors[] envelope into a LinearError with .code='INPUT_ERROR' and the raw
+// body in .body — re-parse the body to disambiguate not-found from other
+// INPUT_ERROR causes (malformed query, bad variables, etc.).
+export function isLinearNotFoundError(e: unknown): boolean {
+  if (!(e instanceof LinearError)) return false
+  if (e.code !== 'INPUT_ERROR') return false
+  let parsed: { errors?: Array<{ message?: string; path?: unknown[] }> }
+  try {
+    parsed = JSON.parse(e.body || '{}')
+  } catch { return false }
+  const errs = parsed.errors ?? []
+  return errs.some(err =>
+    typeof err.message === 'string'
+    && err.message.startsWith('Entity not found')
+    && Array.isArray(err.path)
+    && err.path[0] === 'issue'
+  )
+}
+
 // Per-tick handle. Constructor takes the client so tests can inject a mock
 // (mirrors `GhScraper(client, agentLogins)`). The client argument is typed
 // against the minimal `LinearGraphqlSurface` so unit tests don't have to
@@ -61,11 +85,20 @@ export class LinearScraper {
       return { next: prev, events: [] }
     }
 
-    const data = (await this.client.graphql(ISSUE_QUERY, { id: identifier })) as
-      | { issue: RawLinearIssue | null }
-      | null
-      | undefined
-    const raw = data?.issue
+    let raw: RawLinearIssue | null | undefined
+    try {
+      const data = (await this.client.graphql(ISSUE_QUERY, { id: identifier })) as
+        | { issue: RawLinearIssue | null }
+        | null
+        | undefined
+      raw = data?.issue
+    } catch (e) {
+      // Linear's not-found shape is HTTP 200 + errors[], which LinearClient
+      // rethrows as LinearError. Translate to the disappeared path; rethrow
+      // anything else (auth, rate-limit, network, real graphql errors).
+      if (!isLinearNotFoundError(e)) throw e
+      raw = null
+    }
 
     if (!raw) {
       // 404 / inaccessible. Mute on subsequent ticks by storing a tombstone.
