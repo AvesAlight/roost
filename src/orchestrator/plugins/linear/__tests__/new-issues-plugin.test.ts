@@ -2,6 +2,7 @@ import { describe, it, expect, spyOn, beforeAll, afterAll } from 'bun:test'
 import { LinearNewIssuesPlugin, type LinearNewIssuesPluginState, formatNewLinearIssue } from '../new-issues-plugin.js'
 import { LinearClient, type LinearIssueNode } from '../linear-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
+import { RATE_LIMIT_WINDOW_MS } from '../../_rate-limit.js'
 
 const noopLog = () => {}
 
@@ -157,7 +158,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     expect(result.taggedEvents).toHaveLength(0)
   })
 
-  it('orders announcements by identifier', async () => {
+  it('orders announcements by issue number (numeric, not lex — C-5 before C-11 before C-20)', async () => {
     const spy = stubFetch([issue('C-20'), issue('C-5'), issue('C-11')])
     try {
       const { plugin } = makePlugin()
@@ -165,7 +166,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const identifiers = result.taggedEvents.map(e =>
         ((e.payload as { kind: 'oneline'; text: string }).text.match(/new linear issue (\S+):/)?.[1])
       )
-      expect(identifiers).toEqual(['C-11', 'C-20', 'C-5'])
+      expect(identifiers).toEqual(['C-5', 'C-11', 'C-20'])
     } finally { spy.mockRestore() }
   })
 
@@ -288,5 +289,78 @@ describe('formatNewLinearIssue', () => {
   it('handles null labels gracefully', () => {
     const text = formatNewLinearIssue(issue('C-1', { labels: null }))
     expect(text).not.toContain('[')
+  })
+})
+
+describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', () => {
+  it('emits a warning event to the project channel when rolling rate predicts exhaustion before reset', async () => {
+    const { plugin, client } = makePlugin()
+    const rlSpy = spyOn(client, 'getLastRateLimit').mockReturnValue({
+      remaining: 100,
+      limit: 2500,
+      resetAt: Math.floor((Date.now() + 60 * 60_000) / 1000),
+    })
+    // Seed history: 2500 remaining 160s ago (> half-window threshold).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [
+      { remaining: 2500, ts: Date.now() - 160_000 },
+    ]
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    try {
+      const result = await plugin.runTick(baseConfig(), prevState([]))
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      )
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]?.channels).toEqual(['#proj-leads'])
+      expect((warnings[0]?.payload as { text: string }).text).toContain('Linear')
+    } finally {
+      rlSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('no warning on cold-start (no history)', async () => {
+    const { plugin, client } = makePlugin()
+    const rlSpy = spyOn(client, 'getLastRateLimit').mockReturnValue({
+      remaining: 100,
+      limit: 2500,
+      resetAt: Math.floor((Date.now() + 60 * 60_000) / 1000),
+    })
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    try {
+      const result = await plugin.runTick(baseConfig(), prevState([]))
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      )
+      expect(warnings).toHaveLength(0)
+    } finally {
+      rlSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('prunes stale history — no warning after a long gap', async () => {
+    const { plugin, client } = makePlugin()
+    const rlSpy = spyOn(client, 'getLastRateLimit').mockReturnValue({
+      remaining: 100,
+      limit: 2500,
+      resetAt: Math.floor((Date.now() + 60 * 60_000) / 1000),
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [
+      { remaining: 2500, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
+    ]
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    try {
+      const result = await plugin.runTick(baseConfig(), prevState([]))
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      )
+      expect(warnings).toHaveLength(0)
+    } finally {
+      rlSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
   })
 })

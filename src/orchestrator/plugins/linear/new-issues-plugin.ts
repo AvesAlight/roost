@@ -174,7 +174,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       if (!isFirstForTeam) {
         const newIssues = issues
           .filter(i => !seen.has(i.identifier))
-          .sort((a, b) => a.identifier.localeCompare(b.identifier))
+          .sort((a, b) => linearIdNum(a.identifier) - linearIdNum(b.identifier))
         for (const issue of newIssues) {
           taggedEvents.push({
             channels: [...announcementChannels],
@@ -184,7 +184,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       }
 
       for (const i of issues) seen.add(i.identifier)
-      nextTeams[team] = [...seen].sort()
+      nextTeams[team] = [...seen].sort((a, b) => linearIdNum(a) - linearIdNum(b))
     }
 
     taggedEvents.push(...this.observeLinearRateLimit(resolveProjectChannel(config)))
@@ -218,6 +218,13 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     LinearNewIssuesPlugin._warnedAt = now
     return [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }]
   }
+}
+
+// Numeric sort key from `<TEAM>-<N>` identifier — splits on the last dash and
+// parses the tail as int. Keeps numeric announcement order matching github-new-issues.
+function linearIdNum(identifier: string): number {
+  const dash = identifier.lastIndexOf('-')
+  return dash >= 0 ? parseInt(identifier.slice(dash + 1), 10) || 0 : 0
 }
 
 export function formatNewLinearIssue(issue: LinearIssueNode): string {
