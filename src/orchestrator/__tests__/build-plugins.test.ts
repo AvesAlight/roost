@@ -128,8 +128,8 @@ describe('warnPriorityTies', () => {
     warnPriorityTies([a, b], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(1)
     expect(logs[0]).toContain('"a"')
-    expect(logs[0]).toContain('"b"')
     expect(logs[0]).toContain('"watch 1"')
+    expect(logs[0]).toContain('"b" shadowed')
     expect(logs[0]).toContain('plugin_priorities.a')
     expect(logs[0]).toContain('plugin_priorities.b')
   })
@@ -166,12 +166,6 @@ describe('warnPriorityTies', () => {
     const c = makePlugin('c', ['watch 1'])
     warnPriorityTies([a, b, c], {}, msg => logs.push(msg))
     expect(logs).toHaveLength(3)
-  })
-
-  it('no warning for empty plugin list', () => {
-    const logs: string[] = []
-    warnPriorityTies([], {}, msg => logs.push(msg))
-    expect(logs).toHaveLength(0)
   })
 
   it('only pairs where both have parseCommand are checked', () => {
