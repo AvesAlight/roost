@@ -21,3 +21,7 @@ Adding a behavior rule to agent prompts to address a specific failure? Audit whe
 ## 2026-05-21: Treat reviewer "narrower than the failure mode" as a blocker, not a fyi (from #486)
 
 Treat reviewer "fyi: this is narrower than the failure mode" as a blocker on the current PR, not a fyi to defer. §#448 covered this for prompts; same logic for code/test checks. Asymmetry: widening at plan/review costs a paragraph; shipping narrow costs a re-cycle (worker respawn, push, re-CI, re-review). The reviewer's narrowness flag is the signal, whether the artifact is a prompt rule or a code check.
+
+## 2026-05-21: CLAUDE.local.md is a doc, not a permission grant — credential workers need explicit onboarding (from #492) [audience=lead-pm,apm]
+
+CLAUDE.local.md is a doc, not a permission grant. When a worker needs to fetch a credential, the auto-mode classifier blocks the call regardless of the doc. Lead either pre-injects the retrieval chain via `roost send` before the worker's first credential-touching command, or approves via permbot when it fires. Required onboarding step for any credential-fetching worker.
