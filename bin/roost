@@ -110,6 +110,16 @@ from the agent's frontmatter. With --model (or the default opus) the
 wrapper defaults to auto for opus and acceptEdits for all other models.
 Explicit --permission-mode always wins.
 
+Spawn also injects \`--append-system-prompt-file\` naming the joined
+channels as legitimate user-instruction sources, so the auto-mode
+classifier doesn't silently block IRC replies on the operator's first
+@-mention. Only injected when the IRC host is loopback (127.0.0.1, ::1,
+localhost); remote ergo falls outside roost's trusted single-user local
+environment security model and prints a warning instead. The injection
+is always on for loopback hosts. To layer more context on top, pass
+\`--append-system-prompt-file <path>\` after \`--\`; claude code rejects
+mixing inline \`--append-system-prompt\` with the file form.
+
 Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
@@ -910,7 +920,41 @@ cmd_spawn() {
   # default applies.
   local perm_mode_flag=""
   [ -n "${permission_mode}" ] && perm_mode_flag=" --permission-mode ${permission_mode}"
-  local inner_cmd="claude${model_flag}${perm_mode_flag}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${extra_str}"
+  # Pre-authorize IRC traffic as user instructions for the auto-mode classifier.
+  # Roost's security model assumes a trusted single-user local environment
+  # (see README, Security model), so messages arriving on the joined channels
+  # are effectively the operator's voice, but auto mode does not know that
+  # without being told and the silent block lands the operator's first
+  # @-mention in the tmux pane instead of on IRC. Gated on loopback IRC_HOST
+  # because the trust assumption only holds for local ergo; skipped when no
+  # channels were requested. The text names the *requested* --channels rather
+  # than the actually-joined set; failed JOINs aren't detected here and the
+  # classifier still trusts those channel names, which is acceptable under
+  # the trusted single-user local environment assumption.
+  #
+  # The trust text is staged to a file and passed via --append-system-prompt-file
+  # rather than --append-system-prompt to sidestep shell-quoting landmines:
+  # the default --channels is #roost, and `#` in zsh extended_glob mode (a
+  # common operator setting) makes any backslash-escaped `#...` token a glob
+  # pattern that fails with "no matches found" before claude ever runs. The
+  # file path uses only mktemp-clean characters so it survives the bash to
+  # tmux to login-shell chain unescaped.
+  local trust_flag=""
+  local _channels_for_trust
+  _channels_for_trust="$(printf '%s' "${channels}" | tr -d '[:space:]')"
+  case "${IRC_HOST}" in
+    127.0.0.1|::1|localhost)
+      if [ -n "${_channels_for_trust}" ]; then
+        local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
+        printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
+        trust_flag=" --append-system-prompt-file ${_trust_file}"
+      fi
+      ;;
+    *)
+      echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
+      ;;
+  esac
+  local inner_cmd="claude${model_flag}${perm_mode_flag}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${trust_flag}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016
