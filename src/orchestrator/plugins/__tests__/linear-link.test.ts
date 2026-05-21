@@ -4,6 +4,7 @@ import {
   makeBatchedAttachmentQuery,
   BATCHED_ATTACHMENTS_QUERY,
   ATTACHMENT_PAGE_SIZE,
+  prKey,
   type AttachmentQuery,
   type AttachmentQueryResult,
   type RawIssueWithAttachments,
@@ -29,13 +30,26 @@ function gh(url: string): { id: string; sourceType: string; url: string } {
 }
 
 describe('LinearAttachmentResolver.resolve', () => {
-  it('builds a map of "owner/repo#N" → [linear identifier] from github attachments', async () => {
+  it('builds a map of lowercase "owner/repo#N" → [linear identifier] from github attachments', async () => {
     const { fn } = stubQuery({
       C: { nodes: [issueNode('C-758', [gh('https://github.com/AvesAlight/roost/pull/495')])], hasNextPage: false },
     })
     const map = await new LinearAttachmentResolver(fn).resolve(['C-758'])
-    expect(map.get('AvesAlight/roost#495')).toEqual(['C-758'])
+    expect(map.get('avesalight/roost#495')).toEqual(['C-758'])
     expect(map.size).toBe(1)
+  })
+
+  it('normalizes map keys via prKey so lookup is case-insensitive across GitHub sources', async () => {
+    const { fn } = stubQuery({
+      // Attachment URL uses canonical casing; gh CLI for the same repo could
+      // in principle return a different casing — the prKey helper makes the
+      // lookup safe either way.
+      C: { nodes: [issueNode('C-1', [gh('https://github.com/AvesAlight/Roost/pull/9')])], hasNextPage: false },
+    })
+    const map = await new LinearAttachmentResolver(fn).resolve(['C-1'])
+    expect(map.get(prKey('AvesAlight/Roost', 9))).toEqual(['C-1'])
+    expect(map.get(prKey('avesalight/roost', 9))).toEqual(['C-1'])
+    expect(map.get(prKey('AVESALIGHT/ROOST', 9))).toEqual(['C-1'])
   })
 
   it('ignores attachments with non-github sourceType', async () => {
@@ -79,7 +93,7 @@ describe('LinearAttachmentResolver.resolve', () => {
       },
     })
     const map = await new LinearAttachmentResolver(fn).resolve(['C-1', 'C-2'])
-    expect(map.get('x/y#42')).toEqual(['C-1', 'C-2'])
+    expect(map.get(prKey('x/y', 42))).toEqual(['C-1', 'C-2'])
   })
 
   it('dedups when the same Linear issue has multiple github attachments pointing at the same PR', async () => {
@@ -87,7 +101,7 @@ describe('LinearAttachmentResolver.resolve', () => {
       C: { nodes: [issueNode('C-1', [gh('https://github.com/x/y/pull/42'), gh('https://github.com/x/y/pull/42')])], hasNextPage: false },
     })
     const map = await new LinearAttachmentResolver(fn).resolve(['C-1'])
-    expect(map.get('x/y#42')).toEqual(['C-1'])
+    expect(map.get(prKey('x/y', 42))).toEqual(['C-1'])
   })
 
   it('skips the query entirely when the identifier list is empty', async () => {

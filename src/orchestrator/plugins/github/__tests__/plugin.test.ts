@@ -213,6 +213,36 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     }
   }
 
+  it('matches cross-links case-insensitively (snap.repo casing may diverge from Linear attachment URL casing)', async () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_comment',
+      repo: 'AvesAlight/Roost', pr: 9, url: 'u',
+      author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'https://example.com/c/1',
+      linked_issues: [],
+    } as OrchestratorEvent
+    // snap.repo is mixed-case; the Linear attachment URL is lowercase.
+    // Routing must still resolve because the prKey normalization lowercases
+    // both sides.
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'AvesAlight/Roost', number: 9 }),
+      events: [ev],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'AvesAlight/Roost',
+        plugins: {
+          'github-prs': { watched: [{ number: 9 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }] },
+        },
+      }
+      const result = await plugin(stubFromMap({
+        'C-1': [attachment('https://github.com/avesalight/roost/pull/9')],
+      })).runTick(cfg, { prs: {} })
+      expect(result.taggedEvents[0]?.channels).toContain('#proj-issue-c-1')
+    } finally { spy.mockRestore() }
+  })
+
   it('routes a PR event to the Linear-issue channel when an attachment matches the PR URL', async () => {
     const commentEv: OrchestratorEvent = {
       kind: 'pr_review_comment',

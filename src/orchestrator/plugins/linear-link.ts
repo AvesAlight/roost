@@ -96,6 +96,12 @@ export function makeBatchedAttachmentQuery(client: LinearGraphqlSurface): Attach
   }
 }
 
+// Lowercase cross-link key — see resolve() doc-comment for the rationale.
+// Exported so the github-prs lookup site mirrors the same normalization.
+export function prKey(repo: string, number: number): string {
+  return `${repo.toLowerCase()}#${number}`
+}
+
 // Parse "<TEAM>-<N>" into its parts. Returns null on shapes that can't address
 // a Linear issue: missing dash, empty team segment, non-positive number.
 function parseLinearIdentifier(identifier: string): { team: string; number: number } | null {
@@ -117,10 +123,17 @@ export class LinearAttachmentResolver {
     }
   }
 
-  // Returns a map keyed on "owner/repo#N", values are Linear identifiers whose
-  // attachments include that PR. A single PR can be attached to multiple Linear
-  // issues — the value is a list (unique, insertion-ordered). Empty input
-  // skips the query entirely; empty server response returns an empty map.
+  // Returns a map keyed on lowercase "owner/repo#N", values are Linear
+  // identifiers whose attachments include that PR. A single PR can be attached
+  // to multiple Linear issues — the value is a list (unique,
+  // insertion-ordered). Empty input skips the query entirely; empty server
+  // response returns an empty map.
+  //
+  // Key is lowercased because the two sides of the cross-link come from
+  // independent GitHub sources (gh CLI for snap.repo, Linear's webhook for
+  // attachment URLs). Both are canonical from GitHub today, but GitHub treats
+  // repo names case-insensitively — `prKey()` below mirrors this normalization
+  // on the lookup side so casing drift can't silently break routing.
   //
   // Malformed identifiers (no `-`, empty team/number) are logged and skipped —
   // a typo in `watch linear` shouldn't poison the whole batch.
@@ -174,7 +187,7 @@ export class LinearAttachmentResolver {
           if (a.sourceType !== 'github') continue
           const parsed = parseGithubPrUrl(a.url)
           if (!parsed) continue
-          const key = `${parsed.repo}#${parsed.number}`
+          const key = prKey(parsed.repo, parsed.number)
           const list = map.get(key)
           if (list) {
             if (!list.includes(ident)) list.push(ident)

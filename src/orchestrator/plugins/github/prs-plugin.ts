@@ -8,7 +8,7 @@ import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { LinkedIssue, PrSnap, PrPluginState } from './types.js'
 import { LinearClient } from '../linear/linear-api.js'
-import { LinearAttachmentResolver, makeBatchedAttachmentQuery, type AttachmentQuery } from '../linear-link.js'
+import { LinearAttachmentResolver, makeBatchedAttachmentQuery, prKey, type AttachmentQuery } from '../linear-link.js'
 
 interface LinearIssuesSliceShape {
   watched?: Array<{ identifier?: unknown }>
@@ -46,13 +46,13 @@ export class GitHubPrsPlugin extends GhBase {
   // LinearClient. Used by github plugin tests that exercise cross-link routing
   // without standing up a real Linear API.
   _setLinearQueryForTest(query: AttachmentQuery | null): void {
-    this._linearResolver = query ? new LinearAttachmentResolver(query) : null
+    this._linearResolver = query ? new LinearAttachmentResolver(query, this.log) : null
   }
 
   private getLinearResolver(): LinearAttachmentResolver {
     if (this._linearResolver) return this._linearResolver
     const client = LinearClient.fromEnv(this.log)
-    this._linearResolver = new LinearAttachmentResolver(makeBatchedAttachmentQuery(client))
+    this._linearResolver = new LinearAttachmentResolver(makeBatchedAttachmentQuery(client), this.log)
     return this._linearResolver
   }
 
@@ -192,8 +192,10 @@ export class GitHubPrsPlugin extends GhBase {
       const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
       for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
       // Linear cross-link channels for this PR. A PR can be attached to
-      // multiple Linear issues — all matched identifiers route.
-      const linearMatches = linkMap.get(`${snap.repo}#${snap.number}`) ?? []
+      // multiple Linear issues — all matched identifiers route. Key
+      // normalization (via prKey) guards against casing drift between
+      // gh CLI output and Linear's webhook-attachment URL.
+      const linearMatches = linkMap.get(prKey(snap.repo, snap.number)) ?? []
       const linearChannels = linearMatches.map(ident => linearIssueChannel(project, ident))
       for (const ch of linearChannels) channels.add(ch)
       // Cross-repo drop warning debounced per head_oid (force-push re-triggers).
