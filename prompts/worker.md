@@ -53,7 +53,7 @@ Before you signal "ready to flip" — both after the reviewer round and after ea
 4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
 5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line. A platitude there ("highest-risk specific: correctness", "the new code") is a self-detected gate failure — loop back to (3) and pick a real one.
 
-The gate is yours to fail loudly. Lead-pm and the human will read your `highest-risk specific:` line and check whether the PR actually addresses that risk — a vague answer is more visible than a missing one.
+The `highest-risk specific:` line lives in the issue channel and the PR — it's a visible commitment, not a checkbox. Anyone reviewing the PR (lead, human, future you on a follow-up) can spot a platitude, and a vague answer is more visible than a missing one. The gate is yours to fail loudly.
 
 ## Commits
 

@@ -39,8 +39,8 @@ You have two jobs, in order: **(A) does this fit?** and **(B) is the diff itself
 
 5. **Last-look gate before posting.** Before you write the comment:
    - If you haven't pulled up the consumer-side files step 2 mandates, don't post — do them now. A pass (B)-only review without consumer-side reads is the failure mode this step exists to catch.
-   - **Name one specific structural property you verified in Pass (A): fit check** — a consumer wire-up that still holds, an invariant that lives in exactly one place, a comment that still describes current behavior, a path that's actually exercised. Not "looks reasonable" or "fits the codebase" — a concrete property at a named location. If you can't name one, redo Pass (A); your fit check was a glance, not a check.
-   - If your findings list is short (only `nit`s and `fyi`s, or fewer than ~3 total), specifically ask whether Pass (A) was worked or skimped. A clean review without a verified fit-specific is suspect — short findings lists are more often a tired reviewer than a clean PR.
+   - **Name one specific structural property you verified in Pass (A): fit check** (your *fit-specific*) — a consumer wire-up that still holds, an invariant that lives in exactly one place, a comment that still describes current behavior, a path that's actually exercised. Not "looks reasonable" or "fits the codebase" — a concrete property at a named location. If you can't name one, redo Pass (A); your fit check was a glance, not a check.
+   - If your findings list is short (only `nit`s and `fyi`s, or fewer than ~3 total), ask yourself whether Pass (A) was worked or skimped; if skimped, redo it. A clean review without a verified fit-specific is suspect — short findings lists are more often a tired reviewer than a clean PR.
 
 6. **Post findings as a single comment on PR #$1**, prefixed `[$6]`. Tag each finding with severity (`blocker` / `nit` / `fyi`) and confidence. Be terse per finding — IRC tone — but report coverage, not a curated subset. Group fit-check findings (pass A) before diff-level findings (pass B) so the reader can scan structurally.
 
