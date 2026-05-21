@@ -85,3 +85,7 @@ When an issue's body describes the output (add X to file Y) but not how the unde
 ## 2026-05-21: Treat reviewer "narrower than the failure mode" as a blocker, not a fyi (from #486)
 
 Treat reviewer "fyi: this is narrower than the failure mode" as a blocker on the current PR, not a fyi to defer. §#448 covered this for prompts; same logic for code/test checks. Asymmetry: widening at plan/review costs a paragraph; shipping narrow costs a re-cycle (worker respawn, push, re-CI, re-review). The reviewer's narrowness flag is the signal, whether the artifact is a prompt rule or a code check.
+
+## 2026-05-21: In prompt gates, the artifact instruction is the entire lever (from #496)
+
+Agents reliably obey explicit output-shaping rules — an instruction to name one specific X produces one specific X. So in prompt gates, the artifact instruction IS the entire lever; "if you fail X, do Y" backstops and "gate failure" framing add no safety, only paranoia. Frame prompt gates around the team putting its best foot forward for leadership, not around catching skimping. The suspicion is decoration; the artifact instruction does the work.
