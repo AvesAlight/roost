@@ -15,12 +15,19 @@
 
 import { parseGithubPrUrl } from './linear/diff.js'
 
+// Thinner projection of `RawLinearAttachment` from `linear/diff.ts` — the
+// batched attachments query doesn't request `title` so the runtime shape is
+// narrower. Sister surface for the github-attachment filter lives in
+// `selectGithubAttachments`; keep the two in sync on attachment-shape tweaks.
 export interface RawAttachmentNode {
   id: string
   sourceType: string | null
   url: string | null
 }
 
+// Partial-issue projection — only `identifier` + `attachments`, distinct from
+// `RawLinearIssue` (which carries title/state/labels/comments for the per-issue
+// scraper).
 export interface RawIssueWithAttachments {
   identifier: string
   attachments: { nodes: RawAttachmentNode[] } | null
@@ -73,6 +80,10 @@ export class LinearAttachmentResolver {
       const ident = issue.identifier
       if (!ident) continue
       const atts = issue.attachments?.nodes ?? []
+      // Sister surface: `linear/diff.ts:selectGithubAttachments` runs the
+      // same `sourceType === 'github' && parseGithubPrUrl(url)` filter on the
+      // per-issue scraper path. Below the 3-surface canonicalize threshold;
+      // keep the two filters aligned when attachment shape evolves.
       for (const a of atts) {
         if (a.sourceType !== 'github') continue
         const parsed = parseGithubPrUrl(a.url)
