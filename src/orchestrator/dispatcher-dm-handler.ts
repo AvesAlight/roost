@@ -9,7 +9,7 @@
 
 import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
-import { assertRepoModeAll, type Plugin } from './plugin.js'
+import { assertRepoModeAll, priorityOf, type Plugin } from './plugin.js'
 import { splitCommands } from './plugins/grammar.js'
 
 // `plugin` carries an opaque cmd payload — the plugin that produced it is the
@@ -47,10 +47,8 @@ const RESERVED_TARGETS = new Set(['watch', 'unwatch', 'help'])
 // `config.plugins` Object.keys order). Operator overrides via
 // `config.plugin_priorities[name]` replace the static value outright.
 function priorityOrder(plugins: Plugin[], config: OrchestratorConfig): Plugin[] {
-  const overrides = config.plugin_priorities ?? {}
-  const pri = (p: Plugin) => overrides[p.name] ?? p.grammarPriority ?? 0
   return [...plugins]
-    .map((p, idx) => ({ p, idx, pri: pri(p) }))
+    .map((p, idx) => ({ p, idx, pri: priorityOf(p, config) }))
     .sort((a, b) => b.pri - a.pri || a.idx - b.idx)
     .map(x => x.p)
 }

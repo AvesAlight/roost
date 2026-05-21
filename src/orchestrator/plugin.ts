@@ -154,3 +154,12 @@ export function registeredPluginNames(): string[] {
 export function assertRepoModeAll(plugins: Plugin[], base: OrchestratorConfig): void {
   for (const p of plugins) p.assertRepoMode?.(base)
 }
+
+// Effective grammar priority for a plugin: operator override > static hint > 0.
+// Operator override (`config.plugin_priorities[name]`) replaces the static value
+// outright — no max/sum. Used by both the tie-warning check and the DM parser
+// so they agree on ordering.
+export function priorityOf(plugin: Plugin, config: OrchestratorConfig): number {
+  if (!plugin) throw new Error('priorityOf: plugin is required')
+  return config.plugin_priorities?.[plugin.name] ?? plugin.grammarPriority ?? 0
+}
