@@ -132,7 +132,14 @@ function parseRateLimit(headers: Headers): RateLimitInfo | null {
   if (remaining == null || limit == null || reset == null) return null
   const r = Number(remaining), l = Number(limit), rs = Number(reset)
   if (!Number.isFinite(r) || !Number.isFinite(l) || !Number.isFinite(rs)) return null
-  return { remaining: r, limit: l, resetAt: rs }
+  // Linear's reset header is milliseconds since epoch (empirically confirmed
+  // against a live response: `x-ratelimit-requests-reset: 1779379756696` —
+  // a 13-digit value, ~20 minutes ahead of the probe time). RateLimitInfo's
+  // contract is `resetAt: unix seconds` so computeRateLimitWarning's math
+  // works for both APIs; convert here. Heuristic guards a future Linear
+  // change to seconds: values > 1e11 are ms, anything smaller is seconds.
+  const resetAt = rs > 1e11 ? Math.floor(rs / 1000) : Math.floor(rs)
+  return { remaining: r, limit: l, resetAt }
 }
 
 function headersToObject(headers: Headers): Record<string, string> {

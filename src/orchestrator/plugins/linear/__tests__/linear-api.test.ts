@@ -329,6 +329,37 @@ describe('spawnLinear (retry-aware)', () => {
     expect(result.rateLimit).toEqual({ remaining: 100, limit: 2500, resetAt: 1716000000 })
   })
 
+  it('normalizes ms-since-epoch reset to seconds (Linear ships ms)', async () => {
+    // Empirically confirmed live: Linear's `x-ratelimit-requests-reset` is
+    // milliseconds (13-digit value). RateLimitInfo's contract is seconds so
+    // computeRateLimitWarning's `resetAt * 1000` math works.
+    const h = harness()
+    const result = await spawnLinear('k', '{ x }', undefined, {
+      log: h.log,
+      sleep: h.sleep,
+      fetch: mockFetch([{ status: 200, body: okBody({ x: 1 }), headers: {
+        'x-ratelimit-requests-remaining': '2499',
+        'x-ratelimit-requests-limit': '2500',
+        'x-ratelimit-requests-reset': '1779379756696',  // ms — observed live
+      } }], h),
+    })
+    expect(result.rateLimit).toEqual({ remaining: 2499, limit: 2500, resetAt: 1779379756 })
+  })
+
+  it('leaves a seconds-shaped reset untouched (heuristic guards future Linear change)', async () => {
+    const h = harness()
+    const result = await spawnLinear('k', '{ x }', undefined, {
+      log: h.log,
+      sleep: h.sleep,
+      fetch: mockFetch([{ status: 200, body: okBody({ x: 1 }), headers: {
+        'x-ratelimit-requests-remaining': '2499',
+        'x-ratelimit-requests-limit': '2500',
+        'x-ratelimit-requests-reset': '1779379756',  // hypothetical seconds form
+      } }], h),
+    })
+    expect(result.rateLimit).toEqual({ remaining: 2499, limit: 2500, resetAt: 1779379756 })
+  })
+
   it('returns null rateLimit when no recognized headers present', async () => {
     const h = harness()
     const result = await spawnLinear('k', '{ x }', undefined, {
