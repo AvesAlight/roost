@@ -13,7 +13,7 @@ import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
-import { observeRateLimitFromInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitStatics } from '../_rate-limit.js'
 import { tryClaimPerLinearTeam, type PerLinearTeamCommand } from '../grammar.js'
 import { LinearClient, type LinearIssueNode } from './linear-api.js'
 
@@ -36,6 +36,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private readonly log: PluginLogger
   private readonly client: LinearClient
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
+  private _teamNotFoundWarnedAt = new Map<string, number>()
 
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
@@ -153,7 +154,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
         ? [...channels]
         : [resolveProjectChannel(config)]
 
-      let issues: LinearIssueNode[]
+      let issues: LinearIssueNode[] | null
       try {
         issues = await this.client.fetchTeamOpenIssues(team)
       } catch (e) {
@@ -161,9 +162,17 @@ export class LinearNewIssuesPlugin extends BasePlugin {
         continue
       }
 
-      if (!issues.length && !(prev?.teams[team])) {
-        // Team not found on first observation — log and skip but don't block other teams.
-        this.log(`linear-new-issues: team ${team} not found or has no open issues; entry kept in config\n`)
+      if (issues === null) {
+        const now = Date.now()
+        const lastWarnedAt = this._teamNotFoundWarnedAt.get(team) ?? 0
+        if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
+          this._teamNotFoundWarnedAt.set(team, now)
+          taggedEvents.push({
+            channels: [...announcementChannels],
+            payload: { kind: 'oneline', text: `[linear-new-issues] team ${team} not found — renamed or deleted? Unwatch with: unwatch linear-team ${team}` },
+          })
+        }
+        continue
       }
 
       // First observation of this team (or full re-seed): capture without emitting.

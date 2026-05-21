@@ -2,7 +2,7 @@ import { describe, it, expect, spyOn, beforeAll, afterAll } from 'bun:test'
 import { LinearNewIssuesPlugin, type LinearNewIssuesPluginState, formatNewLinearIssue } from '../new-issues-plugin.js'
 import { LinearClient, type LinearIssueNode } from '../linear-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
-import { RATE_LIMIT_WINDOW_MS } from '../../_rate-limit.js'
+import { RATE_LIMIT_WINDOW_MS, WARN_COOLDOWN_MS } from '../../_rate-limit.js'
 
 const noopLog = () => {}
 
@@ -34,7 +34,7 @@ function makePlugin(channel = '#proj-leads'): { plugin: LinearNewIssuesPlugin; c
 }
 
 // Stub fetchTeamOpenIssues on the prototype so all instances in a test get the mock.
-function stubFetch(response: LinearIssueNode[]) {
+function stubFetch(response: LinearIssueNode[] | null) {
   return spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue(response)
 }
 
@@ -271,6 +271,129 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const result = await plugin.runTick(baseConfig(), prevState([]))
       expect(result.taggedEvents).toHaveLength(0)
       expect(logs.some(l => l.includes('network error'))).toBe(true)
+    } finally { spy.mockRestore() }
+  })
+})
+
+describe('LinearNewIssuesPlugin.runTick — team not found', () => {
+  stubRateLimit()
+
+  it('emits a warning event when team is not found on first observation', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(baseConfig(), null)
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('not found')
+      )
+      expect(warnings).toHaveLength(1)
+      expect((warnings[0]?.payload as { text: string }).text).toContain('team C not found')
+      expect((warnings[0]?.payload as { text: string }).text).toContain('unwatch linear-team C')
+    } finally { spy.mockRestore() }
+  })
+
+  it('emits a warning when a previously-known team goes missing mid-flight', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(baseConfig(), prevState(['C-1', 'C-2']))
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('not found')
+      )
+      expect(warnings).toHaveLength(1)
+      expect((warnings[0]?.payload as { text: string }).text).toContain('team C not found')
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes the warning to the project channel by default', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(baseConfig(), null)
+      const warning = result.taggedEvents.find(e =>
+        (e.payload as { text?: string }).text?.includes('not found')
+      )
+      expect(warning?.channels).toEqual(['#proj-leads'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes the warning to entry.channels when set', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const config = baseConfig({ plugins: { 'linear-new-issues': { watched: [{ team: 'C', channels: ['#triage', '#leads'] }] } } })
+      const result = await plugin.runTick(config, null)
+      const warning = result.taggedEvents.find(e =>
+        (e.payload as { text?: string }).text?.includes('not found')
+      )
+      expect(warning?.channels).toEqual(['#triage', '#leads'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('suppresses a second warning within the cooldown window', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const result1 = await plugin.runTick(baseConfig(), null)
+      const result2 = await plugin.runTick(baseConfig(), null)
+      const warnings1 = result1.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings2 = result2.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      expect(warnings1).toHaveLength(1)
+      expect(warnings2).toHaveLength(0)
+    } finally { spy.mockRestore() }
+  })
+
+  it('per-team cooldown: team A in cooldown does not suppress first warning for team B', async () => {
+    const { plugin } = makePlugin()
+    const config: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-new-issues': { watched: [{ team: 'C' }, { team: 'MAR' }] } },
+    }
+    // Put team C in cooldown (warned just now), team MAR has never warned
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._teamNotFoundWarnedAt.set('C', Date.now())
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue(null)
+    try {
+      const result = await plugin.runTick(config, null)
+      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      // C is suppressed, MAR should still warn
+      expect(warnings).toHaveLength(1)
+      expect((warnings[0]?.payload as { text: string }).text).toContain('team MAR')
+    } finally { spy.mockRestore() }
+  })
+
+  it('cooldown resets per-team: re-warns after WARN_COOLDOWN_MS elapses', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      // Seed cooldown as if warning fired WARN_COOLDOWN_MS + 1ms ago
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(plugin as any)._teamNotFoundWarnedAt.set('C', Date.now() - WARN_COOLDOWN_MS - 1)
+      const result = await plugin.runTick(baseConfig(), null)
+      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      expect(warnings).toHaveLength(1)
+    } finally { spy.mockRestore() }
+  })
+
+  it('does not modify state for the missing team — prior watermarks preserved', async () => {
+    const spy = stubFetch(null)
+    try {
+      const { plugin } = makePlugin()
+      const prior = prevState(['C-1', 'C-2'])
+      const result = await plugin.runTick(baseConfig(), prior)
+      expect((result.state as LinearNewIssuesPluginState).teams['C']).toEqual(['C-1', 'C-2'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('no warning when team exists but has no open issues (empty array is not null)', async () => {
+    const spy = stubFetch([])
+    try {
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(baseConfig(), prevState(['C-1']))
+      const warnings = result.taggedEvents.filter(e =>
+        (e.payload as { text?: string }).text?.includes('not found')
+      )
+      expect(warnings).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 })

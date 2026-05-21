@@ -372,14 +372,14 @@ export class LinearClient {
   }
 
   // Fetch open (not completed, not canceled) issues for a team identified by key
-  // (e.g. "C", "MAR"). Returns an empty array when the team key is not found —
-  // caller is responsible for logging the missing-team warning.
-  async fetchTeamOpenIssues(teamKey: string): Promise<LinearIssueNode[]> {
+  // (e.g. "C", "MAR"). Returns null when the team key is not found (renamed or
+  // deleted); returns an empty array when the team exists but has no open issues.
+  async fetchTeamOpenIssues(teamKey: string): Promise<LinearIssueNode[] | null> {
     const data = (await this.graphql(TEAM_OPEN_ISSUES_QUERY, { teamKey })) as {
       teams?: { nodes?: Array<{ issues?: { nodes?: unknown[] } }> }
     } | undefined | null
     const teamNode = data?.teams?.nodes?.[0]
-    if (!teamNode) return []
+    if (!teamNode) return null
     const nodes = teamNode.issues?.nodes ?? []
     return nodes
       .filter((n): n is Record<string, unknown> => n != null && typeof n === 'object')
