@@ -218,21 +218,26 @@ Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem 
    ```
    printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
    ```
-3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If the lesson is clearly narrow to a code area (subsystem, test surface, single tool), append a scope suggestion on the same line: `(suggested paths: <glob>; topic: <slug>)` — `<slug>` becomes the rule filename. If no extractable insight, skip this step silently.
+3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. If the lesson is clearly narrow to a code area (subsystem, test surface, single tool), append a scope suggestion on the same line: `(suggested paths: <glob>; topic: <slug>)`. The `<slug>` is lowercase, hyphen-separated, single word-ish (e.g., `orchestrator-lock`); it becomes the `.claude/rules/<slug>.md` filename. If no extractable insight, skip this step silently.
 4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
    - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim, applying the suggested path scope if any
    - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version, applying the suggested path scope if any
    - Affirmative with explicit scope (e.g., "file paths=src/orchestrator/** topic=orchestrator", optionally combined with `with: <text>`) → commit using the lead's `paths` and `topic`, overriding any suggestion
+   - Affirmative dropping the suggestion (e.g., "file unscoped", "file without scope") → commit verbatim to `project-learnings.md`, ignoring any APM-suggested `paths`/`topic`
    - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
    - Anything else (critique, question) → revise and re-propose
+
+   For partial explicit-scope acks (e.g., `paths=` without `topic=`, or a typo like `path=`): re-ack with the inferred values for confirmation before writing — don't silently fill the blank from the APM's prior suggestion.
 5. When filing a learning:
    - **Unscoped** (no `paths:`): append the formatted block to `.claude/rules/project-learnings.md`.
    - **Path-scoped** (lead ratified a `paths:` glob and `topic` slug): write to `.claude/rules/<slug>.md`. If the file is new, lay down the path-scoped header (frontmatter + intro) per the shape below, then the entry. If it already exists, append the new entry under the existing header — do not duplicate the frontmatter and do not silently rewrite the existing `paths:` line; if the new entry needs a different glob, flag it in `#<project>-leads` before writing.
    - Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
-   - Commit and push:
+   - Commit and push (use the appropriate filename for the scope):
      ```
      mkdir -p .claude/rules
-     git add .claude/rules/<file>.md
+     git add .claude/rules/project-learnings.md   # unscoped
+     # or
+     git add .claude/rules/<slug>.md              # path-scoped
      git commit -m "add learning from #<I>"
      git push origin main
      ```
@@ -283,6 +288,8 @@ Patterns extracted from postmortems. Loads when files matching `<glob>` are read
 
 <2-3 sentences: what happened, why it matters, what to do differently>
 ```
+
+`<slug>` is the lowercase filename token; `<Slug>` is its title-cased rendering for the heading (e.g., `orchestrator-lock` → `Orchestrator Lock`).
 
 Subsequent entries in the same scoped file just append a new `## YYYY-MM-DD: ...` block under the existing header — the frontmatter stays at the top.
 
