@@ -62,6 +62,13 @@ export function issueChannel(project: string, n: number, slug?: string): string 
   return slug ? `#${project}-${slug}-issue-${n}` : `#${project}-issue-${n}`
 }
 
+// Linear identifier (`<TEAM>-<N>`, uppercase team key) → per-issue channel.
+// Team segment is always emitted (Linear identifiers always lead `[A-Z]+-`),
+// which makes Linear channels uniquely shaped vs. bare github-issues channels.
+export function linearIssueChannel(project: string, identifier: string): string {
+  return `#${project}-issue-${identifier.toLowerCase()}`
+}
+
 export function leadsChannel(project: string): string {
   return `#${project}-leads`
 }

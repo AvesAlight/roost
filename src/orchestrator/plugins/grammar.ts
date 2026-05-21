@@ -35,6 +35,18 @@ export interface PerRepoCommand {
   channels: string[]
 }
 
+export interface PerLinearIdCommand {
+  verb: Verb
+  identifier: string
+  channels: string[]
+}
+
+// Linear identifier — uppercase team key, dash, positive integer. Strict by
+// design: lowercase forms get a fixit so a typo doesn't silently land in a
+// different plugin's slice.
+const LINEAR_ID_RE = /^[A-Z]+-\d+$/
+const LINEAR_ID_CI_RE = /^[A-Za-z]+-\d+$/
+
 // Split a DM body into individual command lines. Newlines, semicolons, commas
 // separate. Internal — exported so `dispatcher-dm-handler.ts` can import it
 // from the same place plugins' parsers do; not re-exported via
@@ -141,6 +153,43 @@ export function tryClaimPerRepo(target: string | null, line: string): ParseResul
     }
   }
   return { kind: 'ok', cmd: { verb, repo, branch, path, channels } }
+}
+
+// Try to claim a per-Linear-ID line (target=`linear`, spec regex `^[A-Z]+-\d+$`). Returns:
+//   - `null` if the line isn't watch/unwatch, or doesn't lead with this target.
+//   - `{kind:'ok',cmd}` on a clean claim.
+//   - `{kind:'error',msg}` when the line claimed this plugin's target but the
+//     body fails validation (bad identifier, malformed channel, etc.).
+export function tryClaimPerLinearId(line: string): ParseResult<PerLinearIdCommand> | null {
+  const parsed = tokenizeVerbLine(line)
+  if (!parsed) return null
+  const { verb, tokens } = parsed
+  if (tokens[0]?.toLowerCase() !== 'linear') return null
+  const rest = tokens.slice(1)
+
+  const specTok = rest[0]
+  if (specTok === undefined) {
+    return { kind: 'error', message: `${verb} linear requires an identifier (e.g. C-758)` }
+  }
+  if (!LINEAR_ID_RE.test(specTok)) {
+    if (LINEAR_ID_CI_RE.test(specTok)) {
+      return { kind: 'error', message: `${verb} linear: identifier "${specTok}" must be uppercase team key (try "${specTok.toUpperCase()}")` }
+    }
+    return { kind: 'error', message: `${verb} linear: "${specTok}" is not a Linear identifier matching ${LINEAR_ID_RE.source}` }
+  }
+  const identifier = specTok
+
+  const channels = rest.slice(1)
+  if (verb === 'unwatch') {
+    if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
+    return { kind: 'ok', cmd: { verb, identifier, channels: [] } }
+  }
+  for (const c of channels) {
+    if (!CHANNEL_RE.test(c)) {
+      return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
+    }
+  }
+  return { kind: 'ok', cmd: { verb, identifier, channels } }
 }
 
 // Returns the index of the first non-target token in `tokens`, or null when

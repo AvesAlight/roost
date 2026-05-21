@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { tryClaimPerN, tryClaimPerRepo, splitCommands } from '../grammar.js'
+import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, splitCommands } from '../grammar.js'
 
 // ---- splitCommands --------------------------------------------------------
 
@@ -234,5 +234,81 @@ describe('tryClaimPerRepo — bare (target=null)', () => {
   it('defers on `watch pr org/r` (target keyword), `watch 5` (number)', () => {
     expect(tryClaimPerRepo(null, 'watch pr org/r')).toBeNull()
     expect(tryClaimPerRepo(null, 'watch 5')).toBeNull()
+  })
+})
+
+// ---- tryClaimPerLinearId --------------------------------------------------
+
+describe('tryClaimPerLinearId', () => {
+  it('claims `watch linear C-758`', () => {
+    expect(tryClaimPerLinearId('watch linear C-758')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', identifier: 'C-758', channels: [] },
+    })
+  })
+
+  it('claims `unwatch linear C-758`', () => {
+    expect(tryClaimPerLinearId('unwatch linear C-758')).toEqual({
+      kind: 'ok', cmd: { verb: 'unwatch', identifier: 'C-758', channels: [] },
+    })
+  })
+
+  it('claims with channels', () => {
+    expect(tryClaimPerLinearId('watch linear C-758 #foo #bar')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', identifier: 'C-758', channels: ['#foo', '#bar'] },
+    })
+  })
+
+  it('accepts multi-letter team keys', () => {
+    expect(tryClaimPerLinearId('watch linear ENG-1234')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', identifier: 'ENG-1234', channels: [] },
+    })
+  })
+
+  it('lowercases the `linear` target token', () => {
+    expect(tryClaimPerLinearId('watch LINEAR C-758')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', identifier: 'C-758', channels: [] },
+    })
+  })
+
+  it('defers on non-linear targets and bare verbs', () => {
+    expect(tryClaimPerLinearId('watch 5')).toBeNull()
+    expect(tryClaimPerLinearId('watch pr 10')).toBeNull()
+    expect(tryClaimPerLinearId('watch org/r')).toBeNull()
+  })
+
+  it('defers on non-watch/unwatch lines', () => {
+    expect(tryClaimPerLinearId('help')).toBeNull()
+    expect(tryClaimPerLinearId('list')).toBeNull()
+  })
+
+  it('errors with fixit on lowercase identifier (AC: `watch linear c-758`)', () => {
+    const r = tryClaimPerLinearId('watch linear c-758')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/must be uppercase/)
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/C-758/)
+  })
+
+  it('errors on malformed identifier', () => {
+    const r = tryClaimPerLinearId('watch linear 758')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/not a Linear identifier/)
+  })
+
+  it('errors on missing identifier', () => {
+    const r = tryClaimPerLinearId('watch linear')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/requires an identifier/)
+  })
+
+  it('rejects unwatch with channel args', () => {
+    expect(tryClaimPerLinearId('unwatch linear C-758 #x')).toEqual({
+      kind: 'error', message: 'unwatch takes no channel arguments',
+    })
+  })
+
+  it('rejects malformed channels', () => {
+    const r = tryClaimPerLinearId('watch linear C-758 notachannel')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/channels must match/)
   })
 })
