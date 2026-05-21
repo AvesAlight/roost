@@ -282,7 +282,7 @@ Coverage includes `src/irc-server.ts` via the in-process tests
   before hosting multi-tenant work.
 - **`channel_history` is per-MCP-instance.** Restarting an MCP loses
   the buffer. For durable history use ergo's audit log
-  (`var/ergo/logs/audit.log`) or the IRCv3 `CHATHISTORY` command.
+  (`~/roost-ircd/logs/audit.log`) or the IRCv3 `CHATHISTORY` command.
 - **`alwaysLoad: true`** keeps all six tools non-deferred. Empirical
   baseline-vs-alwaysLoad probe (2026-04-28) showed 0 `tools_changed`
   misses with the flag vs 2 without (see `docs/LEARNINGS.md` Finding A).

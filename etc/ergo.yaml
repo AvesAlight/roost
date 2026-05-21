@@ -43,7 +43,7 @@ server:
     # Send-queue cap per client.
     max-sendq: 96k
 
-    # Where to put the IPC bits when ergo runs from var/ergo.
+    # Where to put the IPC bits when ergo runs.
     relaymsg:
         enabled: false
 

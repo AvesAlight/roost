@@ -147,7 +147,7 @@ Ergo must be running on `127.0.0.1:6667`. `roost status` checks;
 `roost spawn` aborts with a hint if it's down. Start with:
 
 ```bash
-mkdir -p ~/roost-ircd && cd ~/roost-ircd
+mkdir -p ~/roost-ircd/logs && cd ~/roost-ircd
 nohup ergo run --conf "$(roost root)/etc/ergo.yaml" > /tmp/ergo.out 2>&1 &
 ```
 
