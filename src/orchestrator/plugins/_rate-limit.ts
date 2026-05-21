@@ -1,5 +1,6 @@
-// Shared rate-limit budget predictor — same math for any API that exposes
-// (remaining, limit, resetAt) telemetry. Pure functional util; no I/O.
+// Shared rate-limit utilities for any API that exposes (remaining, limit, resetAt) telemetry.
+// computeRateLimitWarning is pure. observeRateLimitFromInfo logs via its PluginLogger arg
+// and mutates the caller-supplied RateLimitStatics handle.
 
 import type { PluginLogger, TaggedEvent } from '../plugin.js'
 
