@@ -42,3 +42,7 @@ When an issue's body describes the output (add X to file Y) but not how the unde
 
 Agents reliably obey explicit output-shaping rules — an instruction to name one specific X produces one specific X. So in prompt gates, the artifact instruction IS the entire lever; "if you fail X, do Y" backstops and "gate failure" framing add no safety, only paranoia. Frame prompt gates around the team putting its best foot forward for leadership, not around catching skimping. The suspicion is decoration; the artifact instruction does the work.
 
+## 2026-05-21: Scope learnings by path when the rule is location-bound, not role-bound (from #494)
+
+When a learning applies to "anyone touching these files" rather than to a specific role's behavior, path-scope beats audience-scope. Audience-scope limits reach to the named roles; path-scope fires for any agent reading matching files regardless of role. The test: does the rule hold because of who the agent is, or because of what code they're reading? If the latter, use paths: frontmatter.
+
