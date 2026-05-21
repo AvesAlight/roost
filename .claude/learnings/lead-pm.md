@@ -1,0 +1,43 @@
+# Lead-PM Learnings
+
+Patterns extracted from postmortems. Loaded by the lead-pm agent at startup.
+
+## 2026-05-19: Use goal-framed deep review for artifact-shaped PRs (from #410)
+
+For issues whose deliverable is a durable artifact (prompt change, new dance, written convention), follow the diff-level reviewer with a second `--effort max` pass framed against the project's three goals: minimize rework, maximize flexibility, maximize quality. The default reviewer underweights structural gaps in design-shaped PRs. Cheap insurance against a load-bearing artifact shipping with a flaw.
+
+## 2026-05-19: Always spawn with bare model aliases, never full ids (from #422)
+
+Use bare aliases (`opus`, `sonnet`, `haiku`) — full ids (`claude-opus-4-5` etc.) pin the session to that exact dated variant instead of tracking the latest version at spawn time. The APM was filling `<model>` placeholders in its templates with full ids and silently shipping work on stale models. Stick to aliases unless the lead explicitly asked for a pinned version (rollback test, regression repro, A/B). The wrapper now warns when `--model` looks like a full id — heed it. Next escalation if a warning is cited as ignored: hard error + `--pin-version` opt-in.
+
+## 2026-05-19: Three repeats of a bug class in one milestone triggers escalation to worker-driven design (from #450)
+
+Three repeats of a bug class in one milestone is the escalation signal — flip from lead-rolled-in fix to worker-driven design with review. Recurrence count, not severity, is what triggers the flip. Cheap fixes on operator-facing surfaces (config files, tracked templates, docs) rarely stay cheap; the cost compounds across every future operator.
+
+## 2026-05-20: Verify external-system behavior empirically before flipping ready (from #449)
+
+When a PR's core logic depends on external system behavior — API field shape, platform feature firing, third-party side effect — unit tests of mocked responses prove your code handles the shape; they don't prove the shape exists in the wild. Verify empirically before lead-review.
+
+Concrete: PR #462 routed cross-repo closure events. 666 mocked tests passed, but nobody had confirmed GitHub's `closingIssuesReferences` actually populates for cross-repo refs. A 15-min throwaway PR + GraphQL query confirmed both same-org and cross-org variants populate.
+
+Gate this in the lead's pre-review pressure-test, not the worker's plan. Question: "what external-system fact is this code load-bearing on, and have we observed it?"
+
+Different from §#410 (artifact-shape): that's about durable artifacts (prompts, conventions). This is about behavior shapes (does the API actually do X). Same load-bearing-assumption muscle.
+
+## 2026-05-20: Run survey/audit issues before paired specific cleanup issues (from #457)
+
+When a milestone pairs a survey/audit issue with specific cleanup issues, run the survey first. It either obsoletes the specifics (saving the work) or confirms them with concrete data — running specifics-first risks doing work the survey would have re-scoped.
+
+Concrete: #457 (orchestrator rereview) paired with #473 (lock primitives) and #475 (tmux buffer-chain). Running the survey first confirmed both specifics were still valid and gave a concrete LOC baseline; running specifics-first would have risked work the survey then re-scoped.
+
+## 2026-05-20: Filing a followup: check if it's service-of-future-milestone work before defaulting to current (from #458)
+
+When filing a followup issue, ask whether the work is primarily in service of a future milestone before defaulting to the current one. If the followup's value lands in a later wave (e.g., a boot-time priority-tie warning is most useful when the Linear plugin lands in 0.8.0, not during a 0.7.0 cleanup pass), file it in that future milestone. The concrete test: "when does this followup's primary consumer arrive?"
+
+## 2026-05-21: "Describes output, not mechanism" gap means the research hasn't happened yet (from #424)
+
+When an issue's body describes the output (add X to file Y) but not how the underlying primitive works, the deliverable is research — probe + document, not mechanical config. Size opus. The "describes output, not mechanism" gap is the research that hasn't happened yet.
+
+## 2026-05-21: In prompt gates, the artifact instruction is the entire lever (from #496)
+
+Agents reliably obey explicit output-shaping rules — an instruction to name one specific X produces one specific X. So in prompt gates, the artifact instruction IS the entire lever; "if you fail X, do Y" backstops and "gate failure" framing add no safety, only paranoia. Frame prompt gates around the team putting its best foot forward for leadership, not around catching skimping. The suspicion is decoration; the artifact instruction does the work.
