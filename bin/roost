@@ -318,12 +318,12 @@ EOF
 }
 
 # Tracked, shareable shape: project + repo identity + the static plugin
-# slices (github-new-issues / github-commits are operator-set, not DM-mutated).
+# slices (github-new-issues / github-new-prs / github-commits are operator-set, not DM-mutated).
 # The dynamic slices (github-prs / github-issues) live in the local overlay;
 # their `plugins.<name>` key in the merged config still enables them — the
 # loader unions `Object.keys(plugins)` across both files.
 _init_config_json() {
-  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-new-issues": { "watched": [] },\n    "github-commits": { "watched": [] }\n  }\n}\n' \
+  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-new-issues": { "watched": [] },\n    "github-new-prs": { "watched": [] },\n    "github-commits": { "watched": [] }\n  }\n}\n' \
     "$1" "$2" "$3"
 }
 

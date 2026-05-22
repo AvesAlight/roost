@@ -30,7 +30,7 @@ cp .orchestrator/config.local.example.json .orchestrator/config.local.json
 
 `.orchestrator/config.json` is **tracked** and holds the shareable project
 shape: `project`, `repo`, `agent_logins`, `irc`, plus static plugin slices
-the team agrees on (currently `github-new-issues.watched` and
+the team agrees on (currently `github-new-issues.watched`, `github-new-prs.watched`, and
 `github-commits.watched`). PR-reviewed changes go here.
 
 `.orchestrator/config.local.json` is **gitignored** and holds the
@@ -63,6 +63,7 @@ Fields:
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |
 | `plugins.github-new-issues.watched` | `[{"repo": "OWNER/NAME", "channels"?: [...]}]`. Multi-repo new-issue feed — `repo` required per entry, `channels` defaults to the project channel. |
+| `plugins.github-new-prs.watched` | Same shape as `plugins.github-new-issues.watched`. Multi-repo new-PR feed — announces newly-opened PRs not authored by `agent_logins`. `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
 
 For watched entries, `repo` defaults to the top-level in single mode and is
@@ -84,11 +85,11 @@ B. Each linked-issue channel is slugged from its own repo, not the PR's:
   (gh did return a linked issue, just not addressable) — read stderr when in doubt.
 
 A plugin not listed under `plugins` is not instantiated. First-party set:
-`github-prs`, `github-issues`, `github-new-issues`, `github-commits`. External
+`github-prs`, `github-issues`, `github-new-issues`, `github-new-prs`, `github-commits`. External
 plugins load via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the
 registry walks.
 
-`github-new-issues` needs an explicit slice with ≥1 `watched` entry to run.
+`github-new-issues` and `github-new-prs` each need an explicit slice with ≥1 `watched` entry to run.
 
 ## Running
 
@@ -168,7 +169,7 @@ JSDoc.
 ```
 watch [<target>] <N> [<owner>/<repo>] [#chan ...]      # github-prs, github-issues
 unwatch [<target>] <N> [<owner>/<repo>]
-watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]  # github-commits (target=repo), github-new-issues (target=new-issues; no @/: allowed)
+watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]  # github-commits (target=repo), github-new-issues (target=new-issues; no @/: allowed), github-new-prs (target=new-prs; no @/: allowed)
 unwatch <target> <owner>/<repo>[@<branch>[:<path>]]
 watch list      # every plugin's active entries
 help            # synopsis + per-plugin help
@@ -182,6 +183,7 @@ Target keywords currently claimed by first-party plugins:
 | `pr` | `github-prs` | `watch pr <N> [<owner>/<repo>] [#chan ...]` |
 | `repo` | `github-commits` | `watch repo <owner>/<repo>[@<branch>[:<path>]] [#chan ...]` |
 | `new-issues` | `github-new-issues` | `watch new-issues <owner>/<repo> [#chan ...]` |
+| `new-prs` | `github-new-prs` | `watch new-prs <owner>/<repo> [#chan ...]` |
 
 Notes:
 

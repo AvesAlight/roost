@@ -190,6 +190,14 @@ export interface GhRepoIssue {
   pull_request?: Record<string, unknown>
 }
 
+export interface GhRepoPr {
+  number?: number
+  title?: string
+  html_url?: string
+  labels?: GhLabel[]
+  user?: { login?: string }
+}
+
 // `/repos/{owner}/{repo}/commits` returns newest-first. We only consume sha,
 // html_url, and the message subject — the rest stays untyped vs schema drift.
 export interface GhCommit {
@@ -343,6 +351,10 @@ export class GhClient {
   async fetchRepoOpenIssues(repo: string): Promise<GhRepoIssue[]> {
     const raw = (await this.api(`repos/${repo}/issues?state=open&per_page=100`, true) ?? []) as GhRepoIssue[]
     return raw.filter(i => !i.pull_request)
+  }
+
+  async fetchRepoOpenPrs(repo: string): Promise<GhRepoPr[]> {
+    return (await this.api(`repos/${repo}/pulls?state=open&per_page=100`, true) ?? []) as GhRepoPr[]
   }
 
   // Single page capped at `perPage` — multi-page bursts are caller-logged

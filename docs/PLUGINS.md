@@ -2,7 +2,7 @@
 
 A plugin polls a source on each dispatcher tick and returns IRC events. It owns a config slice at `config.plugins[name]` and a state slice at `state.plugins[name]`. The same name keys both.
 
-The built-ins (`github-prs`, `github-issues`, `github-new-issues`, `github-commits`) all use this contract. External plugins load via `plugin_paths` in your dispatcher config and use the same contract.
+The built-ins (`github-prs`, `github-issues`, `github-new-issues`, `github-new-prs`, `github-commits`) all use this contract. External plugins load via `plugin_paths` in your dispatcher config and use the same contract.
 
 ## The seam
 

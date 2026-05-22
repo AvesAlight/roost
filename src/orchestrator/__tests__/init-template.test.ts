@@ -13,6 +13,7 @@ const INIT_CONFIG: OrchestratorConfig = {
   repo: 'org/repo',
   plugins: {
     'github-new-issues': { watched: [] },
+    'github-new-prs': { watched: [] },
     'github-commits': { watched: [] },
   },
 }
@@ -27,10 +28,10 @@ const INIT_LOCAL: OrchestratorConfig = {
 }
 
 describe('bin/roost init template', () => {
-  it('merged shape enables all four built-in plugins', () => {
+  it('merged shape enables all five built-in plugins', () => {
     const merged = mergeConfigs(INIT_CONFIG, INIT_LOCAL)
     expect(Object.keys(merged.plugins ?? {}).sort()).toEqual([
-      'github-commits', 'github-issues', 'github-new-issues', 'github-prs',
+      'github-commits', 'github-issues', 'github-new-issues', 'github-new-prs', 'github-prs',
     ])
   })
 
