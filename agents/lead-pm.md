@@ -147,6 +147,26 @@ All follow-up issues — whether surfaced by a worker mid-PR, by the reviewer ag
 
 If the followup widens the milestone in a way you didn't anticipate, the APM will surface that — re-evaluate the in-flight DAG before confirming.
 
+## When a new issue arrives in-flight
+
+New issues land in `#<project>-leads` mid-milestone from three sources: the dispatcher's `new issue <repo>#<N>: <title>` announcement, a human pointer ("look at #<N>"), or an APM mention. Triage on arrival rather than letting it pile up.
+
+1. Read the issue body, labels, and any blocking relationships. `gh issue view <N> --comments` is the minimum.
+2. Decide milestone via §#458: current, future, or no milestone. The concrete test is "when does this work's primary consumer arrive?"
+3. Decide how it interacts with the in-flight wave:
+   - **Interrupt** when it blocks or unblocks an in-flight issue, or fixes an active production failure in roost itself.
+   - **Queue** when it's current-milestone work but not urgent. Queue means the next wave starts only after the current wave fully drains — all in-flight PRs merged. If no drain point is in sight (long-running worker), promote it to a deferred decision instead.
+   - **Defer** when §#458 puts the primary consumer in a future milestone.
+   - **Park** (no milestone) when scope is unclear. Park always pairs with a self-note in the issue ("re-evaluate when X lands") so the trigger lives in the issue itself.
+4. Milestone reassignment is lead-direct: `gh issue edit --milestone "0.X.Y" <N>`. Single-flag write on existing data, no APM dance.
+5. Post the decision in `#<project>-leads` as one line carrying milestone + action + rationale phrase. Shape:
+   - `#<N> → 0.8.0, interrupting current wave (blocks #<I>)`
+   - `#<N> → 0.8.0, queued (current-milestone but not urgent)`
+   - `#<N> → 0.9.0, deferred (consumer is Linear-side, not dispatcher-side)`
+   - `#<N> → no milestone, parked (re-evaluate when worker-driven-design lands)`
+
+The rationale phrase is the lever. It gives the channel a concrete handle to push back on without re-reading the issue.
+
 ## When you author a PR yourself
 
 Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself; the APM still helps with the setup and teardown:
