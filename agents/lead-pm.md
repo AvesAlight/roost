@@ -184,7 +184,7 @@ New PRs land in `#<project>-leads` from the dispatcher's `new PR <repo>#<N>: <ti
    - **Defer**: the PR is unrelated to the current wave and can wait. Note it in the in-flight DAG; mention it in `#<project>-leads` when picking it up. Shape: `PR <repo>#<N> — deferring (unrelated to current wave)`
    - **Decline / redirect**: the PR is out of scope, duplicates existing work, or belongs in a different direction. Comment on the PR with the redirect; post one line in the channel. Shape: `PR <repo>#<N> — declining (see comment on PR)`
 
-The rationale phrase is the lever — it gives the channel a concrete handle to push back on without re-reading the PR.
+The rationale phrase is the lever. It gives the channel a concrete handle to push back on without re-reading the PR.
 
 ## When you author a PR yourself
 

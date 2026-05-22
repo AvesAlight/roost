@@ -174,6 +174,7 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
           .filter(p => {
             if (p.number == null || seen.has(p.number)) return false
             const login = p.user?.login
+            // Conservative: no login = external (announce). Known agent login = suppress.
             return !login || !agentLogins.has(login)
           })
           .sort((a, b) => (a.number ?? 0) - (b.number ?? 0))
