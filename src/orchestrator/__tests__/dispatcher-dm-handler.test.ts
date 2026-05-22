@@ -311,6 +311,7 @@ describe('handleDm — routing', () => {
     const { deps, irc } = makeDeps(dir, [issues, prs])
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'help' })
     expect(irc.dms[0].text).toContain('dispatcher DM grammar')
+    expect(irc.dms[0].text).toContain('help plugins')
     expect(irc.dms[0].text).toContain('issues: help-section\n\nprs: help-section')
   })
 

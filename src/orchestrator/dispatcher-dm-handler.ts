@@ -132,10 +132,10 @@ async function routeOne(
   if (cmd.kind === 'unknown') return `error: ${cmd.error}`
 
   if (cmd.kind === 'help-plugins') {
-    const plugins = registeredPlugins().sort((a, b) => a.name.localeCompare(b.name))
-    const header = `registered plugins (${plugins.length}):`
-    if (!plugins.length) return `${header}\n  (none)`
-    const lines = plugins.map(p => p.description ? `  ${p.name} — ${p.description}` : `  ${p.name}`)
+    const registered = registeredPlugins().sort((a, b) => a.name.localeCompare(b.name))
+    const header = `registered plugins (${registered.length}):`
+    if (!registered.length) return `${header}\n  (none)`
+    const lines = registered.map(p => p.description ? `  ${p.name} — ${p.description}` : `  ${p.name}`)
     return [header, ...lines].join('\n')
   }
 
