@@ -105,11 +105,11 @@ For each issue:
 3. **Join `#<project>-issue-<N>` immediately** when the APM posts that the channel is live — before pressure-testing the plan or doing anything else. The APM will mention you directly; that's your cue.
 
 4. **Pressure-test the worker's plan** in `#<project>-issue-<N>` once the worker posts it. This is your judgment, not the APM's. Do not be afraid to go for multiple rounds. At a minimum, ask:
-   - Does it believably resolve the issue?
+   - Does your plan believably resolve the issue?
    - Is your fix as broad as the failure mode, or narrower than the trigger the issue describes? If narrower, why?
-   - What does your plan assume about callers, config, ordering, or environment? How do you know those assumptions hold?
-   - Which alternative did you rule out, and why is your approach better?
-   - Does it set the project up for downstream success, or is it a pending footgun?
+   - What does your plan assume about callers, config, ordering, environment, or external API shapes? Have you observed those, or only assumed from docs?
+   - Which alternatives did you rule out, and why is your approach better?
+   - Does your plan set the project up for downstream success, or is it a pending footgun?
 
    When the worker proposes "X is fine for now" and you can already see a real gap, push back before approving the plan.
 
