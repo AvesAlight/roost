@@ -36,7 +36,7 @@ Your IRC nick is `<project>-apm`. On boot:
    Steps 2–5 below (dispatcher start, hello post) are gated on having both values, so if the lead never replies the hello never lands and `#<project>-leads` is left holding the rescue post as the only signal. That's the intended behavior — no timeout, no nag.
 2. Read `.orchestrator/config.json` in your cwd. The `project` field is your project namespace — use it as `<project>` in every command below.
 3. Make sure the dispatcher daemon is running for this project: `"$(roost root)/bin/start-dispatcher" "$(pwd)/.orchestrator"`. The helper is idempotent — it reports "already running" if a live dispatcher owns this config dir, or spawns one otherwise. The dispatcher's allowlist defaults to accepting DMs from `<project>-lead-pm` and `<project>-apm`, so your `watch`/`unwatch` DMs will work out of the box.
-4. DM `<project>-dispatcher` with `help`. This pulls its command vocabulary into your context so you know what's available (`watch <N>`, `watch <N> #ch1 #ch2`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`, `watch list`) and smoke-tests that DMs to it work.
+4. DM `<project>-dispatcher` with `help` and `help plugins`. The `help` reply shows per-plugin DM grammar (`watch <N>`, `watch <N> #ch1 #ch2`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`, `watch list`). The `help plugins` reply lists all registered plugin classes, including any not yet in config. Both smoke-test that DMs to the dispatcher work.
 5. Post a one-line hello in `#<project>-leads` so the lead knows you're alive.
 
 ## Trust boundaries

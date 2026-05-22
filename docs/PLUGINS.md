@@ -40,7 +40,7 @@ The dispatcher writes each `TaggedEvent` to every channel in `event.channels`. E
 
 ## DM grammar
 
-The dispatcher knows only two global verbs (`help`, `watch list`) and an allowlist. Everything else — `watch <N>`, `watch pr 5`, `watch repo org/r@main`, your own `watch deploy …` — is parsed by the plugin that claims the shape. The canonical semantics live on `Plugin.parseCommand` in `src/orchestrator/plugin.ts` (defer with `null`, claim with `{kind:'ok',cmd}`, fail with `{kind:'error',message}`).
+The dispatcher knows only three global verbs (`help`, `help plugins`, `watch list`) and an allowlist. Everything else — `watch <N>`, `watch pr 5`, `watch repo org/r@main`, your own `watch deploy …` — is parsed by the plugin that claims the shape. The canonical semantics live on `Plugin.parseCommand` in `src/orchestrator/plugin.ts` (defer with `null`, claim with `{kind:'ok',cmd}`, fail with `{kind:'error',message}`).
 
 Shared parser helpers cover the two shipped shapes:
 
@@ -73,7 +73,7 @@ Plugins that used to receive every `Command` via `handleCommand` (the central pa
 
 ## Register on load
 
-Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory)` at the top level. If you bury the call in a function or a default export, the dispatcher fails with `unknown plugin in config: <name>`.
+Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory, description?)` at the top level. If you bury the call in a function or a default export, the dispatcher fails with `unknown plugin in config: <name>`. The optional `description` string appears in `help plugins` output, so operators discovering plugins before touching config get a one-liner for each.
 
 `registerPlugin` throws on duplicate names. Built-in names are reserved. Pick a unique slug like `acme-deploys` or `linear-issues`.
 
@@ -107,7 +107,7 @@ class MyPlugin extends BasePlugin {
   }
 }
 
-registerPlugin('acme-pulse', (defaultChannel) => new MyPlugin(defaultChannel))
+registerPlugin('acme-pulse', (defaultChannel) => new MyPlugin(defaultChannel), 'one-line description shown in help plugins')
 ```
 
 Operator config:
@@ -137,7 +137,7 @@ From a fresh repo:
 
 1. **Bootstrap.** `bun init` (or pnpm/npm). Add roost via one of the [install patterns](#installing-roostplugin) below: `bun link` for dev, git-dep for stable consumption.
 
-2. **Write the module.** A single file, top-level `registerPlugin(name, factory)`, no default export. See [Minimal example](#minimal-example).
+2. **Write the module.** A single file, top-level `registerPlugin(name, factory, description?)`, no default export. See [Minimal example](#minimal-example).
 
 3. **Wire into a target project's `.orchestrator/config.json`.** `plugin_paths` points at the module file (relative to the config dir, or absolute):
 

@@ -9,7 +9,7 @@
 
 import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
 import { apmNick, defaultProject, leadPmNick } from './naming.js'
-import { assertRepoModeAll, priorityOf, type Plugin } from './plugin.js'
+import { assertRepoModeAll, priorityOf, registeredPlugins, type Plugin } from './plugin.js'
 import { splitCommands } from './plugins/grammar.js'
 
 // `plugin` carries an opaque cmd payload — the plugin that produced it is the
@@ -20,6 +20,7 @@ export type Command =
   | { kind: 'plugin'; plugin: string; cmd: unknown; raw: string }
   | { kind: 'list' }
   | { kind: 'help' }
+  | { kind: 'help-plugins' }
   | { kind: 'unknown'; raw: string; error: string }
 
 export interface HandlerDeps {
@@ -63,8 +64,9 @@ export function parseCommand(line: string, plugins: Plugin[], config: Orchestrat
   const verb = tokens[0].toLowerCase()
 
   if (verb === 'help') {
-    if (tokens.length > 1) return { kind: 'unknown', raw: line, error: `help takes no arguments; got "${tokens.slice(1).join(' ')}"` }
-    return { kind: 'help' }
+    if (tokens.length === 1) return { kind: 'help' }
+    if (tokens.length === 2 && tokens[1].toLowerCase() === 'plugins') return { kind: 'help-plugins' }
+    return { kind: 'unknown', raw: line, error: `help takes no arguments (or "help plugins"); got "${tokens.slice(1).join(' ')}"` }
   }
 
   if (verb === 'watch' && tokens[1]?.toLowerCase() === 'list') {
@@ -116,6 +118,7 @@ const HELP_SYNOPSIS = [
   'dispatcher DM grammar (one per line, or `;`/`,`-separated):',
   '  watch list                 — every plugin\'s active entries',
   '  help                       — this synopsis + per-plugin commands',
+  '  help plugins               — all registered plugin classes (enabled or not)',
   '',
   'plugins claim their own watch/unwatch shapes; per-plugin grammar:',
 ].join('\n')
@@ -127,6 +130,14 @@ async function routeOne(
   plugins: Plugin[],
 ): Promise<string | null> {
   if (cmd.kind === 'unknown') return `error: ${cmd.error}`
+
+  if (cmd.kind === 'help-plugins') {
+    const registered = registeredPlugins().sort((a, b) => a.name.localeCompare(b.name))
+    const header = `registered plugins (${registered.length}):`
+    if (!registered.length) return `${header}\n  (none)`
+    const lines = registered.map(p => p.description ? `  ${p.name} — ${p.description}` : `  ${p.name}`)
+    return [header, ...lines].join('\n')
+  }
 
   // list/help broadcast — every plugin contributes its own section.
   if (cmd.kind === 'list' || cmd.kind === 'help') {
@@ -190,7 +201,7 @@ export async function handleDm(deps: HandlerDeps, dm: InboundDm): Promise<void> 
     return
   }
 
-  const isPureRead = cmds.every(c => c.kind === 'list' || c.kind === 'help')
+  const isPureRead = cmds.every(c => c.kind === 'list' || c.kind === 'help' || c.kind === 'help-plugins')
 
   // No fsync, no writer queue — list/help never mutate.
   if (isPureRead) {
