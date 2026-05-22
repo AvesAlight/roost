@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+# script/teardown — Remove a git worktree and update main
+#
+# Usage:
+#   script/teardown <branch> [--delete-branch]
+#
+# Examples:
+#   script/teardown feat/my-feature
+#   script/teardown feat/my-feature --delete-branch
+
+if [ -z "${1:-}" ]; then
+  echo "Usage: script/teardown <branch> [--delete-branch]"
+  echo ""
+  echo "  branch           Branch whose worktree to remove"
+  echo "  --delete-branch  Also delete the local branch after removing the worktree"
+  exit 1
+fi
+
+branch="$1"
+shift
+
+delete_branch=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --delete-branch)
+      delete_branch=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
+
+main_tree="$(git worktree list --porcelain | head -1 | sed 's/worktree //')"
+sanitized_branch="$(echo "$branch" | tr '/' '-')"
+worktree_path="$(dirname "$main_tree")/roost-${sanitized_branch}"
+
+if [ ! -d "$worktree_path" ]; then
+  echo "Error: worktree not found at $worktree_path"
+  echo "  (branch: $branch)"
+  exit 1
+fi
+
+echo "Updating main..."
+(cd "$main_tree" && git fetch origin main && git merge --ff-only FETCH_HEAD)
+
+echo ""
+echo "Removing worktree: $worktree_path"
+git worktree remove "$worktree_path"
+
+if "$delete_branch"; then
+  echo "Deleting branch: $branch"
+  git branch -d "$branch"
+fi
+
+echo ""
+echo "Teardown complete: $branch"
