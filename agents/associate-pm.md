@@ -330,17 +330,23 @@ Trigger: lead mentions you with intent like `<project>-apm prune learning #<I>: 
 
 1. **Find the entry.** Match the header line only — body cross-references (one learning citing another as a second exemplar) must not trigger a prune:
    ```
-   grep -lP '^## .* \(from #<I>\)' .claude/rules/project-learnings.md .claude/rules/*.md .claude/learnings/*.md 2>/dev/null
+   grep -lP '^## .* \(from #<I>\)' .claude/rules/*.md .claude/learnings/*.md 2>/dev/null
    ```
    - **No match**: post in `#<project>-leads`: `no learning with (from #<I>) header — typo or already pruned?` and stop.
    - **One file**: typical for cross-cutting or path-scoped entries.
    - **Multiple files**: typical for audience-scoped multi-role entries — they hold the same wording verbatim, so the prune removes from all of them in one commit (mirrors the filing rule).
 
-2. **Ack** with the resolved entry header, the files affected, and the reason:
+   Then list any prose lines mentioning `#<I>` outside a prune target header — these are dangling-cite candidates the lead may want to revise in a follow-up before or after the prune:
    ```
-   prune '<header>' from <files>; reason: <reason>; go?
+   grep -nP '#<I>\b' .claude/rules/*.md .claude/learnings/*.md 2>/dev/null \
+     | grep -vP ':## .* \(from #<I>\)\s*$' || true
    ```
-   This is the lead's last chance to catch a typo'd issue number before any mutation lands.
+
+2. **Ack** with the resolved entry header, files affected, reason, and (only when non-empty) body refs:
+   ```
+   prune '<header>' from <files>; reason: <reason>; [body refs to #<I>: <file:line>, ...;] go?
+   ```
+   Omit the `body refs to #<I>: ...;` segment entirely when step 1's body grep returned nothing — the ack stays uncluttered in the no-refs case. This is the lead's last chance to catch a typo'd issue number AND to decide whether dangling cites need updating.
 
 3. **On affirmative**, for each matched file: remove the matched `## ...` block (header line through the line before the next `## ` header, or EOF if it was the last entry).
    - If the file is a path-scoped `.claude/rules/<topic>.md` and the prune leaves it with no `## ...` blocks, `git rm` the file — an entry-less path-scoped rule still triggers on `paths:` match but contributes nothing.
@@ -348,10 +354,11 @@ Trigger: lead mentions you with intent like `<project>-apm prune learning #<I>: 
 
 4. **Commit and push** to main (same shape as the historian dance):
    ```
-   git add -A
+   git add .claude/
    git commit -m "prune learning from #<I>: <reason>"
    git push origin main
    ```
+   `git add .claude/` covers modifications under both `.claude/rules/` and `.claude/learnings/`. A `git rm` from step 3 already staged the deletion, so no `-A` needed.
 
 5. **Confirm** in `#<project>-leads`: `pruned learning from #<I> (<N> files): <commit-sha-short>`.
 
