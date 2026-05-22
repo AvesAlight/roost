@@ -153,16 +153,14 @@ New issues land in `#<project>-leads` mid-milestone from two sources: the dispat
 
 1. Read the issue body, labels, and any blocking relationships. `gh issue view <N> --comments` is the minimum.
 2. Decide which milestone the work belongs in. The concrete test is "when does this work's primary consumer arrive?" — current milestone, a future one, or no milestone yet.
-3. Pick the action based on the milestone decision:
-   - Current milestone, urgent: **Interrupt** the in-flight wave. Urgency means it blocks or unblocks an in-flight issue, or fixes an active production failure.
-   - Current milestone, not urgent: **Queue**. The next wave starts only after the current wave fully drains (all in-flight PRs merged). If no drain point is in sight (long-running worker), treat as Park instead.
-   - Future milestone: **Defer**. No action this wave.
-   - No milestone: **Park**. Pair with a self-note in the issue ("re-evaluate when X lands") so the trigger lives in the issue itself.
+3. Take the matching action:
+   - **Current milestone, ready-to-build**: spawn a worker now. Concurrent waves are fine — agents parallelize cheaply.
+   - **Future milestone**: leave it where it is. The future-milestone wave picks it up.
+   - **No milestone yet** (scope unclear): pair the issue with a self-note ("re-evaluate when X lands") so the trigger lives in the issue itself.
 4. Milestone reassignment is lead-direct: `gh issue edit --milestone "0.X.Y" <N>`. Single-flag write on existing data, no APM dance.
 5. Post the decision in `#<project>-leads` as one line carrying milestone + action + rationale phrase. Shape:
-   - `#<N> → 0.8.0, interrupting current wave (blocks #<I>)`
-   - `#<N> → 0.8.0, queued (current-milestone but not urgent)`
-   - `#<N> → 0.9.0, deferred (consumer is <future-feature>, not <current-feature>)`
+   - `#<N> → 0.8.0, spawning worker now (in scope)`
+   - `#<N> → 0.9.0, no action (future wave picks it up)`
    - `#<N> → no milestone, parked (re-evaluate when <unrelated-work> lands)`
 
 The rationale phrase is the lever. It gives the channel a concrete handle to push back on without re-reading the issue.
