@@ -339,8 +339,9 @@ Trigger: lead mentions you with intent like `<project>-apm prune learning #<I>: 
    Then list any prose lines mentioning `#<I>` outside a prune target header — these are dangling-cite candidates the lead may want to revise in a follow-up before or after the prune:
    ```
    grep -nP '#<I>\b' .claude/rules/*.md .claude/learnings/*.md 2>/dev/null \
-     | grep -vP ':## .* \(from #<I>\)\s*$' || true
+     | grep -vP '^[^:]+:[0-9]+:## .* \(from #<I>\)' || true
    ```
+   The header-exclusion pattern anchors on `## .*(from #<I>)` appearing immediately after the `file:lineno:` prefix, so audience-annotated headers (e.g. `## ... (from #492) [audience=lead-pm,apm]`) are correctly recognized as headers and excluded.
 
 2. **Ack** with the resolved entry header, files affected, reason, and (only when non-empty) body refs:
    ```
