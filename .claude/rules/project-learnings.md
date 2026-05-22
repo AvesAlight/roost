@@ -8,6 +8,8 @@ Role-specific learnings live in `.claude/learnings/<role>.md` and are loaded by 
 
 When the same invariant lives in 3+ surfaces (operator help, agent prompts, learnings, etc.), pick one canonical sentence and copy it verbatim across all places. Paraphrasing looks fine at first but drifts on the next edit — and a future reader can't tell which copy is right. For ≤2 places, the duplication tax exceeds the drift risk; phrase each in context.
 
+Operational corollary: when a reviewer flags a duplicate-invariant gap on a 3+ surface invariant — even hedging with "fyi" or "probably intentional" — treat it as a blocker. The surface count fires the rule; the reviewer's confidence doesn't gate it.
+
 ## 2026-05-19: Write docs in IRC-conversational voice from the first draft (from #255)
 
 Prose in this project needs one idea per sentence. Skip em-dashes. Don't use jargon without a concrete instruction next to it. Writing "claudey" the first time costs a full extra review round.
