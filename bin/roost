@@ -64,16 +64,24 @@ Usage: roost init [options]
 Bootstrap .orchestrator/config.json + config.local.json + .gitignore for a
 new project and copy roost prompt templates to .claude/commands/ and agent
 definitions to .claude/agents/ for local customization.
-Autodetects project name, repo, and GitHub user; each value can be overridden.
+
+Pass exactly one of --repo or --multi-repo:
+
+  Single-repo: --repo OWNER/REPO wires one repo as the top-level watched
+               target. Plugin entries may inherit or match it.
+
+  Multi-repo:  --multi-repo generates a bare skeleton with no top-level repo
+               and empty plugins: {}. Add per-plugin watch entries (each
+               carrying their own repo field) after init.
 
 config.json is tracked (shareable project shape); config.local.json is
 gitignored (dispatcher-mutated overlay for github-prs/github-issues watches
 added via DM). See docs/DISPATCHER.md.
 
 Options:
+  --repo OWNER/REPO      Single-repo mode. Mutually exclusive with --multi-repo.
+  --multi-repo           Multi-repo mode. Mutually exclusive with --repo.
   --project NAME         Project name (default: basename of cwd, lowercased).
-  --repo OWNER/REPO      GitHub repo. Required outside a git repo; inside one
-                         defaults to the origin remote URL.
   --agent-login LOGIN    GitHub login for agent_logins. Repeatable.
                          Default: current gh user.
   --force                Overwrite everything: config.json, config.local.json,
@@ -88,9 +96,10 @@ Options:
   --dry-run              Print what would be written; do not write files.
 
 Examples:
-  roost init
-  roost init --project myapp --repo Owner/myapp
-  roost init --agent-login alice --agent-login bob
+  roost init --repo Owner/myapp
+  roost init --multi-repo
+  roost init --multi-repo --project services
+  roost init --repo Owner/myapp --agent-login alice --agent-login bob
   roost init --force
   roost init --force-prompts
   roost init --no-prompts
@@ -323,8 +332,13 @@ EOF
 # their `plugins.<name>` key in the merged config still enables them — the
 # loader unions `Object.keys(plugins)` across both files.
 _init_config_json() {
-  printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-new-issues": { "watched": [] },\n    "github-new-prs": { "watched": [] },\n    "github-commits": { "watched": [] }\n  }\n}\n' \
-    "$1" "$2" "$3"
+  if [ -n "$2" ]; then
+    printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-new-issues": { "watched": [] },\n    "github-new-prs": { "watched": [] },\n    "github-commits": { "watched": [] }\n  }\n}\n' \
+      "$1" "$2" "$3"
+  else
+    printf '{\n  "project": "%s",\n  "agent_logins": %s,\n  "plugins": {}\n}\n' \
+      "$1" "$3"
+  fi
 }
 
 # Gitignored dispatcher-mutated overlay scaffold. Mirrors
@@ -342,6 +356,7 @@ _init_gitignore() {
 cmd_init() {
   local project=""
   local repo=""
+  local multi_repo=0
   local agent_logins=()
   local login_re='^[a-zA-Z0-9][a-zA-Z0-9-]*$'
   local force=0
@@ -355,6 +370,7 @@ cmd_init() {
     case "$1" in
       --project)       project="$2";         shift 2 ;;
       --repo)          repo="$2";            shift 2 ;;
+      --multi-repo)    multi_repo=1;         shift ;;
       --agent-login)
         if [[ ! "$2" =~ $login_re ]]; then
           echo "error: invalid --agent-login \"$2\": must match ^[a-zA-Z0-9][a-zA-Z0-9-]*$" >&2
@@ -372,6 +388,11 @@ cmd_init() {
     esac
   done
 
+  if [ -n "$repo" ] && [ "$multi_repo" -eq 1 ]; then
+    echo "error: --repo and --multi-repo are mutually exclusive" >&2
+    exit 1
+  fi
+
   if ! gh auth status &>/dev/null; then
     echo "error: gh is not authenticated — run \`gh auth login\` first" >&2
     exit 1
@@ -387,26 +408,12 @@ cmd_init() {
     exit 1
   fi
 
-  if [ -z "$repo" ]; then
-    if git rev-parse --is-inside-work-tree &>/dev/null; then
-      local url
-      if ! url="$(git remote get-url origin 2>/dev/null)"; then
-        echo "error: no \`origin\` remote and no \`--repo\` flag — pass \`--repo Owner/repo\` or run \`git remote add origin ...\`" >&2
-        exit 1
-      fi
-      url="${url%.git}"
-      repo="$(printf '%s' "$url" | sed -E 's|.*[:/]([^/:]+/[^/]+)$|\1|')"
-      if [ "$repo" = "$url" ]; then
-        echo "error: could not parse Owner/repo from remote URL: ${url} — pass \`--repo Owner/repo\` explicitly" >&2
-        exit 1
-      fi
-    else
-      echo "error: not inside a git repo and \`--repo\` not provided — pass \`--repo Owner/repo\` to set the watched repo explicitly" >&2
-      exit 1
-    fi
+  if [ -z "$repo" ] && [ "$multi_repo" -eq 0 ] && [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
+    echo "error: pass \`--repo OWNER/REPO\` for single-repo or \`--multi-repo\` for multi-repo setup" >&2
+    exit 1
   fi
 
-  if ! gh repo view "$repo" &>/dev/null; then
+  if [ -n "$repo" ] && ! gh repo view "$repo" &>/dev/null; then
     echo "error: repo \`${repo}\` not reachable via gh — check the repo name + your gh auth" >&2
     exit 1
   fi
@@ -550,7 +557,12 @@ cmd_init() {
     fi
   fi
 
-  printf '\nNext step:\n'
+  if [ "$multi_repo" -eq 1 ]; then
+    printf '\nNext: add per-plugin watch entries (each with a "repo" field) to\n'
+    printf '  .orchestrator/config.json, then spawn:\n'
+  else
+    printf '\nNext step:\n'
+  fi
   printf '  roost spawn %s-lead-pm \\\n' "$project"
   printf '    --agent lead-pm \\\n'
   printf "    --channels '#%s-leads' \\\n" "$project"
