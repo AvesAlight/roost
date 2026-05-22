@@ -125,15 +125,16 @@ export const defaultPluginLogger: PluginLogger = (msg) => { process.stderr.write
 
 export type PluginFactory = (defaultChannel: string, log: PluginLogger) => Plugin
 
-const REGISTRY = new Map<string, PluginFactory>()
+interface RegistryEntry { factory: PluginFactory; description?: string }
+const REGISTRY = new Map<string, RegistryEntry>()
 
 // Throws on duplicate — silent overwrite would shadow another plugin's state
 // slice (registry key === state.plugins[name] key).
-export function registerPlugin(name: string, factory: PluginFactory): void {
+export function registerPlugin(name: string, factory: PluginFactory, description?: string): void {
   if (REGISTRY.has(name)) {
     throw new Error(`plugin already registered: ${name}`)
   }
-  REGISTRY.set(name, factory)
+  REGISTRY.set(name, { factory, description })
 }
 
 // Test-only escape hatch — not exported from `plugin-api.ts`.
@@ -142,11 +143,15 @@ export function unregisterPlugin(name: string): boolean {
 }
 
 export function getPluginFactory(name: string): PluginFactory | undefined {
-  return REGISTRY.get(name)
+  return REGISTRY.get(name)?.factory
 }
 
 export function registeredPluginNames(): string[] {
   return [...REGISTRY.keys()]
+}
+
+export function registeredPlugins(): Array<{ name: string; description?: string }> {
+  return [...REGISTRY.entries()].map(([name, entry]) => ({ name, description: entry.description }))
 }
 
 // Dispatch each plugin's `assertRepoMode` if implemented. Called by every

@@ -9,10 +9,10 @@ import { GitHubCommitsPlugin } from './plugins/github/commits-plugin.js'
 import { LinearIssuesPlugin } from './plugins/linear/issues-plugin.js'
 import { LinearNewIssuesPlugin } from './plugins/linear/new-issues-plugin.js'
 
-registerPlugin('github-prs', (defaultChannel, log) => new GitHubPrsPlugin(defaultChannel, log))
-registerPlugin('github-issues', (defaultChannel, log) => new GitHubIssuesPlugin(defaultChannel, log))
-registerPlugin('github-new-issues', (defaultChannel, log) => new GitHubNewIssuesPlugin(defaultChannel, log))
-registerPlugin('github-new-prs', (defaultChannel, log) => new GitHubNewPrsPlugin(defaultChannel, log))
-registerPlugin('github-commits', (defaultChannel, log) => new GitHubCommitsPlugin(defaultChannel, log))
-registerPlugin('linear-issues', (defaultChannel, log) => new LinearIssuesPlugin(defaultChannel, log))
-registerPlugin('linear-new-issues', (defaultChannel, log) => new LinearNewIssuesPlugin(defaultChannel, log))
+registerPlugin('github-prs', (defaultChannel, log) => new GitHubPrsPlugin(defaultChannel, log), 'watches PR activity for tracked issue numbers')
+registerPlugin('github-issues', (defaultChannel, log) => new GitHubIssuesPlugin(defaultChannel, log), 'watches issue activity for tracked issue numbers')
+registerPlugin('github-new-issues', (defaultChannel, log) => new GitHubNewIssuesPlugin(defaultChannel, log), 'announces new GitHub issues in watched repos')
+registerPlugin('github-new-prs', (defaultChannel, log) => new GitHubNewPrsPlugin(defaultChannel, log), 'announces new GitHub PRs not authored by agent_logins')
+registerPlugin('github-commits', (defaultChannel, log) => new GitHubCommitsPlugin(defaultChannel, log), 'announces commits to watched repos/branches/paths')
+registerPlugin('linear-issues', (defaultChannel, log) => new LinearIssuesPlugin(defaultChannel, log), 'watches Linear issue activity for tracked issue keys')
+registerPlugin('linear-new-issues', (defaultChannel, log) => new LinearNewIssuesPlugin(defaultChannel, log), 'announces new Linear issues in watched teams')

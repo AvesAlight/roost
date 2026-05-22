@@ -159,7 +159,7 @@ SIGTERM, waits up to 30s (`STOP_TIMEOUT=<seconds>` overrides). No SIGKILL escala
 
 The dispatcher accepts a small grammar via DM from nicks in
 `irc.command_senders` (defaults to lead-pm + APM). Plugins own their watch/
-unwatch shapes — the dispatcher only parses `help` / `watch list` centrally
+unwatch shapes — the dispatcher only parses `help`, `help plugins`, and `watch list` centrally
 and hands every other line to plugins in `grammarPriority` order. Operators
 override the priority via `config.plugin_priorities: {<name>: <number>}`
 (higher wins, replaces the plugin's static value). See `docs/PLUGINS.md` for
@@ -173,6 +173,7 @@ watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]  # github-commits 
 unwatch <target> <owner>/<repo>[@<branch>[:<path>]]
 watch list      # every plugin's active entries
 help            # synopsis + per-plugin help
+help plugins    # all registered plugin classes (enabled or not)
 ```
 
 Target keywords currently claimed by first-party plugins:

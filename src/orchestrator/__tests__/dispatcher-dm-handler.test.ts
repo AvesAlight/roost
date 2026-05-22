@@ -11,7 +11,7 @@ import {
   type HandlerDeps,
 } from '../dispatcher-dm-handler.js'
 import { loadConfig, loadConfigBase, loadLocalOverlay, writeConfig, type OrchestratorConfig } from '../config.js'
-import type { ParseResult, Plugin, PluginTickResult } from '../plugin.js'
+import { registerPlugin, unregisterPlugin, type ParseResult, type Plugin, type PluginTickResult } from '../plugin.js'
 
 let dir: string
 
@@ -108,6 +108,20 @@ describe('parseCommand (central — global verbs)', () => {
 
   it('rejects trailing tokens after `help`', () => {
     const cmd = parseCommand('help me', [], {}) as Extract<Command, { kind: 'unknown' }>
+    expect(cmd.kind).toBe('unknown')
+    expect(cmd.error).toMatch(/help takes no arguments/)
+  })
+
+  it('parses help plugins', () => {
+    expect(parseCommand('help plugins', [], {})).toEqual({ kind: 'help-plugins' })
+  })
+
+  it('is case-insensitive for help plugins', () => {
+    expect(parseCommand('Help Plugins', [], {})).toEqual({ kind: 'help-plugins' })
+  })
+
+  it('rejects trailing tokens after `help plugins`', () => {
+    const cmd = parseCommand('help plugins foo', [], {}) as Extract<Command, { kind: 'unknown' }>
     expect(cmd.kind).toBe('unknown')
     expect(cmd.error).toMatch(/help takes no arguments/)
   })
@@ -298,6 +312,38 @@ describe('handleDm — routing', () => {
     await handleDm(deps, { sender: 'roost-lead-pm', text: 'help' })
     expect(irc.dms[0].text).toContain('dispatcher DM grammar')
     expect(irc.dms[0].text).toContain('issues: help-section\n\nprs: help-section')
+  })
+
+  it('help plugins returns registered plugin names with descriptions', async () => {
+    registerPlugin('test-help-plugins-alpha', () => new StubPlugin('test-help-plugins-alpha', null), 'alpha description')
+    registerPlugin('test-help-plugins-beta', () => new StubPlugin('test-help-plugins-beta', null))
+    try {
+      await writeConfig(dir, { project: 'roost', plugins: {} })
+      const { deps, irc } = makeDeps(dir, [])
+      await handleDm(deps, { sender: 'roost-lead-pm', text: 'help plugins' })
+      expect(irc.dms).toHaveLength(1)
+      const reply = irc.dms[0].text
+      expect(reply).toContain('test-help-plugins-alpha — alpha description')
+      expect(reply).toContain('test-help-plugins-beta')
+    } finally {
+      unregisterPlugin('test-help-plugins-alpha')
+      unregisterPlugin('test-help-plugins-beta')
+    }
+  })
+
+  it('help plugins is a pure-read (does not touch config.json)', async () => {
+    registerPlugin('test-help-plugins-pure', () => new StubPlugin('test-help-plugins-pure', null))
+    try {
+      await writeConfig(dir, { project: 'roost', plugins: {} })
+      const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
+      await new Promise(r => setTimeout(r, 20))
+      const { deps } = makeDeps(dir, [])
+      await handleDm(deps, { sender: 'roost-lead-pm', text: 'help plugins' })
+      const { mtimeMs: after } = await Bun.file(join(dir, 'config.json')).stat()
+      expect(after).toBe(before)
+    } finally {
+      unregisterPlugin('test-help-plugins-pure')
+    }
   })
 
   it('surfaces "no plugin handles" with the raw line + enabled plugins', async () => {
