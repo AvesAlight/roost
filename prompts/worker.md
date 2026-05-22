@@ -52,9 +52,12 @@ Before you signal "ready to flip" — both after the reviewer round and after ea
 2. Re-read the reviewer's findings, including the `nit`s and the ones you argued past. For each one you didn't address, ask whether your reason still holds after the re-read — sometimes a nit dismissed on its own reads as structural once the diff is whole again.
 3. Answer concretely: **name one specific file/section/function/invariant in this PR that, if you'd skimped on it, would surface as a finding in human review.** Not "correctness" or "the new logic" — a real location.
 4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
-5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line.
+5. Answer concretely: **what surprised you during implementation that the lead wouldn't see from outside?** Examples of the texture: a test framework quirk, a doc that contradicted real behavior, a tool footgun, a plan miss, scope drift you absorbed. One line. If genuinely nothing, say `none` — empty omission lets you skip without thinking. If a surprise needs more than one line, raise it in $6 as a followup candidate — lead decides whether it warrants its own issue.
+6. Signal ready with a structural summary line, a `highest-risk specific: <file:section or function or invariant>` line, *and* a `surprises: <one line or 'none'>` line.
 
 The `highest-risk specific:` line is a concrete commitment the lead and human can engage with at the moment you signal ready. It lives in the issue channel where lead, human, and reviewer (if still attached) read it together.
+
+The `surprises:` line is the worker-voice slot in the postmortem dance — workers are closer to the actual surprises of implementation than the lead, and this is your chance to surface them while you're still alive. The lead reads them from the channel when crafting the postmortem narrative after merge.
 
 ## Commits
 

@@ -123,6 +123,8 @@ For each issue:
 
 9. **Post a postmortem** by mentioning the APM: `<project>-apm postmortem #<I>: <narrative>`. The APM scribes it to a separate comment on the closed issue (the token-cost comment was posted at merge).
 
+   **Before crafting the narrative, pull worker-voice material.** The worker emitted a `surprises: <text or 'none'>` line on each signal-ready in `#<project>-issue-<N>` — workers are closer to implementation surprises (test quirks, doc gaps, tool footguns) than you are from outside. Read them via `channel_history` of the issue channel and incorporate them into your narrative. The worker is shut down by the time you postmortem, so the channel is the only place those notes live.
+
    **Question seeds** (not mandatory, but help surface learnable material):
    - What surprised you about how this issue went?
    - What did we believe that turned out to be wrong?
