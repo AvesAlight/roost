@@ -51,6 +51,8 @@ Requires ergo (IRCv3 server). Install with `bin/install-ergo` or set `ERGO_BIN` 
 
 Use `script/worktree <branch> [--from <base>] [path]` to bootstrap a new worktree — it creates the sibling worktree, runs `bun install`, and copies `.claude/settings.local.json` from the main worktree so spawned workers don't hit a permission-prompt flood.
 
+Use `script/teardown <branch> [--delete-branch]` to clean up a worktree after merge — fetches and ff-merges main, removes the worktree, and optionally deletes the local branch.
+
 ## Layout
 
 ```

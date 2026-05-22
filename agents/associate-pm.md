@@ -184,8 +184,7 @@ Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're track
      If a reviewer was never spawned for this issue (e.g. lead-authored PR), drop the reviewer nick from the args. If the tool stderr-warns about an unknown model (`$?` somewhere in the output), relay the warning in both posts — that means `src/pricing.ts` needs a bump for the new model id before the dollar figure is trustworthy.
    - Terminate the worker: `roost shutdown <project>-worker-<I>`.
    - Part `#<project>-issue-<I>`.
-   - Pull main in the primary worktree (HTTPS one-shot is safe: `git fetch https://github.com/<owner>/<repo>.git main && git merge --ff-only FETCH_HEAD`).
-   - Remove the worktree: `git worktree remove <path>`.
+   - If `./script/teardown` exists in the primary worktree: run `./script/teardown <branch> --delete-branch` from the primary worktree — one allow-listed call, no compound operators, handles ff-merge main + worktree removal + branch cleanup. Otherwise: `git fetch origin main && git merge --ff-only FETCH_HEAD` in the primary worktree, then `git worktree remove <path>`.
    - DM `<project>-dispatcher`: `unwatch <I>` then `unwatch pr <N>` — the daemon keeps running across issues; full shutdown is the milestone teardown dance below.
 3. Post in `#<project>-leads`: `#<N> merged, cleanup done`.
 
