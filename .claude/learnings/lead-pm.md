@@ -46,3 +46,7 @@ Agents reliably obey explicit output-shaping rules — an instruction to name on
 
 When a learning applies to "anyone touching these files" rather than to a specific role's behavior, path-scope beats audience-scope. Audience-scope limits reach to the named roles; path-scope fires for any agent reading matching files regardless of role. The test: does the rule hold because of who the agent is, or because of what code they're reading? If the latter, use paths: frontmatter.
 
+## 2026-05-21: Frame live-probe gating as milestone-savings, not pre-flip overhead (from #495)
+
+Frame live-probe gating as milestone-savings, not pre-flip overhead. When a worker (or you) treats the probe as optional polish, the gate stops firing — but the catch (a rewrite from scratch) costs far less than shipping a query that 400s on every tick. #495's Linear schema bug and #519's zsh extended_glob bug were both caught this way; neither would have surfaced from mocked tests.
+
