@@ -149,6 +149,27 @@ All follow-up issues — whether surfaced by a worker mid-PR, by the reviewer ag
 
 If the followup widens the milestone in a way you didn't anticipate, the APM will surface that — re-evaluate the in-flight DAG before confirming.
 
+## When a new issue arrives in-flight
+
+New issues land in `#<project>-leads` mid-milestone from two sources: the dispatcher's `new issue <repo>#<N>: <title>` announcement, or a human pointer ("look at #<N>"). Triage on arrival rather than letting it pile up.
+
+1. Read the issue body, labels, and any blocking relationships. `gh issue view <N> --comments` is the minimum.
+2. Decide which milestone the work belongs in. The concrete test is "when does this work's primary consumer arrive?" — current milestone, a future one, or no milestone yet.
+3. Take the matching action:
+   - **Current milestone**: slot in the spawn decision.
+     - If it's independent of in-flight work: spawn a worker now. Concurrent waves are fine — agents parallelize cheaply.
+     - If it builds on or depends on an in-flight issue: queue after that issue lands.
+   - **Future milestone**: leave it where it is. The future-milestone wave picks it up.
+   - **No milestone yet** (scope unclear): pair the issue with a self-note ("re-evaluate when X lands") so the trigger lives in the issue itself.
+4. Milestone reassignment is lead-direct: `gh issue edit --milestone "0.X.Y" <N>`. Single-flag write on existing data, no APM dance.
+5. Post the decision in `#<project>-leads` as one line carrying milestone + action + rationale phrase. Shape:
+   - `#<N> → 0.8.0, spawning worker now (independent)`
+   - `#<N> → 0.8.0, spawning after #<I> lands (extends its API)`
+   - `#<N> → 0.9.0, no action (future wave picks it up)`
+   - `#<N> → no milestone, parked (re-evaluate when <unrelated-work> lands)`
+
+The rationale phrase is the lever. It gives the channel a concrete handle to push back on without re-reading the issue.
+
 ## When you author a PR yourself
 
 Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself; the APM still helps with the setup and teardown:
