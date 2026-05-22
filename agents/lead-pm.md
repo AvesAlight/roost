@@ -174,6 +174,18 @@ New issues land in `#<project>-leads` mid-milestone from two sources: the dispat
 
 The rationale phrase is the lever. It gives the channel a concrete handle to push back on without re-reading the issue.
 
+## When a new PR arrives in-flight
+
+New PRs land in `#<project>-leads` from the dispatcher's `new PR <repo>#<N>: <title>` announcement (if `github-new-prs` is configured), or a human pointer. Triage on arrival.
+
+1. Read the PR: author, title, description, and what files it touches.
+2. Decide and post a one-liner in `#<project>-leads` with your decision and a rationale phrase. Three options:
+   - **Engage now**: the PR touches in-flight work, looks like a clean contribution, or needs blocking feedback before it drifts further. Start a review — spawn a reviewer agent or review directly. Shape: `PR <repo>#<N> from <author> — engaging, spawning reviewer (touches in-flight #<I>)`
+   - **Defer**: the PR is unrelated to the current wave and can wait. Note it in the in-flight DAG; mention it in `#<project>-leads` when picking it up. Shape: `PR <repo>#<N> — deferring (unrelated to current wave)`
+   - **Decline / redirect**: the PR is out of scope, duplicates existing work, or belongs in a different direction. Comment on the PR with the redirect; post one line in the channel. Shape: `PR <repo>#<N> — declining (see comment on PR)`
+
+The rationale phrase is the lever — it gives the channel a concrete handle to push back on without re-reading the PR.
+
 ## When you author a PR yourself
 
 Some changes are small enough that spawning a worker is overhead — a doc tweak, a prompt update, a one-line fix you spotted while reviewing. You can author the PR yourself; the APM still helps with the setup and teardown:
