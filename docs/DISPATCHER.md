@@ -18,8 +18,9 @@ See `src/orchestrator/naming.ts`.
 
 ## Setup
 
-Run `bin/roost init` (writes both config files plus the gitignore), or do
-it by hand:
+Run `bin/roost init --repo OWNER/NAME` (single-repo) or
+`bin/roost init --multi-repo` (multi-repo), which writes both config files
+plus the gitignore. Or do it by hand:
 
 ```sh
 cp .orchestrator/config.example.json       .orchestrator/config.json

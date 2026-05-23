@@ -42,30 +42,11 @@ roost_init() {
   PATH="${STUBS}:${PATH}" "${ROOST_BIN}" init "$@"
 }
 
-# --- URL parsing: all four remote shapes ---
+# --- agent_logins: autodetected (single-repo) ---
 
-for shape in \
-  "git@github.com:TestOwner/myproject.git" \
-  "https://github.com/TestOwner/myproject.git" \
-  "https://github.com/TestOwner/myproject" \
-  "ssh://git@github.com/TestOwner/myproject.git"; do
-  setup "$shape"
-  cd "$TDIR"
-  if roost_init >/dev/null 2>&1 \
-      && grep -q '"repo": "TestOwner/myproject"' "${TDIR}/.orchestrator/config.json"; then
-    ok "url-parse: ${shape}"
-  else
-    fail "url-parse: ${shape}"
-  fi
-  cd - >/dev/null
-  teardown
-done
-
-# --- agent_logins: autodetected (single) ---
-
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1 \
     && grep -q '"agent_logins": \["testuser"\]' "${TDIR}/.orchestrator/config.json"; then
   ok "agent_logins: autodetected"
 else
@@ -76,9 +57,9 @@ teardown
 
 # --- agent_logins: single --agent-login ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init --agent-login alice >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --agent-login alice >/dev/null 2>&1 \
     && grep -q '"agent_logins": \["alice"\]' "${TDIR}/.orchestrator/config.json"; then
   ok "agent_logins: single flag"
 else
@@ -89,9 +70,9 @@ teardown
 
 # --- agent_logins: multiple --agent-login ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init --agent-login alice --agent-login bob >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --agent-login alice --agent-login bob >/dev/null 2>&1 \
     && grep -q '"agent_logins": \["alice","bob"\]' "${TDIR}/.orchestrator/config.json"; then
   ok "agent_logins: multiple flags"
 else
@@ -102,9 +83,9 @@ teardown
 
 # --- --project override ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init --project custom-name >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --project custom-name >/dev/null 2>&1 \
     && grep -q '"project": "custom-name"' "${TDIR}/.orchestrator/config.json"; then
   ok "--project override"
 else
@@ -113,25 +94,26 @@ fi
 cd - >/dev/null
 teardown
 
-# --- --repo override (no remote needed) ---
+# --- --repo flag wires single-repo ---
 
 setup ""
 cd "$TDIR"
 if roost_init --repo "SomeOwner/other-repo" >/dev/null 2>&1 \
     && grep -q '"repo": "SomeOwner/other-repo"' "${TDIR}/.orchestrator/config.json"; then
-  ok "--repo override"
+  ok "--repo: wires single-repo"
 else
-  fail "--repo override"
+  fail "--repo: wires single-repo"
 fi
 cd - >/dev/null
 teardown
 
 # --- --dry-run: prints content, writes nothing ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-dry_out="$(roost_init --dry-run 2>/dev/null)"
+dry_out="$(roost_init --repo "TestOwner/myproject" --dry-run 2>/dev/null)"
 if echo "$dry_out" | grep -q '"project"' \
+    && echo "$dry_out" | grep -q '"repo"' \
     && echo "$dry_out" | grep -q 'config.local.json' \
     && [ ! -f "${TDIR}/.orchestrator/config.json" ] \
     && [ ! -f "${TDIR}/.orchestrator/config.local.json" ]; then
@@ -144,11 +126,11 @@ teardown
 
 # --- --dry-run on existing config: works without --force ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
-dry_out="$(roost_init --dry-run 2>/dev/null)"
+dry_out="$(roost_init --repo "TestOwner/myproject" --dry-run 2>/dev/null)"
 if echo "$dry_out" | grep -q '"project"' \
     && echo "$dry_out" | grep -q 'state.json'; then
   ok "--dry-run: bypasses existing-config guard"
@@ -160,11 +142,11 @@ teardown
 
 # --- --dry-run: lists prompts/agents even when they already exist ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 dry_out=""
-if roost_init >/dev/null 2>&1; then
-  dry_out="$(roost_init --dry-run 2>/dev/null)"
+if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1; then
+  dry_out="$(roost_init --repo "TestOwner/myproject" --dry-run 2>/dev/null)"
 fi
 if echo "$dry_out" | grep -q 'worker.md' \
     && echo "$dry_out" | grep -q 'lead-pm.md'; then
@@ -177,11 +159,11 @@ teardown
 
 # --- --force: overwrites existing config ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
-if roost_init --force >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --force >/dev/null 2>&1 \
     && grep -q '"project"' "${TDIR}/.orchestrator/config.json" \
     && ! grep -q '"old"' "${TDIR}/.orchestrator/config.json"; then
   ok "--force: overwrites existing"
@@ -193,12 +175,12 @@ teardown
 
 # --- --force: also overwrites .gitignore ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
 printf 'old-entry\n' > .orchestrator/.gitignore
-if roost_init --force >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --force >/dev/null 2>&1 \
     && ! grep -q 'old-entry' "${TDIR}/.orchestrator/.gitignore" \
     && grep -q 'state.json' "${TDIR}/.orchestrator/.gitignore"; then
   ok "--force: overwrites .gitignore"
@@ -210,9 +192,9 @@ teardown
 
 # --- .gitignore written ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-roost_init >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" >/dev/null 2>&1
 if grep -q 'config.local.json' "${TDIR}/.orchestrator/.gitignore" \
     && grep -q 'state.json'     "${TDIR}/.orchestrator/.gitignore" \
     && grep -q 'last-tick.txt'  "${TDIR}/.orchestrator/.gitignore" \
@@ -227,9 +209,9 @@ teardown
 
 # --- config.local.json scaffold written ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-roost_init >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" >/dev/null 2>&1
 if [ -f "${TDIR}/.orchestrator/config.local.json" ] \
     && grep -q '"github-prs"' "${TDIR}/.orchestrator/config.local.json" \
     && grep -q '"github-issues"' "${TDIR}/.orchestrator/config.local.json"; then
@@ -242,12 +224,12 @@ teardown
 
 # --- --force overwrites config.local.json too ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
 echo '{"stale": true}' > .orchestrator/config.local.json
-if roost_init --force >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --force >/dev/null 2>&1 \
     && grep -q '"github-prs"' "${TDIR}/.orchestrator/config.local.json" \
     && ! grep -q '"stale"' "${TDIR}/.orchestrator/config.local.json"; then
   ok "--force: overwrites config.local.json"
@@ -259,11 +241,11 @@ teardown
 
 # --- error: existing config without --force ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .orchestrator
 echo '{}' > .orchestrator/config.json
-if ! roost_init >/dev/null 2>&1; then
+if ! roost_init --repo "TestOwner/myproject" >/dev/null 2>&1; then
   ok "error: existing config rejected without --force"
 else
   fail "error: existing config rejected without --force"
@@ -296,7 +278,7 @@ fi
 cd - >/dev/null
 rm -rf "$TDIR"
 
-# --- error: outside git and no --repo ---
+# --- error: no mode flag → clear usage hint ---
 
 TDIR="$(mktemp -d /tmp/roost-test-XXXXXXXX)"
 STUBS="${TDIR}/.stubs"
@@ -312,31 +294,35 @@ chmod +x "${STUBS}/gh"
 cd "$TDIR"
 err_out="$(PATH="${STUBS}:${PATH}" "${ROOST_BIN}" init 2>&1)"
 exit_code=$?
-if [ "$exit_code" -ne 0 ] && echo "$err_out" | grep -q "not inside a git repo and"; then
-  ok "error: outside git and no --repo"
+if [ "$exit_code" -ne 0 ] \
+    && echo "$err_out" | grep -q "\-\-repo" \
+    && echo "$err_out" | grep -q "\-\-multi-repo"; then
+  ok "error: no mode flag gives usage hint naming both modes"
 else
-  fail "error: outside git and no --repo"
+  fail "error: no mode flag gives usage hint naming both modes"
 fi
 cd - >/dev/null
 rm -rf "$TDIR"
 
-# --- error: no origin remote without --repo ---
+# --- error: --repo and --multi-repo together ---
 
 setup ""
 cd "$TDIR"
-if ! roost_init >/dev/null 2>&1; then
-  ok "error: no origin remote"
+err_out="$(roost_init --repo "TestOwner/myproject" --multi-repo 2>&1)"
+exit_code=$?
+if [ "$exit_code" -ne 0 ] && echo "$err_out" | grep -q "mutually exclusive"; then
+  ok "error: --repo and --multi-repo are mutually exclusive"
 else
-  fail "error: no origin remote"
+  fail "error: --repo and --multi-repo are mutually exclusive"
 fi
 cd - >/dev/null
 teardown
 
 # --- prompts: fresh copy ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1 \
     && [ -f "${TDIR}/.claude/commands/worker.md" ] \
     && [ -f "${TDIR}/.claude/commands/reviewer.md" ]; then
   ok "prompts: fresh copy to .claude/commands/"
@@ -348,9 +334,9 @@ teardown
 
 # --- agents: fresh copy ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-if roost_init >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1 \
     && [ -f "${TDIR}/.claude/agents/lead-pm.md" ] \
     && [ -f "${TDIR}/.claude/agents/associate-pm.md" ]; then
   ok "agents: fresh copy to .claude/agents/"
@@ -362,11 +348,11 @@ teardown
 
 # --- prompts: skip existing (idempotent) ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .claude/commands
 echo 'custom content' > .claude/commands/worker.md
-roost_init >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" >/dev/null 2>&1
 if grep -q 'custom content' "${TDIR}/.claude/commands/worker.md"; then
   ok "prompts: existing file not overwritten without --force-prompts"
 else
@@ -377,12 +363,12 @@ teardown
 
 # --- prompts: --force overwrites (implies --force-prompts) ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .claude/commands .orchestrator
 echo '{"old": true}' > .orchestrator/config.json
 echo 'custom content' > .claude/commands/worker.md
-if roost_init --force >/dev/null 2>&1 \
+if roost_init --repo "TestOwner/myproject" --force >/dev/null 2>&1 \
     && ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
     && grep -q 'description' "${TDIR}/.claude/commands/worker.md"; then
   ok "prompts: --force overwrites prompts"
@@ -392,11 +378,12 @@ fi
 cd - >/dev/null
 teardown
 
-# --- prompts: --force-prompts overwrites ---
+# --- prompts: --force-prompts overwrites (no mode flag when config.json exists) ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-mkdir -p .claude/commands
+mkdir -p .claude/commands .orchestrator
+echo '{"project":"test"}' > .orchestrator/config.json
 echo 'custom content' > .claude/commands/worker.md
 roost_init --force-prompts >/dev/null 2>&1
 if ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
@@ -408,11 +395,25 @@ fi
 cd - >/dev/null
 teardown
 
+# --- prompts: --force-prompts without config.json requires mode flag ---
+
+setup ""
+cd "$TDIR"
+mkdir -p .claude/commands
+echo 'custom content' > .claude/commands/worker.md
+if ! roost_init --force-prompts >/dev/null 2>&1; then
+  ok "prompts: --force-prompts without config.json requires mode flag"
+else
+  fail "prompts: --force-prompts without config.json requires mode flag"
+fi
+cd - >/dev/null
+teardown
+
 # --- prompts: --no-prompts skips copy ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-roost_init --no-prompts >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" --no-prompts >/dev/null 2>&1
 if [ ! -d "${TDIR}/.claude/commands" ] \
     || [ ! -f "${TDIR}/.claude/commands/worker.md" ]; then
   ok "prompts: --no-prompts skips copy"
@@ -424,11 +425,11 @@ teardown
 
 # --- agents: existing file not overwritten without --force-agents ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
 mkdir -p .claude/agents
 echo 'custom content' > .claude/agents/lead-pm.md
-roost_init >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" >/dev/null 2>&1
 if grep -q 'custom content' "${TDIR}/.claude/agents/lead-pm.md"; then
   ok "agents: existing file not overwritten without --force-agents"
 else
@@ -437,11 +438,12 @@ fi
 cd - >/dev/null
 teardown
 
-# --- agents: --force-agents overwrites existing ---
+# --- agents: --force-agents overwrites existing (no mode flag when config.json exists) ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-mkdir -p .claude/agents
+mkdir -p .claude/agents .orchestrator
+echo '{"project":"test"}' > .orchestrator/config.json
 echo 'custom content' > .claude/agents/lead-pm.md
 roost_init --force-agents >/dev/null 2>&1
 if ! grep -q 'custom content' "${TDIR}/.claude/agents/lead-pm.md" \
@@ -455,14 +457,59 @@ teardown
 
 # --- agents: --no-agents skips copy ---
 
-setup "https://github.com/TestOwner/myproject.git"
+setup ""
 cd "$TDIR"
-roost_init --no-agents >/dev/null 2>&1
+roost_init --repo "TestOwner/myproject" --no-agents >/dev/null 2>&1
 if [ ! -d "${TDIR}/.claude/agents" ] \
     || [ ! -f "${TDIR}/.claude/agents/lead-pm.md" ]; then
   ok "agents: --no-agents skips copy"
 else
   fail "agents: --no-agents skips copy"
+fi
+cd - >/dev/null
+teardown
+
+# --- multi-repo: skeleton has no repo field, plugins: {} ---
+
+setup ""
+cd "$TDIR"
+if roost_init --multi-repo >/dev/null 2>&1 \
+    && ! grep -q '"repo"' "${TDIR}/.orchestrator/config.json" \
+    && grep -q '"plugins": {}' "${TDIR}/.orchestrator/config.json" \
+    && grep -q '"project"' "${TDIR}/.orchestrator/config.json"; then
+  ok "--multi-repo: skeleton has no repo key and plugins: {}"
+else
+  fail "--multi-repo: skeleton has no repo key and plugins: {}"
+fi
+cd - >/dev/null
+teardown
+
+# --- multi-repo: --project override ---
+
+setup ""
+cd "$TDIR"
+if roost_init --multi-repo --project my-services >/dev/null 2>&1 \
+    && grep -q '"project": "my-services"' "${TDIR}/.orchestrator/config.json" \
+    && ! grep -q '"repo"' "${TDIR}/.orchestrator/config.json"; then
+  ok "--multi-repo: --project override works"
+else
+  fail "--multi-repo: --project override works"
+fi
+cd - >/dev/null
+teardown
+
+# --- multi-repo: --dry-run shows multi-repo skeleton ---
+
+setup ""
+cd "$TDIR"
+dry_out="$(roost_init --multi-repo --dry-run 2>/dev/null)"
+if echo "$dry_out" | grep -q '"project"' \
+    && echo "$dry_out" | grep -q '"plugins": {}' \
+    && ! echo "$dry_out" | grep -q '"repo"' \
+    && [ ! -f "${TDIR}/.orchestrator/config.json" ]; then
+  ok "--multi-repo --dry-run: shows multi-repo content, writes nothing"
+else
+  fail "--multi-repo --dry-run: shows multi-repo content, writes nothing"
 fi
 cd - >/dev/null
 teardown

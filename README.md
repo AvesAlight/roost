@@ -37,7 +37,7 @@ Bootstrap your project, then kick off lead-pm:
 
 ```bash
 cd ~/Dev/myproject
-roost init                          # writes .orchestrator/{config.json, config.local.json, .gitignore} + copies role prompts
+roost init --repo Owner/myproject   # writes .orchestrator/{config.json, config.local.json, .gitignore} + copies role prompts
 roost spawn myproject-lead-pm \
   --agent lead-pm \
   --channels '#myproject-leads' \
@@ -202,7 +202,7 @@ to control which issues and PRs are tracked:
 
 ```bash
 cd ~/Dev/myproject
-roost init                              # first-time: writes .orchestrator/{config.json, config.local.json, .gitignore} + prompts
+roost init --repo Owner/myapp           # single-repo: writes .orchestrator/{config.json, config.local.json, .gitignore} + prompts
 CONFIG_DIR="$(pwd)/.orchestrator"
 "$ROOST_DIR/bin/start-dispatcher" "$CONFIG_DIR"
 ```
@@ -211,7 +211,7 @@ To manage multiple repos from a shared directory instead:
 
 ```bash
 mkdir ~/Dev/shared && cd ~/Dev/shared
-roost init --project myapp --repo Owner/myapp
+roost init --multi-repo --project myapp
 ```
 
 DM the dispatcher (`<project>-dispatcher`) to manage the watch list:
