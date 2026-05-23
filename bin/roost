@@ -566,11 +566,13 @@ cmd_init() {
   else
     printf '\nNext step:\n'
   fi
-  printf '  roost spawn %s-lead-pm \\\n' "$project"
-  printf '    --agent lead-pm \\\n'
-  printf "    --channels '#%s-leads' \\\n" "$project"
-  printf '    --steer-compact --cache-ttl 1h \\\n'
-  printf "    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'\n"
+  printf '%s\n' \
+    "  roost spawn ${project}-lead-pm \\" \
+    "    --agent lead-pm \\" \
+    "    --channels '#${project}-leads' \\" \
+    "    --steer-compact --cache-ttl 1h \\" \
+    "    --ask-irc '#${project}-leads' --ask-target <your-irc-nick> \\" \
+    "    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'"
 }
 
 require_tmux() {

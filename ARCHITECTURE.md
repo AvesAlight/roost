@@ -173,12 +173,14 @@ instance from durable artifacts. Sequence:
    - The project-specific `worker_conventions.md` path.
 4. Spawns:
 
+<!-- TODO: surrounding narrative (senior-PO/per-project-PO topology, `#leads-{project}` channel pattern) is stale; spawn block here refreshed to current `<project>-lead-pm` / `#<project>-leads` naming. Sweep the rest of this file + docs/ROOST-IN-PRACTICE.md in the followup. -->
+
 ```bash
-roost spawn productops-simplifyrewards \
-  -c '#leads-simplifyrewards,#issue-718,#issue-721,#issue-693' \
+roost spawn <project>-lead-pm \
+  -c '#<project>-leads,#<project>-issue-718,#<project>-issue-721,#<project>-issue-693' \
   --steer-compact --cache-ttl 1h \
-  --ask-irc '#leads-simplifyrewards' --ask-target <your-nick> \
-  --prompt-file /tmp/handoff-2026-04-28.md
+  --ask-irc '#<project>-leads' --ask-target <your-nick> \
+  --prompt-file /tmp/handoff.md
 ```
 
 `--prompt-file` is the load-bearing primitive — it's what lets the
