@@ -35,3 +35,7 @@ When a CLI command's auto-detect can silently pick the wrong default for a prima
 ## 2026-05-22: Anchoring language makes referenced defaults a design constraint (from #509)
 
 When an issue body anchors a new artifact to an existing one (any "like X", "mirror of", "symmetric counterpart", "extends pattern X" language), X's defaults are a design constraint, not a starting suggestion. Worker default-deviation must be explicitly justified in plan; reviewer treats unjustified deviation as a blocker per §#486.
+
+## 2026-05-23: §#422 corollary: blocker for literal-verbatim drift; pragmatic for substitution-target drift (from #553)
+
+The key question: is the spelling literally what the operator or reader sees, or is it a template field they replace before use? Substitution targets (`<your-nick>`, `<project>`, `<I>`) substitute away — drift is real but not blocking, a followup is enough. Literal-verbatim surfaces (flag names like `--ask-irc`, channel pattern shape like `#<project>-leads`, CLI structure the operator copies directly) → strict corollary, promote to blocker. Concrete: `<answerer>` vs `<your-nick>` drift in #553 is substitution-target → followup (#557). A drift in `--ask-irc` spelling across surfaces would be literal-verbatim → blocker.
