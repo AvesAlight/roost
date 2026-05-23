@@ -378,11 +378,12 @@ fi
 cd - >/dev/null
 teardown
 
-# --- prompts: --force-prompts overwrites (no mode flag needed) ---
+# --- prompts: --force-prompts overwrites (no mode flag when config.json exists) ---
 
 setup ""
 cd "$TDIR"
-mkdir -p .claude/commands
+mkdir -p .claude/commands .orchestrator
+echo '{"project":"test"}' > .orchestrator/config.json
 echo 'custom content' > .claude/commands/worker.md
 roost_init --force-prompts >/dev/null 2>&1
 if ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
@@ -390,6 +391,20 @@ if ! grep -q 'custom content' "${TDIR}/.claude/commands/worker.md" \
   ok "prompts: --force-prompts overwrites existing"
 else
   fail "prompts: --force-prompts overwrites existing"
+fi
+cd - >/dev/null
+teardown
+
+# --- prompts: --force-prompts without config.json requires mode flag ---
+
+setup ""
+cd "$TDIR"
+mkdir -p .claude/commands
+echo 'custom content' > .claude/commands/worker.md
+if ! roost_init --force-prompts >/dev/null 2>&1; then
+  ok "prompts: --force-prompts without config.json requires mode flag"
+else
+  fail "prompts: --force-prompts without config.json requires mode flag"
 fi
 cd - >/dev/null
 teardown
@@ -423,11 +438,12 @@ fi
 cd - >/dev/null
 teardown
 
-# --- agents: --force-agents overwrites existing (no mode flag needed) ---
+# --- agents: --force-agents overwrites existing (no mode flag when config.json exists) ---
 
 setup ""
 cd "$TDIR"
-mkdir -p .claude/agents
+mkdir -p .claude/agents .orchestrator
+echo '{"project":"test"}' > .orchestrator/config.json
 echo 'custom content' > .claude/agents/lead-pm.md
 roost_init --force-agents >/dev/null 2>&1
 if ! grep -q 'custom content' "${TDIR}/.claude/agents/lead-pm.md" \

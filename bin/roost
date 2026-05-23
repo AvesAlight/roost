@@ -326,16 +326,15 @@ Example:
 EOF
 }
 
-# Tracked, shareable shape: project + repo identity + the static plugin
-# slices (github-new-issues / github-new-prs / github-commits are operator-set, not DM-mutated).
-# The dynamic slices (github-prs / github-issues) live in the local overlay;
-# their `plugins.<name>` key in the merged config still enables them — the
-# loader unions `Object.keys(plugins)` across both files.
 _init_config_json() {
   if [ -n "$2" ]; then
+    # Single-repo: project + repo + the static plugin slices (operator-set,
+    # not DM-mutated). Dynamic slices (github-prs / github-issues) live in the
+    # local overlay; their plugins.<name> key still enables them via union merge.
     printf '{\n  "project": "%s",\n  "repo": "%s",\n  "agent_logins": %s,\n  "plugins": {\n    "github-new-issues": { "watched": [] },\n    "github-new-prs": { "watched": [] },\n    "github-commits": { "watched": [] }\n  }\n}\n' \
       "$1" "$2" "$3"
   else
+    # Multi-repo: no top-level repo; operator adds plugin keys + per-entry repos.
     printf '{\n  "project": "%s",\n  "agent_logins": %s,\n  "plugins": {}\n}\n' \
       "$1" "$3"
   fi
@@ -408,9 +407,13 @@ cmd_init() {
     exit 1
   fi
 
-  if [ -z "$repo" ] && [ "$multi_repo" -eq 0 ] && [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
-    echo "error: pass \`--repo OWNER/REPO\` for single-repo or \`--multi-repo\` for multi-repo setup" >&2
-    exit 1
+  local _mode_err="error: pass \`--repo OWNER/REPO\` for single-repo or \`--multi-repo\` for multi-repo setup"
+  if [ -z "$repo" ] && [ "$multi_repo" -eq 0 ]; then
+    if [ "$force_prompts" -eq 0 ] && [ "$force_agents" -eq 0 ]; then
+      echo "$_mode_err" >&2; exit 1
+    elif [ ! -f ".orchestrator/config.json" ]; then
+      echo "$_mode_err" >&2; exit 1
+    fi
   fi
 
   if [ -n "$repo" ] && ! gh repo view "$repo" &>/dev/null; then
@@ -558,7 +561,7 @@ cmd_init() {
   fi
 
   if [ "$multi_repo" -eq 1 ]; then
-    printf '\nNext: add per-plugin watch entries (each with a "repo" field) to\n'
+    printf '\nNext: add plugin keys + per-entry watch items (each with a "repo" field) to\n'
     printf '  .orchestrator/config.json, then spawn:\n'
   else
     printf '\nNext step:\n'
