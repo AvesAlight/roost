@@ -9,9 +9,6 @@ set -euo pipefail
 # Options:
 #   -n N    Lines to tail (default: 50)
 #
-# All options must come before the command — flags after the command name
-# are passed through to the wrapped command unchanged.
-#
 # Examples:
 #   script/run-and-tail bun test
 #   script/run-and-tail -n 100 bun test --filter mytest
@@ -25,7 +22,8 @@ while [[ "${1:-}" == -* ]]; do
       shift 2
       ;;
     *)
-      break
+      echo "unknown flag: $1" >&2
+      exit 2
       ;;
   esac
 done
