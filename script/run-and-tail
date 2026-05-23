@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+
+# script/run-and-tail — Run a command, capture output, print exit + tail
+#
+# Usage:
+#   script/run-and-tail [-n N] <command> [args...]
+#
+# Options:
+#   -n N    Lines to tail (default: 50)
+#
+# Examples:
+#   script/run-and-tail bun test
+#   script/run-and-tail -n 100 bun test --filter mytest
+
+lines=50
+
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -n)
+      lines="$2"
+      shift 2
+      ;;
+    *)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ $# -eq 0 ]; then
+  echo "Usage: script/run-and-tail [-n N] <command> [args...]"
+  echo ""
+  echo "  -n N    Lines to tail (default: 50)"
+  echo ""
+  echo "  All options must come before the command."
+  exit 1
+fi
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+set +e
+"$@" > "$tmp" 2>&1
+exit_code=$?
+set -e
+
+echo "exit=$exit_code"
+tail -n "$lines" "$tmp"
+exit $exit_code
