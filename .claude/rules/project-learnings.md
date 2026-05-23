@@ -28,6 +28,10 @@ Treat reviewer "fyi: this is narrower than the failure mode" as a blocker on the
 
 CLAUDE.local.md is a doc, not a permission grant. When a worker needs to fetch a credential, the auto-mode classifier blocks the call regardless of the doc. Lead either pre-injects the retrieval chain via `roost send` before the worker's first credential-touching command, or approves via permbot when it fires. Required onboarding step for any credential-fetching worker.
 
+## 2026-05-22: CLI auto-detect that can pick the wrong default for a primary consumer → require explicit mode instead (from #548)
+
+When a CLI command's auto-detect can silently pick the wrong default for a primary consumer, require explicit mode selection rather than silent auto-detect. Small operator friction at init time saves footgun-driven rework when the default lands in the wrong context. Concrete: `roost init` auto-detected the git remote to set `config.repo`, so an operator running `roost init` inside `services` (a multi-repo orchestrator that is itself a git repo) would silently get single-repo config. Fix was `--repo` (single) vs `--multi-repo` (multi), bare = error.
+
 ## 2026-05-22: Anchoring language makes referenced defaults a design constraint (from #509)
 
 When an issue body anchors a new artifact to an existing one (any "like X", "mirror of", "symmetric counterpart", "extends pattern X" language), X's defaults are a design constraint, not a starting suggestion. Worker default-deviation must be explicitly justified in plan; reviewer treats unjustified deviation as a blocker per §#486.
