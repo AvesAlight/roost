@@ -4,7 +4,6 @@ import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText } from './helpers/tool.js'
 import { MULTILINE_LINE_BYTES } from '../src/constants.js'
 
 describe.if(isErgoAvailable())('multiline edge cases', () => {
