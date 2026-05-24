@@ -328,19 +328,15 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   // ---- Tool definitions --------------------------------------------------
 
   const handleSay = (target: string, text: string, label: string) => {
-    const { chunks, mode } = client.say(target, text)
+    client.say(target, text)
     client.ackUnread(target)
     const suffix = unreadSuffix()
-    const note =
-      mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
-      : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
-      : ''
     const users = target.startsWith('#') ? client.getUsers(target) : []
     // seen-by includes sender — matches NAMES; "just me" signals alone-in-channel
     const seenByHint = users.length > 0
       ? `\n[${target} seen by: ${users.join(', ')}]`
       : ''
-    return { content: [{ type: 'text', text: `${label}${note}${seenByHint}${suffix}` }] }
+    return { content: [{ type: 'text', text: `${label}${seenByHint}${suffix}` }] }
   }
 
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))

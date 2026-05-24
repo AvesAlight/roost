@@ -82,7 +82,6 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     })
     expect(result.isError).toBeFalsy()
     const mlText = toolText(result)
-    expect(mlText).toContain('draft/multiline batch')
     expect(mlText).toContain('[#ip-out-ml seen by:')
     expect(mlText).toContain('ip-out-mcp4')
     expect(mlText).toContain('ip-out-mcp5')
