@@ -24,7 +24,7 @@ import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger,
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
-import { resolveProjectChannel } from './orchestrator/naming.js'
+import { resolveProjectChannel, dispatcherNick } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
 
@@ -70,8 +70,9 @@ function newIrcClient(nick: string, channels: string[]): RoostIrcClientImpl {
 
 function requireIrcConfig(config: OrchestratorConfig, mode: string): { nick: string; server: string; port: number } {
   const ircCfg = config.irc ?? {}
-  if (!ircCfg.nick) throw new Error(`${mode} requires irc.nick in config`)
-  return { nick: ircCfg.nick, server: ircCfg.server ?? '127.0.0.1', port: ircCfg.port ?? 6667 }
+  const nick = ircCfg.nick ?? (config.project ? dispatcherNick(config.project) : undefined)
+  if (!nick) throw new Error(`${mode} requires irc.nick or project in config`)
+  return { nick, server: ircCfg.server ?? '127.0.0.1', port: ircCfg.port ?? 6667 }
 }
 
 async function runOneTick(
