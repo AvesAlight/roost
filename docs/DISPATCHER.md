@@ -55,7 +55,7 @@ Fields:
 | `project` | Lowercase slug used to namespace IRC nicks/channels (`<project>-worker-N`, `#<project>-issue-N`). Falls back to the basename of `repo` when set. Required in multi-repo mode. Must match `^[a-z0-9][a-z0-9-]*$`. |
 | `repo` | Default `OWNER/NAME` for watched items in single-repo mode; per-entry `repo` may omit (inherits) or match this value, but cannot diverge. **Leave unset to enable multi-repo mode**, where every watched entry must carry its own `repo` and per-issue artifacts pick up a `<slug>` segment derived from the entry's repo basename. |
 | `agent_logins` | GitHub logins whose comments are tagged `is_worker_reply: true` (informational). |
-| `irc.nick` | Nick the dispatcher uses on the IRC server. Convention: `<project>-dispatcher`. |
+| `irc.nick` | Nick the dispatcher uses on the IRC server. Defaults to `<project>-dispatcher`. |
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
 | `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
