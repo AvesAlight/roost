@@ -40,6 +40,10 @@ When an issue body anchors a new artifact to an existing one (any "like X", "mir
 
 Wire details (batch mode, cache status, protocol variant) are invisible to the agent and not actionable. Surface only what the agent can observe and act on — for `channel_message`, that's the seen-by list, not how the message was transmitted. Before adding a detail to a tool response, ask: can the agent do anything differently based on this? If no, drop it.
 
+## 2026-05-24: When a reviewer flags N-site drift, derive the pattern and grep before re-pushing (from #555)
+
+Patching only the enumerated sites leaves the defect adjacent — the reviewer named examples, not an exhaustive list. On first remediation, derive the general grep pattern from the called-out instances and scan the full codebase before pushing. Worker self-check: "am I fixing what was named, or what was wrong?"
+
 ## 2026-05-23: §#422 corollary: blocker for literal-verbatim drift; pragmatic for substitution-target drift (from #553)
 
 The key question: is the spelling literally what the operator or reader sees, or is it a template field they replace before use? Substitution targets (`<your-nick>`, `<project>`, `<I>`) substitute away — drift is real but not blocking, a followup is enough. Literal-verbatim surfaces (flag names like `--ask-irc`, channel pattern shape like `#<project>-leads`, CLI structure the operator copies directly) → strict corollary, promote to blocker. Concrete: `<answerer>` vs `<your-nick>` drift in #553 is substitution-target → followup (#557). A drift in `--ask-irc` spelling across surfaces would be literal-verbatim → blocker.
