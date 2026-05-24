@@ -36,6 +36,10 @@ When a CLI command's auto-detect can silently pick the wrong default for a prima
 
 When an issue body anchors a new artifact to an existing one (any "like X", "mirror of", "symmetric counterpart", "extends pattern X" language), X's defaults are a design constraint, not a starting suggestion. Worker default-deviation must be explicitly justified in plan; reviewer treats unjustified deviation as a blocker per §#486.
 
+## 2026-05-24: Agent-facing tool responses describe the contract, not the implementation (from #562)
+
+Wire details (batch mode, cache status, protocol variant) are invisible to the agent and not actionable. Surface only what the agent can observe and act on — for `channel_message`, that's the seen-by list, not how the message was transmitted. Before adding a detail to a tool response, ask: can the agent do anything differently based on this? If no, drop it.
+
 ## 2026-05-23: §#422 corollary: blocker for literal-verbatim drift; pragmatic for substitution-target drift (from #553)
 
 The key question: is the spelling literally what the operator or reader sees, or is it a template field they replace before use? Substitution targets (`<your-nick>`, `<project>`, `<I>`) substitute away — drift is real but not blocking, a followup is enough. Literal-verbatim surfaces (flag names like `--ask-irc`, channel pattern shape like `#<project>-leads`, CLI structure the operator copies directly) → strict corollary, promote to blocker. Concrete: `<answerer>` vs `<your-nick>` drift in #553 is substitution-target → followup (#557). A drift in `--ask-irc` spelling across surfaces would be literal-verbatim → blocker.
