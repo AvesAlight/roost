@@ -83,7 +83,7 @@ channels when something catches your eye.
 
 The IRC channel is doing more work than it looks like. It's the
 namespace boundary — one channel, one issue's scope. It's the
-membership ledger — lead-pm spawns workers and reviewers into the
+membership ledger — the APM spawns workers and reviewers into the
 right channel, and the join/leave events mark pickup and
 completion. It's the audit log — everything any agent did or said
 is in the backlog. It's the subscription primitive — the

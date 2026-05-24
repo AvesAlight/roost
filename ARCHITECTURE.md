@@ -199,12 +199,12 @@ For deeper inspection — MCP stderr, IRC connection logs — check
 ### When to use the skill vs raw shell
 
 When an agent needs to spawn or manage another agent (lead-pm
-spawning a worker or reviewer, APM kicking a stuck worker, etc.),
-it should invoke the `roost` skill rather than reach for raw shell
-— same command surface, with naming and channel conventions baked
-into the skill description so spawns are consistent across
-spawners. Raw shell is fine for human operators running ad-hoc
-commands.
+spawning the APM at startup, APM spawning a worker or reviewer
+agent, APM kicking a stuck worker, etc.), it should invoke the
+`roost` skill rather than reach for raw shell — same command
+surface, with naming and channel conventions baked into the skill
+description so spawns are consistent across spawners. Raw shell is
+fine for human operators running ad-hoc commands.
 
 Parking-lot enhancements (not yet built):
 
