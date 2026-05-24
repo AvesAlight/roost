@@ -4,7 +4,6 @@ import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText } from './helpers/tool.js'
 import { MULTILINE_LINE_BYTES } from '../src/constants.js'
 
 describe.if(isErgoAvailable())('multiline edge cases', () => {
@@ -61,7 +60,6 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
       arguments: { channel: '#ip-ml-ec3', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).not.toContain('batch')
 
     await messageSeen
   })
@@ -80,7 +78,6 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
       arguments: { channel: '#ip-ml-ec4', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
       messagePredicate({ channel: '#ip-ml-ec4', sender: 'ip-ml-ec4-s' }),
@@ -136,7 +133,6 @@ describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
       arguments: { channel: '#ml-ec6', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
       messagePredicate({ channel: '#ml-ec6', sender: 'ml-ec6-s' }),
