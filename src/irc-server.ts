@@ -336,6 +336,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
       : ''
     const users = target.startsWith('#') ? client.getUsers(target) : []
+    // seen-by includes sender — matches NAMES; "just me" signals alone-in-channel
     const seenByHint = users.length > 0
       ? `\n[${target} seen by: ${users.join(', ')}]`
       : ''

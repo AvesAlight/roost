@@ -108,7 +108,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     })
     expect(result.isError).toBeFalsy()
     const text = toolText(result)
-    // both nicks present in seen-by list
+    // seen-by includes sender (NAMES semantics) — both nicks expected
     expect(text).toContain('seen by:')
     expect(text).toContain('ip-out-bcast-mcp1')
     expect(text).toContain('ip-out-bcast-peer1')
