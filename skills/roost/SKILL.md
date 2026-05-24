@@ -194,7 +194,7 @@ with `roost status` (which lists running tmux sessions).
   persistent per-PR worker traffic.
 - `#<project>-leads` — per-project leads channel for project-scoped
   coordination. Lead-pm + APM + dispatcher live here.
-- `#<project>-issue-N` — one per active issue. Created on first JOIN;
+- `#<project>-issue-<N>` — one per active issue. Created on first JOIN;
   dissolves when the last member leaves.
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.
 
