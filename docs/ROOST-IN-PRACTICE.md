@@ -33,14 +33,18 @@ back where you disagree, and bless it. From there the agent runs.
 
 That agent is **lead-pm**. Its operational playbook lives at
 `agents/lead-pm.md` — issue pickup, plan pressure-testing,
-draft PR → reviewer → ready flip → merge → cleanup, in order. It
-sits in `#<project>-leads` continuously and joins each issue
-channel while it's active.
+human-review coordination, postmortems. It sits in
+`#<project>-leads` continuously and joins each issue channel while
+it's active. On startup it spawns an **APM** sidekick
+(`agents/associate-pm.md`) that types the mechanical commands —
+worktree setup, reviewer-spawn on draft PRs, ready-flip, merge,
+cleanup, follow-up filing.
 
-For the first issue, lead-pm opens a channel called
-`#<project>-issue-42`, DMs the dispatcher (`watch 42`) to subscribe
-to the issue (so GitHub events for it route to that channel),
-creates an isolated git worktree, and spawns a worker into it.
+For the first issue, the APM (at lead-pm's nod) opens a channel
+called `#<project>-issue-42`, DMs the dispatcher (`watch 42`) to
+subscribe to the issue (so GitHub events for it route to that
+channel), creates an isolated git worktree, and spawns a worker
+into it.
 
 **worker-42** reads the issue, posts an implementation plan in
 `#<project>-issue-42`, and waits. lead-pm reads the plan and pushes
@@ -49,20 +53,22 @@ pressure-testing are normal. Once the plan holds up, the worker
 implements, opens a draft PR, and posts the link in the channel.
 Worker's playbook is `prompts/worker.md`.
 
-Now CI runs. The dispatcher is polling GitHub on a tick; when CI
-flips green, it posts `ci_transitioned: SUCCESS` into
-`#<project>-issue-42`. lead-pm sees it and spawns a
-**reviewer-42** against the PR. The reviewer reads the diff cold,
-posts findings to GitHub, and exits. Its playbook is
-`prompts/reviewer.md`. The worker addresses the findings; lead-pm
-flips the PR ready and tags you as the human reviewer.
+The draft-PR-open event triggers the APM to spawn a **reviewer-42**
+against the PR. The reviewer reads the diff cold, posts findings to
+GitHub, and exits. Its playbook is `prompts/reviewer.md`. The
+worker addresses the findings and signals ready; the APM flips the
+PR draft → ready and tags you as the human reviewer.
 
-You approve. lead-pm merges, terminates the worker, parts the
-channel, cleans up the worktree, DMs the dispatcher to unsubscribe
-(`unwatch 42`, `unwatch pr 73`), and posts a one-paragraph
-postmortem in `#<project>-leads` — what went well, what was
-painful, what to fix next time. Then it picks the next pickable
-issue off the DAG and the cycle repeats.
+CI runs in parallel on every push; the dispatcher posts
+`ci_transitioned: SUCCESS` into `#<project>-issue-42` so everyone
+in the channel sees when the build is healthy.
+
+You approve. The APM merges, terminates the worker, parts the
+channel, cleans up the worktree, and DMs the dispatcher to
+unsubscribe (`unwatch 42`, `unwatch pr 73`). lead-pm posts a
+one-paragraph postmortem in `#<project>-leads` — what went well,
+what was painful, what to fix next time. Then lead-pm picks the
+next pickable issue off the DAG and the cycle repeats.
 
 ## Parallelism is the channel structure
 

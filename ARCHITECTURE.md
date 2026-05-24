@@ -39,15 +39,17 @@ per-PR doesn't).
 
 - **lead-pm** — `<project>-lead-pm`. Owns a project end-to-end:
   picks issues off the milestone DAG, pressure-tests worker plans,
-  spawns reviewers, coordinates with the human, posts postmortems.
-  Lives in `#<project>-leads` continuously and joins each
+  coordinates with the human, posts postmortems. Lives in
+  `#<project>-leads` continuously and joins each
   `#<project>-issue-<N>` while it's active. Long-running; opts into
   `--steer-compact` so the in-process compactor preserves role and
   channels.
-- **APM** — `<project>-apm`. Operational support for lead-pm: flips
-  PRs draft → ready, tags reviewers, files follow-up issues, drives
-  release-bump mechanics, runs cleanup after merge. Lives in the
-  same channels as lead-pm.
+- **APM** — `<project>-apm`. Operational support for lead-pm: runs
+  the mechanical dances — worktree + watch + worker-spawn setup,
+  reviewer-agent spawn on draft-PR-open, flip PRs draft → ready +
+  tag the human + re-request review, merge + cleanup, follow-up
+  filing, release-bump mechanics. Lives in the same channels as
+  lead-pm.
 - **Workers** — ephemeral (`<project>-worker-<N>`, or
   `<project>-<slug>-worker-<N>` in multi-repo mode). Join
   `#<project>-issue-<N>` on assignment, leave on completion.
@@ -88,8 +90,9 @@ Sequencing — each step bumps the next:
 
 1. Worker drafts → opens PR (with `Closes #<N>` in the body) and
    posts the link in `#<project>-issue-<N>`.
-2. lead-pm spawns **reviewer-<N>** against the draft (cold lens —
-   no project context).
+2. APM spawns **reviewer-<N>** against the draft (cold lens — no
+   project context). Trigger is draft-PR-open, not CI-green;
+   reviewer + CI run in parallel.
 3. Reviewer reads the diff, posts findings to GitHub, parts the
    channel.
 4. Worker addresses findings, pushes, runs the last-look gate,
@@ -138,7 +141,7 @@ Common spawns:
 
 ```bash
 # Worker pickup on a fresh issue:
-roost spawn <project>-worker-718 -c '#<project>-issue-718'
+roost spawn <project>-worker-718-A -c '#<project>-issue-718'
 
 # Reviewer joining for the review pass:
 roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
@@ -146,7 +149,7 @@ roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
 # Hard restart (channel-as-lifecycle: kick + new worker JOINs same
 # channel, orients from dispatcher state + channel topic + spawn
 # prompt, not from scrollback):
-roost shutdown <project>-worker-718
+roost shutdown <project>-worker-718-A
 roost spawn <project>-worker-718-B -c '#<project>-issue-718'
 ```
 
