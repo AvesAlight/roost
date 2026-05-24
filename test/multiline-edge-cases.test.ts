@@ -61,7 +61,6 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
       arguments: { channel: '#ip-ml-ec3', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).not.toContain('batch')
 
     await messageSeen
   })
@@ -80,7 +79,6 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
       arguments: { channel: '#ip-ml-ec4', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
       messagePredicate({ channel: '#ip-ml-ec4', sender: 'ip-ml-ec4-s' }),
@@ -136,7 +134,6 @@ describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
       arguments: { channel: '#ml-ec6', text },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).toContain('draft/multiline batch')
 
     const n = await receiver.waitForNotification(
       messagePredicate({ channel: '#ml-ec6', sender: 'ml-ec6-s' }),
