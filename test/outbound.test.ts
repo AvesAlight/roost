@@ -81,8 +81,11 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { channel: '#ip-out-ml', text: longText },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).toContain('draft/multiline batch')
-    expect(toolText(result)).toContain('[#ip-out-ml: 2 members]')
+    const mlText = toolText(result)
+    expect(mlText).toContain('draft/multiline batch')
+    expect(mlText).toContain('[#ip-out-ml seen by:')
+    expect(mlText).toContain('ip-out-mcp4')
+    expect(mlText).toContain('ip-out-mcp5')
 
     const n = await receiver.waitForNotification(
       messagePredicate({ channel: '#ip-out-ml', sender: 'ip-out-mcp4' }),
@@ -90,13 +93,13 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
     expect(n.content).toBe(longText)
   })
 
-  it('channel_message: response includes [#channel: N members] suffix', async () => {
+  it('channel_message: response includes [#channel seen by: ...] suffix', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp1')
     const peer = await connectPeer(ergo, 'ip-out-bcast-peer1')
 
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-out-bcast' } })
     await peer.joinChannel('#ip-out-bcast')
-    // wait for MCP to process peer's JOIN so channelUsers cache reflects 2 members
+    // wait for MCP to process peer's JOIN so channelUsers cache reflects both nicks
     await mcp.waitForNotification(eventPredicate('join', { channel: '#ip-out-bcast', sender: 'ip-out-bcast-peer1' }))
 
     const result = await mcp.client.callTool({
@@ -104,21 +107,24 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { channel: '#ip-out-bcast', text: 'broadcast test' },
     })
     expect(result.isError).toBeFalsy()
-    // mcp + peer = 2 members
-    expect(toolText(result)).toContain('[#ip-out-bcast: 2 members]')
+    const text = toolText(result)
+    // both nicks present in seen-by list
+    expect(text).toContain('seen by:')
+    expect(text).toContain('ip-out-bcast-mcp1')
+    expect(text).toContain('ip-out-bcast-peer1')
   })
 
-  it('channel_message: shows 0 members when not joined', async () => {
+  it('channel_message: no seen-by line when not joined (no members cached)', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp2')
 
     const result = await mcp.client.callTool({
       name: 'channel_message',
       arguments: { channel: '#ip-out-bcast-nojoin', text: 'not joined' },
     })
-    expect(toolText(result)).toContain('[#ip-out-bcast-nojoin: 0 members]')
+    expect(toolText(result)).not.toContain('seen by')
   })
 
-  it('direct_message: response has no member hint', async () => {
+  it('direct_message: response has no seen-by hint', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-out-bcast-mcp3')
 
     const result = await mcp.client.callTool({
@@ -126,7 +132,7 @@ describe.if(isErgoAvailable())('outbound message tools', () => {
       arguments: { nick: 'ip-out-bcast-peer3', text: 'dm no hint' },
     })
     expect(result.isError).toBeFalsy()
-    expect(toolText(result)).not.toMatch(/\[.*members\]/)
+    expect(toolText(result)).not.toContain('seen by')
   })
 
   it('channel_join: cache hit — second join returns ok without IRC round-trip', async () => {

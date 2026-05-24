@@ -209,7 +209,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       // for to attribute a session JSONL to its roost nick. Centralized in
       // src/mcp-banner.ts so the producer (here) and the consumer can't
       // drift. Passive variant above uses a different wording on purpose.
-      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses always include a [#channel: N members] line after the body — current member count from the local cache, not a live query. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}. IMPORTANT: ${REPLY_REMINDER}`,
+      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses include a [#channel seen by: nick1, nick2, ...] line when members are present — the member list at send time from the local cache, not a live query. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}. IMPORTANT: ${REPLY_REMINDER}`,
     },
   )
 
@@ -335,11 +335,11 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       mode === 'multiline' ? ` (sent as draft/multiline batch, ${chunks} lines)`
       : chunks > 1 ? ` (split into ${chunks} chunks for IRC line cap)`
       : ''
-    const preview = text.length > 120 ? text.slice(0, 117) + '...' : text
-    const memberHint = target.startsWith('#')
-      ? `\n[${target}: ${client.getUsers(target).length} members]`
+    const users = target.startsWith('#') ? client.getUsers(target) : []
+    const seenByHint = users.length > 0
+      ? `\n[${target} seen by: ${users.join(', ')}]`
       : ''
-    return { content: [{ type: 'text', text: `${label}: ${preview}${note}${memberHint}${suffix}` }] }
+    return { content: [{ type: 'text', text: `${label}${note}${seenByHint}${suffix}` }] }
   }
 
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }))
