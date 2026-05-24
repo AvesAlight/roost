@@ -25,7 +25,7 @@ project actually looks like.
 ## A milestone, end to end
 
 You spawn one agent — the project manager — and hand it the name
-of a GitHub milestone. It joins a channel called `#leads-<project>`
+of a GitHub milestone. It joins a channel called `#<project>-leads`
 and posts its starting strategy: which issues are pickable right
 now (nothing blocking them), which are deferred, which it wants to
 sequence carefully. You read the strategy in your IRC client, push
@@ -33,50 +33,57 @@ back where you disagree, and bless it. From there the agent runs.
 
 That agent is **lead-pm**. Its operational playbook lives at
 `agents/lead-pm.md` — issue pickup, plan pressure-testing,
-draft PR → reviewer → ready flip → merge → cleanup, in order. It
-sits in `#leads-<project>` continuously and joins each issue
-channel while it's active.
+human-review coordination, postmortems. It sits in
+`#<project>-leads` continuously and joins each issue channel while
+it's active. On startup it spawns an **APM** sidekick
+(`agents/associate-pm.md`) that types the mechanical commands —
+worktree setup, reviewer-spawn on draft PRs, ready-flip, merge,
+cleanup, follow-up filing.
 
-For the first issue, lead-pm opens a channel called `#issue-42`,
-DMs the dispatcher (`watch 42`) to subscribe to the issue (so
-GitHub events for it route to that channel), creates an isolated
-git worktree, and spawns a worker into it.
+For the first issue, the APM (at lead-pm's nod) opens a channel
+called `#<project>-issue-42`, DMs the dispatcher (`watch 42`) to
+subscribe to the issue (so GitHub events for it route to that
+channel), creates an isolated git worktree, and spawns a worker
+into it.
 
 **worker-42** reads the issue, posts an implementation plan in
-`#issue-42`, and waits. lead-pm reads the plan and pushes back —
-this is where rework is cheap, so a few rounds of pressure-testing
-are normal. Once the plan holds up, the worker implements, opens a
-draft PR, and posts the link in the channel. Worker's playbook is
-`prompts/worker.md`.
+`#<project>-issue-42`, and waits. lead-pm reads the plan and pushes
+back — this is where rework is cheap, so a few rounds of
+pressure-testing are normal. Once the plan holds up, the worker
+implements, opens a draft PR, and posts the link in the channel.
+Worker's playbook is `prompts/worker.md`.
 
-Now CI runs. The dispatcher is polling GitHub on a tick; when CI
-flips green, it posts `ci_transitioned: SUCCESS` into `#issue-42`.
-lead-pm sees it and spawns a **reviewer-42** against the PR. The reviewer reads the
-diff cold, posts findings to GitHub, and exits. Its playbook is
-`prompts/reviewer.md`. The worker addresses the findings; lead-pm
-flips the PR ready and tags you as the human reviewer.
+The draft-PR-open event triggers the APM to spawn a **reviewer-42**
+against the PR. The reviewer reads the diff cold, posts findings to
+GitHub, and exits. Its playbook is `prompts/reviewer.md`. The
+worker addresses the findings and signals ready; the APM flips the
+PR draft → ready and tags you as the human reviewer.
 
-You approve. lead-pm merges, terminates the worker, parts the
-channel, cleans up the worktree, DMs the dispatcher to unsubscribe
-(`unwatch 42`, `unwatch pr 73`), and posts a one-paragraph
-postmortem in `#leads-<project>` — what
-went well, what was painful, what to fix next time. Then it picks
-the next pickable issue off the DAG and the cycle repeats.
+CI runs in parallel on every push; the dispatcher posts
+`ci_transitioned: SUCCESS` into `#<project>-issue-42` so everyone
+in the channel sees when the build is healthy.
+
+You approve. The APM merges, terminates the worker, parts the
+channel, cleans up the worktree, and DMs the dispatcher to
+unsubscribe (`unwatch 42`, `unwatch pr 73`). lead-pm posts a
+one-paragraph postmortem in `#<project>-leads` — what went well,
+what was painful, what to fix next time. Then lead-pm picks the
+next pickable issue off the DAG and the cycle repeats.
 
 ## Parallelism is the channel structure
 
 Nothing in that walkthrough requires one issue at a time. The
-second issue is also in flight in `#issue-43`, with its own worker,
-its own reviewer cycle, its own CI pipeline. So is the third in
-`#issue-44`. lead-pm is in all of them and `#leads-<project>`
-simultaneously, picking the next pickable issue off the DAG when
-bandwidth opens. You're in `#leads-<project>` watching the
-through-line and dipping into individual issue channels when
-something catches your eye.
+second issue is also in flight in `#<project>-issue-43`, with its
+own worker, its own reviewer cycle, its own CI pipeline. So is the
+third in `#<project>-issue-44`. lead-pm is in all of them and
+`#<project>-leads` simultaneously, picking the next pickable issue
+off the DAG when bandwidth opens. You're in `#<project>-leads`
+watching the through-line and dipping into individual issue
+channels when something catches your eye.
 
 The IRC channel is doing more work than it looks like. It's the
 namespace boundary — one channel, one issue's scope. It's the
-membership ledger — lead-pm spawns workers and reviewers into the
+membership ledger — the APM spawns workers and reviewers into the
 right channel, and the join/leave events mark pickup and
 completion. It's the audit log — everything any agent did or said
 is in the backlog. It's the subscription primitive — the
@@ -93,14 +100,14 @@ not something to debug. The fresh worker JOINs the same channel,
 reads the backlog (replayed on JOIN via IRCv3 chathistory) and the
 channel topic, and picks up. The issue channel is stable across PR
 restarts too — a closed PR plus a fresh worker on the same issue
-keeps the same `#issue-N`.
+keeps the same `#<project>-issue-N`.
 
 You stay in the loop without being in the way. You can answer a
-worker's question in `#issue-42`, redirect a plan, or just lurk and
-let the lead-pm handle it. Because everything routes through
-channels, your messages land in the same feed the agents are
-already reading. There's no second pathway for "human-to-agent" —
-you're just another nick on the IRC server.
+worker's question in `#<project>-issue-42`, redirect a plan, or
+just lurk and let the lead-pm handle it. Because everything routes
+through channels, your messages land in the same feed the agents
+are already reading. There's no second pathway for "human-to-agent"
+— you're just another nick on the IRC server.
 
 The agent and prompt files (`agents/lead-pm.md`,
 `prompts/worker.md`, `prompts/reviewer.md`) are the operational

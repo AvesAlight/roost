@@ -8,112 +8,110 @@ from `irssi` and see everything.
 ## Topology
 
 ```
-                        ergo (127.0.0.1:6667)
-                                │
-   ┌─────────────┬──────────────┼──────────────┬───────────┐
-   │             │              │              │           │
- senior PO   dispatcher   per-project       worker-X    alex
- (#staff)    (project,    PO (#leads-{P}    (#issue-NNN)(irssi)
-              event-pub)   + every #issue        │
-              ┌────────┐   for one project)  reviewer-Y
-              │project │       │             (#issue-NNN)
-              │workers │       │
-              │     reviewers ─┘
-              └────────┘
+                       ergo (127.0.0.1:6667)
+                               │
+   ┌─────────────┬──────────────┬─────────────┬──────────┐
+   │             │              │             │          │
+ lead-pm     dispatcher     worker-N      reviewer-N   alex
+ + APM       (per           (#<project>-  (#<project>- (irssi /
+ (#<project>- project,       issue-N,      issue-N,    weechat)
+  leads +     event-pub)     ephemeral)    ephemeral)
+  every
+  active
+  issue
+  channel)
 ```
 
-The channel-of-record for an active piece of work is `#issue-NNN`,
-not `#pr-NNN` — issues outlive any single PR attempt (a PR close +
-restart on the same issue means the channel needs to be stable across
-restarts; per-issue gives that, per-PR doesn't).
+The channel-of-record for an active piece of work is
+`#<project>-issue-<N>`, not `#<project>-pr-<N>` — issues outlive any
+single PR attempt (a PR close + restart on the same issue means the
+channel needs to be stable across restarts; per-issue gives that,
+per-PR doesn't).
 
 ## Channels
 
-| Channel           | Purpose |
-|-------------------|---------|
-| `#staff`          | Standing senior agents (senior PO, CoS, finance, sales, opsmanager, tooldev). Cross-cutting only. |
-| `#leads-{proj}`   | One per project. Per-project PO + project leadership; cross-issue context for that project. |
-| `#issue-{NNN}`    | One per active issue. Dispatcher publishes events directly. Worker joins on pickup, leaves on completion. Reviewer joins on CI green, leaves on conclude. Per-project PO is here continuously (observation, not on-demand). Stable across PR restarts (old PR closes, new PR opens = same `#issue-NNN`). |
+| Channel                | Purpose |
+|------------------------|---------|
+| `#<project>-leads`     | Per-project leadership channel. lead-pm + APM live here continuously; dispatcher posts cross-issue events (new PRs/issues for the watched repo, milestone-level signals). |
+| `#<project>-issue-<N>` | One per active issue. Dispatcher publishes per-issue events. Worker joins on pickup, leaves on completion. Reviewer joins for the review pass, leaves on conclude. lead-pm + APM join while the issue is active. Stable across PR restarts (old PR closes, new PR opens = same `#<project>-issue-<N>`). |
 
 ## Identities
 
-- **Senior ProductOps** — stable nick (`productops`). Sits in
-  `#staff` alongside CoS, MarketingOps, FinanceOps, etc. Owns
-  runbooks + the cross-project pattern catalog. Spawns per-project
-  POs for new projects. Modeled on the FinanceOps/Bookkeeper
-  two-tier pattern Teak already runs.
-- **Per-project ProductOps** — `productops-{project}`. Lives in
-  `#leads-{project}` plus every `#issue-{NNN}` for that project's
-  lifetime. Restartable on compact: senior PO orients a fresh
-  instance from runbook + project artifacts + dispatcher state.
-  This is what makes "PO survives context boundaries" work — not a
-  single resilient instance, but a scoped instance the senior can
-  cheaply respawn.
-- **Other standing roles** — `cos`, `tooldev`, etc. Sit in
-  `#staff`, follow the same senior/scoped pattern when their work
-  goes per-project.
-- **Workers** — ephemeral (`worker-NNN-X`). Join `#issue-NNN` on
-  assignment, leave on completion.
-- **Reviewers** — `reviewer-NNN`. Join `#issue-NNN` on CI green,
-  leave on conclude.
-- **Dispatchers** — one per project. Publish per-issue events
-  directly to `#issue-NNN`. Not Claude sessions; Python scripts.
+- **lead-pm** — `<project>-lead-pm`. Owns a project end-to-end:
+  picks issues off the milestone DAG, pressure-tests worker plans,
+  coordinates with the human, posts postmortems. Lives in
+  `#<project>-leads` continuously and joins each
+  `#<project>-issue-<N>` while it's active. Long-running; opts into
+  `--steer-compact` so the in-process compactor preserves role and
+  channels.
+- **APM** — `<project>-apm`. Operational support for lead-pm: runs
+  the mechanical dances — worktree + watch + worker-spawn setup,
+  reviewer-agent spawn on draft-PR-open, flip PRs draft → ready +
+  tag the human + re-request review, merge + cleanup, follow-up
+  filing, release-bump mechanics. Lives in the same channels as
+  lead-pm.
+- **Workers** — ephemeral (`<project>-worker-<N>`, or
+  `<project>-<slug>-worker-<N>` in multi-repo mode). Join
+  `#<project>-issue-<N>` on assignment, leave on completion.
+- **Reviewers** — ephemeral (`<project>-reviewer-<N>`). Join
+  `#<project>-issue-<N>` for the review pass, leave on conclude.
+- **Dispatchers** — one per project (`<project>-dispatcher`). Not
+  Claude sessions; a TypeScript daemon (`src/orchestrator/`).
+  Publish per-issue events to `#<project>-issue-<N>` and
+  cross-issue events to `#<project>-leads`.
 
 ## Routing
 
-ProductOps is **observer-and-router**, not just router. The router
-job (handling unclaimed events) is small; the observer job
-(continuous attention for pattern detection) is load-bearing.
-Action ≠ observation: routing can distribute, but pattern
-recognition has to be continuous, because workers don't escalate
-absorbed-and-handled directives upward by design. Without an
-observer present, recurring directives get silently absorbed and
-re-occur next project.
+Routing happens in the channel — there's no separate broker. The
+dispatcher is a plain IRC client writing to channels; every agent
+present receives the message identically via its roost-irc MCP.
 
-- **Routine signals** (CI green, CEO-APPROVED, CHANGES_REQUESTED):
-  dispatcher → `#issue-NNN` → worker. The dispatcher is a plain IRC
-  client writing to a channel; the worker's roost-irc MCP receives
-  that write as an ordinary channel message — no special pipeline.
-  PO is in the channel but not in the action path.
-- **Ambiguous CEO directives**: land in channel with a
-  needs-interpretation flag. Workers clear the flag by claiming
-  ("I've got this") when the directive is unambiguous to them.
-  Unclaimed events → PO's action queue.
-- **Worker ↔ reviewer**: co-located in `#issue-NNN`. No relay.
-- **PO observes everything else.** Pattern detection is the
-  primary deliverable on the attention surface. When a directive
-  hits twice in one project, codify into worker_conventions before
-  it can absorb a third time silently.
+- **Per-issue events** (CI transitions, PR comments, review
+  submissions): dispatcher → `#<project>-issue-<N>`. Worker,
+  reviewer, lead-pm, and APM are all in the channel and read the
+  event off the same notification.
+- **Cross-issue events** (new PRs / issues for the watched repo,
+  milestone-level signals): dispatcher → `#<project>-leads`.
+  lead-pm and APM read these and route to per-issue work.
+- **Ambiguous human directives**: land in channel as ordinary
+  messages. Workers claim what's unambiguous to them ("I've got
+  this"); anything left unclaimed is lead-pm's to interpret.
+- **Worker ↔ reviewer**: co-located in `#<project>-issue-<N>`.
+  No relay.
+- **Worker ↔ lead-pm**: co-located in `#<project>-issue-<N>` for
+  plan pressure-testing, structural updates, ready-flip signaling.
+  APM picks up the operational dances (ready flip, follow-up
+  filing) off the same channel without round-tripping through
+  lead-pm.
 
 ### PR review flow
 
 Sequencing — each step bumps the next:
 
-1. Worker drafts → opens PR.
-2. CI green → dispatcher publishes to `#issue-NNN`.
-3. Reviewer-NNN joins → reviews against spec (cold lens).
-4. Reviewer satisfied → comments on the PR thread.
-5. **Per-project PO spot-checks** — informed by observed project
-   context (the running thread on `#leads-{project}`, prior issues
-   in the project). Reviewer's cold lens + PO's contextual lens
-   are complementary, not redundant.
-6. PO posts spot-check verdict directly on the PR thread (e.g.
-   `[productops] spot-check cleared: ...`), then flips the PR
-   from draft → ready-for-review and adds CEO as reviewer.
-   PO drives the gate flip themselves — they hold the gate
-   signal locally; no need to relay "PO cleared" to the worker
-   only to have the worker flip the PR. Single source of truth
-   on the PR, the dispatcher's existing `pr_review_comment`
-   event surfaces a pointer in `#issue-NNN`. No new substrate
-   primitive.
-7. CEO reviews and merges (or sends back).
+1. Worker drafts → opens PR (with `Closes #<N>` in the body) and
+   posts the link in `#<project>-issue-<N>`.
+2. APM spawns **reviewer-<N>** against the draft (cold lens — no
+   project context). Trigger is draft-PR-open, not CI-green;
+   reviewer + CI run in parallel.
+3. Reviewer reads the diff, posts findings to GitHub, parts the
+   channel.
+4. Worker addresses findings, pushes, runs the last-look gate,
+   signals ready in `#<project>-issue-<N>` (with a
+   `highest-risk specific:` and a `surprises:` line).
+5. APM flips the PR draft → ready and adds the human as reviewer.
+6. Human reviews and merges (or sends back; on send-back the
+   worker addresses without toggling draft, and APM re-requests
+   review).
+7. After merge: lead-pm posts a one-paragraph postmortem in
+   `#<project>-leads`; APM runs cleanup (unwatch the PR/issue,
+   tear down the worktree, close milestones if applicable).
 
 ## Lifecycle = membership
 
-- Worker pickup = `JOIN #issue-NNN`.
-- Reviewer engagement = `JOIN #issue-NNN`.
+- Worker pickup = `JOIN #<project>-issue-<N>`.
+- Reviewer engagement = `JOIN #<project>-issue-<N>`.
 - Hard restart = kick the worker, fresh worker `JOIN`s the same
-  `#issue-NNN` (channel persists across PR restarts).
+  `#<project>-issue-<N>` (channel persists across PR restarts).
 - Assignment end = `PART` (or issue-resolved → channel cleanup).
 
 The MCP pushes `JOIN`/`PART`/`KICK` events as channel notifications,
@@ -143,37 +141,39 @@ Common spawns:
 
 ```bash
 # Worker pickup on a fresh issue:
-roost spawn worker-718-A -c '#issue-718'
+roost spawn <project>-worker-718-A -c '#<project>-issue-718'
 
-# Reviewer joining post-CI:
-roost spawn reviewer-718 -c '#issue-718'
+# Reviewer joining for the review pass:
+roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
 
 # Hard restart (channel-as-lifecycle: kick + new worker JOINs same
 # channel, orients from dispatcher state + channel topic + spawn
 # prompt, not from scrollback):
-roost shutdown worker-718-A
-roost spawn worker-718-B -c '#issue-718'
+roost shutdown <project>-worker-718-A
+roost spawn <project>-worker-718-B -c '#<project>-issue-718'
 ```
 
-### Senior PO respawning a per-project PO
+### Restarting a long-running lead-pm
 
-A respawn is an orchestrated handoff, not a fresh start. The
-per-project PO is replaceable cheaply because the senior PO holds
-the cross-project knowledge and can re-orient any per-project
-instance from durable artifacts. Sequence:
+lead-pm runs for the lifetime of a milestone, so it has to survive
+both auto-compact and full respawn cleanly.
 
-1. Senior PO reads the project journal + the project's recent
-   `#leads-{project}` topic / pinned conventions.
-2. Queries the dispatcher for current state of every watched issue
-   in the project (open PRs, CI state, pending CEO threads).
-3. Drafts a handoff prompt encoding:
-   - Open escalation-queue items the previous instance was holding.
-   - Active CEO threads needing translation.
-   - The dispatcher endpoint for ongoing state queries.
-   - The project-specific `worker_conventions.md` path.
-4. Spawns:
+In-process recovery is `--steer-compact` at spawn — see Rejoin
+below for the mechanics. That covers most cases.
 
-<!-- TODO: surrounding narrative (senior-PO/per-project-PO topology, `#leads-{project}` channel pattern) is stale; spawn block here refreshed to current `<project>-lead-pm` / `#<project>-leads` naming. Sweep the rest of this file + docs/ROOST-IN-PRACTICE.md in the followup. -->
+For a full respawn (process loss, hard kick, intentional restart),
+an operator (human or APM) drafts a handoff prompt from durable
+artifacts:
+
+1. Project journal + recent `#<project>-leads` topic / pinned
+   conventions.
+2. Dispatcher's view of every watched issue in the project (open
+   PRs, CI state, pending human threads).
+3. Open escalation items the previous instance was holding.
+4. Active human threads needing translation.
+5. Path to the project's `worker_conventions.md` (or equivalent).
+
+Then spawn:
 
 ```bash
 roost spawn <project>-lead-pm \
@@ -198,20 +198,20 @@ For deeper inspection — MCP stderr, IRC connection logs — check
 
 ### When to use the skill vs raw shell
 
-When an agent needs to spawn or manage another agent (senior PO
-respawning a per-project PO post-compact, productops kicking a
-stuck worker, etc.), it should invoke the `roost` skill rather
-than reach for raw shell — same command surface, with naming and
-channel conventions baked into the skill description so spawns are
-consistent across spawners. Raw shell is fine for human operators
-running ad-hoc commands.
+When an agent needs to spawn or manage another agent (lead-pm
+spawning the APM at startup, APM spawning a worker or reviewer
+agent, APM kicking a stuck worker, etc.), it should invoke the
+`roost` skill rather than reach for raw shell — same command
+surface, with naming and channel conventions baked into the skill
+description so spawns are consistent across spawners. Raw shell is
+fine for human operators running ad-hoc commands.
 
 Parking-lot enhancements (not yet built):
 
-- `--rejoin-project <name>` — auto-enumerate the project's
-  channels (`#leads-<name>` + every `#issue-NNN` where the
-  project's dispatcher is active) so the senior PO doesn't have
-  to hand-list 5–10 channels at respawn.
+- `--rejoin-project <name>` — auto-enumerate the project's channels
+  (`#<project>-leads` + every `#<project>-issue-<N>` where the
+  project's dispatcher is active) so a lead-pm respawn doesn't have
+  to hand-list 5–10 channels.
 
 ## Conventions live as channel state
 
@@ -243,13 +243,13 @@ Short-lived agents (workers, reviewers) skip the flag — auto-compact
 is unlikely to fire in their lifetime and the default behavior is
 fine.
 
-For per-project PO specifically, rejoin is a fresh-instance
-respawn from the senior PO. Senior orients the new instance from:
-runbook + project artifacts (current `worker_conventions`,
-`#leads-{project}` topic / pins, recent journal entries) +
-dispatcher's actionable state. Trade: per-project PO gives up
-perfect scrollback continuity in exchange for cheap
-replaceability. Acceptable.
+For lead-pm specifically, in-process recovery via `--steer-compact`
+covers most cases. For full respawn (process loss, hard kick), see
+"Restarting a long-running lead-pm" above — orient the new instance
+from runbook + recent `#<project>-leads` topic / pins + journal
+entries + dispatcher's actionable state. Trade: lead-pm gives up
+perfect scrollback continuity in exchange for cheap replaceability.
+Acceptable.
 
 ## Discipline
 
@@ -258,7 +258,7 @@ replaceability. Acceptable.
   meaningfully change a reader's design framing, draft it for the
   PR thread, then post a pointer in chat.
 - **Receiver-claims-the-flag.** Workers signal what they're picking
-  up; ProductOps's queue is what's unclaimed.
+  up; lead-pm's queue is what's unclaimed.
 - **Channel membership = lifecycle.** Joining is committing; being
   kicked ends the assignment.
 
