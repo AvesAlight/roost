@@ -51,7 +51,7 @@ Quick start:
     --agent lead-pm \\
     --channels '#<project>-leads' \\
     --steer-compact --cache-ttl 1h \\
-    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'
+    --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 
 Run 'roost <command> --help' for per-command usage.
 EOF
@@ -219,7 +219,7 @@ Agent class guidance:
   should route via IRC so a blocked question surfaces in the leads channel
   instead of freezing the terminal:
     --steer-compact --cache-ttl 1h \
-    --ask-irc '#<project>-leads' --ask-target <answerer>
+    --ask-irc '#<project>-leads' --ask-target <your-nick>
   Workers — multi-turn through reviewer + human review cycles that
   routinely exceed 5 minutes, so \`--cache-ttl 1h\`. But short-lived
   enough that auto-compact rarely fires, so no \`--steer-compact\`:
@@ -571,8 +571,8 @@ cmd_init() {
     "    --agent lead-pm \\" \
     "    --channels '#${project}-leads' \\" \
     "    --steer-compact --cache-ttl 1h \\" \
-    "    --ask-irc '#${project}-leads' --ask-target <your-irc-nick> \\" \
-    "    --prompt 'milestone=<milestone> human=<your-irc-nick> gh-login=<your-gh-login>'"
+    "    --ask-irc '#${project}-leads' --ask-target <your-nick> \\" \
+    "    --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'"
 }
 
 require_tmux() {

@@ -1,6 +1,6 @@
 ---
 name: roost
-description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #issue-NNN", "kill that worker", "tear down the test", "list the running agents", "spawn a sonnet/haiku worker with permission oversight", "approve its tool calls over IRC", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, lifecycle rules, and the IRC permission-oversight pattern (Opus orchestrator gating a non-auto-mode worker's tool calls via DMs).
+description: Use this skill when the user asks to spawn, launch, manage, attach to, list, tear down, or shut down roost agents — Claude Code sessions running on the local IRC roost. Trigger phrases include "spawn a worker", "bring up a roost claude", "start a session in #<project>-issue-<N>", "kill that worker", "tear down the test", "list the running agents", "spawn a sonnet/haiku worker with permission oversight", "approve its tool calls over IRC", or any reference to the bin/roost wrapper, tmux-claude lifecycle, or roost IRC sessions. Provides the command surface, naming conventions, channel topology, lifecycle rules, and the IRC permission-oversight pattern (Opus orchestrator gating a non-auto-mode worker's tool calls via DMs).
 ---
 
 # roost — manage Claude sessions on the IRC roost
@@ -192,10 +192,9 @@ with `roost status` (which lists running tmux sessions).
 
 - `#roost` — default landing channel. Cross-cutting only; no
   persistent per-PR worker traffic.
-- `#staff` — standing senior agents (cross-cutting team).
 - `#<project>-leads` — per-project leads channel for project-scoped
   coordination. Lead-pm + APM + dispatcher live here.
-- `#<project>-issue-N` — one per active issue. Created on first JOIN;
+- `#<project>-issue-<N>` — one per active issue. Created on first JOIN;
   dissolves when the last member leaves.
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.
 
