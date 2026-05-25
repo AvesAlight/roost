@@ -14,3 +14,7 @@ When filing a followup issue, ask whether the work is primarily in service of a 
 
 Agents reliably obey explicit output-shaping rules — an instruction to name one specific X produces one specific X. So in prompt gates, the artifact instruction IS the entire lever; "if you fail X, do Y" backstops and "gate failure" framing add no safety, only paranoia. Frame prompt gates around the team putting its best foot forward for leadership, not around catching skimping. The suspicion is decoration; the artifact instruction does the work.
 
+## 2026-05-24: Include #<project>-leads when watching a PR with no linked issue (from #576)
+
+When watching a PR that has no closing reference, append `#<project>-leads` to the watch DM: `watch pr <N> #<project>-leads`. Without a trailing channel, unlinked-PR events route to `#<project>-issue-<PR>` — a channel neither APM nor lead-pm join. Maint PRs (version bumps, learning commits, doc-only fixes) never have a closing reference, so always include `#<project>-leads` for these.
+
