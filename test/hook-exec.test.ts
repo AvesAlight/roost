@@ -71,12 +71,28 @@ describe('hook-exec dispatch', () => {
     expect(await run()).toBe(cellarB)
   })
 
-  it('exits 127 with stderr when the target hook is missing', async () => {
+  it('exits 127 with `not found` when the hook name does not exist', async () => {
     const proc = Bun.spawn([ROOST_BIN, 'hook-exec', 'no-such-hook'], { stdout: 'pipe', stderr: 'pipe' })
     const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
     expect(exitCode).toBe(127)
-    expect(stderr).toContain('not executable')
+    expect(stderr).toContain('not found')
     expect(stderr).toContain('no-such-hook')
+  })
+
+  it('exits 127 with `not executable` when the target exists but lacks +x', async () => {
+    const cellar = join(tmpDir, 'unexec-cellar')
+    mkdirSync(join(cellar, 'bin'), { recursive: true })
+    copyFileSync(ROOST_BIN, join(cellar, 'bin', 'roost'))
+    chmodSync(join(cellar, 'bin', 'roost'), 0o755)
+    const hook = join(cellar, 'bin', 'unexec-hook')
+    writeFileSync(hook, '#!/bin/sh\necho ran\n')
+    chmodSync(hook, 0o644)
+
+    const proc = Bun.spawn([join(cellar, 'bin', 'roost'), 'hook-exec', 'unexec-hook'], { stdout: 'pipe', stderr: 'pipe' })
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
+    expect(exitCode).toBe(127)
+    expect(stderr).toContain('not executable')
+    expect(stderr).toContain('unexec-hook')
   })
 
   it('exits 1 with usage when called with no hook name', async () => {
