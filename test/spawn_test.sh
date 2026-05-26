@@ -351,7 +351,7 @@ data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 if [ -n "$data_dir" ] \
     && [ -f "$data_dir/roost-settings.json" ] \
     && grep -qF '"PreCompact"' "$data_dir/roost-settings.json" \
-    && grep -qF 'roost-compact-hook' "$data_dir/roost-settings.json" \
+    && grep -qF 'hook-exec roost-compact-hook' "$data_dir/roost-settings.json" \
     && [ -f "$data_dir/session-name.txt" ] \
     && [ "$(cat "$data_dir/session-name.txt")" = "roost-testnick" ]; then
   ok "--steer-compact: PreCompact entry wired + session-name.txt written"
@@ -371,7 +371,7 @@ data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 if [ -n "$data_dir" ] \
     && [ -f "$data_dir/roost-settings.json" ] \
     && ! grep -qF '"PreCompact"' "$data_dir/roost-settings.json" \
-    && ! grep -qF 'roost-compact-hook' "$data_dir/roost-settings.json" \
+    && ! grep -qF 'hook-exec roost-compact-hook' "$data_dir/roost-settings.json" \
     && [ -f "$data_dir/session-name.txt" ]; then
   ok "no flag: PreCompact omitted from settings, session-name.txt written"
 else
