@@ -54,8 +54,18 @@ export interface ConnectOpts {
   autoReconnectMaxRetries?: number
 }
 
-export type SystemKind = 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
-// string for disconnected/reconnected/cap-missing; { nick } for registered; { code } for registration-failed
+// The 'lifecycle' kinds (ping/pong/reconnecting/cap-*) are forensic — the permbot
+// listens to them and appends to its on-disk log so an operator can confirm post-hoc
+// that PING/PONG handshakes are healthy and a disconnect was followed by a reconnect
+// attempt. Without these, a permbot that drops at ~60s into a session leaves no trail
+// to distinguish "missed PONG" from "cap-negotiation race" from "real network drop".
+// Other consumers (the worker MCP) only need the registered/disconnected/reconnected
+// signals and can ignore the lifecycle kinds.
+export type SystemKind =
+  | 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
+  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls'
+// string for disconnected/reconnected/cap-missing/ping/pong/reconnecting/cap-*;
+// { nick } for registered; { code } for registration-failed.
 export type SystemContent = string | { code?: number; nick?: string }
 
 export type MembershipKind = 'join' | 'leave' | 'nick'

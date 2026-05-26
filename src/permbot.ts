@@ -238,19 +238,26 @@ export function startPermbot(
     }
   })
 
-  client.on('system', (kind) => {
+  client.on('system', (kind, content) => {
+    const detail = typeof content === 'string' ? content : ''
     if (kind === 'registered') {
-      log('registered with IRC')
+      log('registered with IRC (001 received)')
     } else if (kind === 'registration-failed') {
       log('FATAL nick registration failure, shutting down')
       stop()
     } else if (kind === 'disconnected') {
-      // Tear down on disconnect. The hook's askDaemon detects the missing
-      // socket and falls back to a transient-DM + emit('ask'), so the
-      // worker degrades cleanly. Owner-gate eliminates the collision-driven disconnect;
-      // if a real network drop becomes a recurring failure mode, add auto-reconnect.
-      log('IRC connection lost, shutting down')
-      stop()
+      // The unix socket stays open while IRC reconnects; in-flight requests time
+      // out as usual. The hook's askDaemon falls back only if the socket itself
+      // is gone, which it isn't during a transient drop.
+      log('IRC connection lost — waiting for auto-reconnect')
+    } else if (kind === 'reconnected') {
+      log(`IRC reconnected${detail ? ': ' + detail : ''}`)
+    } else if (kind === 'reconnecting') {
+      log(detail || 'reconnect attempt scheduled')
+    } else if (kind === 'ping' || kind === 'pong') {
+      log(detail || kind.toUpperCase())
+    } else if (kind === 'cap-ls' || kind === 'cap-ack' || kind === 'cap-nak') {
+      log(detail || kind)
     } else if (kind === 'cap-missing') {
       log('cap-missing (ignored)')
     }

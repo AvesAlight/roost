@@ -318,7 +318,18 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
   })
 
+  // Forensic SystemKinds (see SystemKind decl in irc-client.ts) are emitted on every
+  // client; here we keep them out of the worker agent's notification stream — wire
+  // details aren't actionable from the agent's side (cf. project-learnings §#562).
+  // Permbot subscribes via its own client.on('system') and still gets the full set.
+  const WORKER_FILTERED_SYSTEM_KINDS = new Set<string>([
+    'ping', 'pong', 'cap-ls', 'cap-ack', 'cap-nak', 'reconnecting',
+  ])
   client.on('system', (kind, content) => {
+    if (WORKER_FILTERED_SYSTEM_KINDS.has(kind)) {
+      process.stderr.write(`roost-irc[${NICK}]: [${kind}] ${typeof content === 'string' ? content : JSON.stringify(content)}\n`)
+      return
+    }
     const ts = localeTs(new Date())
     const text = typeof content === 'string' ? content : JSON.stringify(content)
     pushNotification(text, { event: kind, channel: '', sender: '', isDirect: 'false', ts })
@@ -549,6 +560,8 @@ async function runOwnerMcp(args: {
       nick: permbotNick,
       username: permbotNick,
       gecos: 'roost-permbot',
+      autoReconnect: true,
+      autoReconnectMaxRetries: 10,
     })
     process.stderr.write(`roost-irc[${NICK}]: started in-process permbot (nick ${permbotNick}, sock ${PERM_SOCK})\n`)
   }
