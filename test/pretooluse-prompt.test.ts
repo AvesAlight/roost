@@ -113,6 +113,22 @@ describe('classifyBash', () => {
     expect(classifyBash('  "$(roost root)/bin/foo" arg')).toBe('command-substitution-argv0')
   })
 
+  it('command-substitution-argv0: double-quoted $(...) as argv0 with additional substituted args', () => {
+    expect(classifyBash('"$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" 1')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: output-capture assignment VAR=$(\"$(...)\") — the associate-pm.md:171 shape', () => {
+    expect(classifyBash('cost_block=$("$(roost root)/bin/roost-token-usage" report)')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: VAR=$(cmd) unquoted', () => {
+    expect(classifyBash('VAR=$(cmd) arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: VAR=`cmd` backtick assignment', () => {
+    expect(classifyBash('VAR=`cmd` arg')).toBe('command-substitution-argv0')
+  })
+
   it('null: command substitution $(...) as argument (not argv0)', () => {
     expect(classifyBash('echo $(date)')).toBeNull()
   })
@@ -127,6 +143,14 @@ describe('classifyBash', () => {
 
   it('null: arithmetic $((1+1)) as argv0 does not match command-substitution-argv0', () => {
     expect(classifyBash('$((1+1))')).toBeNull()
+  })
+
+  it('null: echo with cost_block= in string is not a var-assignment at argv0', () => {
+    expect(classifyBash('echo cost_block="$(foo)"')).toBeNull()
+  })
+
+  it('null: VAR=literal-value env-prefix invocation (real argv0 is cmd)', () => {
+    expect(classifyBash('VAR=value $(cmd)')).toBeNull()
   })
 
   it('null: typical pipeline', () => {

@@ -130,13 +130,13 @@ export function classifyBash(command: string): BashMissKind | null {
   // refs) — the bash AST parser rejects these.
   if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return 'too-complex'
 
-  // CC: no equivalent — our extension.
-  // argv0 is a command substitution ($(...) or `...`) so the shell must
-  // execute it to resolve the binary name, making static analysis impossible.
-  // Negative lookahead (?!\() excludes arithmetic $((...)). Backtick at argv0
-  // is the legacy form of the same footgun.
-  if (/^\s*"?\$\((?!\()/.test(command)) return 'command-substitution-argv0'
-  if (/^\s*`/.test(command)) return 'command-substitution-argv0'
+  // CC: no equivalent — our extension. argv0 is a command substitution ($(...) or `...`)
+  // so the shell must exec it to resolve the binary, defeating static analysis.
+  // Covers: direct ("?$(...) args, `...` args) and output-capture assignment (VAR=$(...),
+  // VAR="$(...), VAR=`...`). (?!\() excludes arithmetic $((...)).
+  if (/^\s*(?:"?\$\((?!\()|[A-Za-z_][A-Za-z0-9_]*=(?:"?\$\((?!\()|`)|`)/.test(command)) {
+    return 'command-substitution-argv0'
+  }
 
   return null
 }
@@ -230,7 +230,7 @@ if (import.meta.main) {
   const reply = await askDaemon(summary)
   if (reply === null) {
     await sendFallbackDm(summary, 'permbot unavailable / timed out (PreToolUse Bash)')
-    classifierLog('ask: timed-out')
+    classifierLog('ask-timeout')
     emit('ask', 'permbot unavailable / timed out; falling back to terminal')
   }
 
@@ -246,6 +246,6 @@ if (import.meta.main) {
     emit('deny', msg || 'operator denied via IRC')
   }
   await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
-  classifierLog(`ask: unrecognized-reply`)
+  classifierLog('ask-unrecognized-reply')
   emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)
 }
