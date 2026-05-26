@@ -58,8 +58,10 @@ export type BashMissKind =
   | 'shell-operators'              // CC: "shell-operators"
   | 'flag-validation'              // CC: "flag-validation"
   | 'too-complex'                  // CC: "too-complex"
-  | 'command-substitution-argv0'   // CC: no equivalent — our extension. argv0 is $(...) or `...`;
-                                   // the shell must exec it to resolve the binary, defeating static analysis.
+  | 'command-substitution-argv0'   // CC 2.1.150: no bashMissKind for argv0-substitution found (grepped binary
+                                   // for command-substitution, subst-argv, argv-subst, runtime-determined).
+                                   // Our extension: argv0 is $(...) or `...` — shell must exec it to resolve
+                                   // the binary, defeating static analysis.
 
 /**
  * Returns the bashMissKind a command resembles, or null if it should pass
@@ -130,10 +132,11 @@ export function classifyBash(command: string): BashMissKind | null {
   // refs) — the bash AST parser rejects these.
   if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return 'too-complex'
 
-  // CC: no equivalent — our extension. argv0 is a command substitution ($(...) or `...`)
-  // so the shell must exec it to resolve the binary, defeating static analysis.
-  // Covers: direct ("?$(...) args, `...` args) and output-capture assignment (VAR=$(...),
-  // VAR="$(...), VAR=`...`). (?!\() excludes arithmetic $((...)).
+  // CC 2.1.150: no equivalent bashMissKind (grepped binary for command-substitution,
+  // subst-argv, argv-subst, runtime-determined — not found). Our extension.
+  // argv0 is a command substitution ($(...) or `...`) — shell must exec it to resolve
+  // the binary, defeating static analysis. Covers: direct ("?$(...), `...`) and
+  // output-capture assignment (VAR=$(...), VAR="$(...), VAR=`...`). (?!\() excludes $((...)).
   if (/^\s*(?:"?\$\((?!\()|[A-Za-z_][A-Za-z0-9_]*=(?:"?\$\((?!\()|`)|`)/.test(command)) {
     return 'command-substitution-argv0'
   }
