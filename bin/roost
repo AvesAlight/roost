@@ -16,6 +16,14 @@
 
 set -uo pipefail
 
+# Capture the absolute path to *this* roost script before any symlink walk —
+# embedded into roost-settings.json so hook commands invoke us at a stable
+# path. For brew installs this is `/opt/homebrew/bin/roost` (a brew-managed
+# symlink that survives Cellar rotation); for dev checkouts it's the absolute
+# clone path. Resolving via $PATH at hook-call time would re-introduce the
+# dev-clone-moved footgun, so we always embed the absolute path captured here.
+ROOST_BIN="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/$( basename "${BASH_SOURCE[0]}" )"
+
 # Walk symlinks so ROOST_DIR resolves to the real plugin tree, not the
 # parent of a /usr/local/bin/roost-style shim.
 _src="${BASH_SOURCE[0]}"
@@ -44,6 +52,7 @@ Commands:
   status                   ergo state + roost session count.
   root                     Print the roost plugin root directory.
   send <nick> <message...> Inject text into a nick's tmux pane.
+  hook-exec <name>         Exec a hook entry point — used in spawned hook configs.
 
 Quick start:
   roost init
@@ -326,6 +335,20 @@ Example:
 EOF
 }
 
+usage_hook_exec() {
+  cat <<EOF
+Usage: roost hook-exec <name> [args...]
+
+Exec the matching hook entry point under \${ROOST_DIR}/bin/. Used by
+roost-settings.json so hook commands resolve via this PATH-stable binary
+rather than per-session shims under ROOST_DATA_DIR (which macOS tmp_cleaner
+nukes after 3 days of atime+mtime+ctime idleness).
+
+Example:
+  roost hook-exec irc-permission-prompt
+EOF
+}
+
 _init_config_json() {
   if [ -n "$2" ]; then
     # Single-repo: project + repo + the static plugin slices (operator-set,
@@ -592,19 +615,6 @@ require_ircd() {
   fi
 }
 
-# Write a thin resolver shim to DIR/NAME. The shim re-resolves the plugin
-# root via `roost root` at exec time so Cellar-dir rotation after a
-# `brew upgrade roost` doesn't break wired hook commands.
-_write_shim() {
-  local name="$1"
-  local dest="$2/${name}"
-  # intentionally single-quoted: $() and $@ are shell syntax written to the
-  # shim file, not expanded here.
-  # shellcheck disable=SC2016
-  printf '#!/bin/sh\nexec "$(roost root)/bin/%s" "$@"\n' "${name}" > "${dest}"
-  chmod 755 "${dest}"
-}
-
 # All per-session files live under a mktemp-generated directory created at
 # spawn time (ROOST_DATA_DIR). The dir is stored in the tmux session env so
 # shutdown can find it:
@@ -822,31 +832,27 @@ cmd_spawn() {
   if [ "${perm_irc}" -eq 1 ] || [ "${ask_routing}" -eq 1 ]; then
     perm_sock="${ROOST_DATA_DIR}/permbot.sock"
   fi
-  # Resolver shims re-resolve the plugin root via `roost root` at exec time so
-  # Cellar-dir rotation (brew upgrade roost) doesn't invalidate hook paths
-  # baked at spawn time.
-  _write_shim roost-post-compact-hook "${ROOST_DATA_DIR}"
-  _write_shim roost-session-start-hook "${ROOST_DATA_DIR}"
+  # Hook commands invoke `${ROOST_BIN} hook-exec <name>` rather than a
+  # per-session shim path. ROOST_BIN is the absolute path to the invoking
+  # roost script (brew symlink or dev clone) captured at the top of this file
+  # — stable across brew upgrades because brew re-points the symlink, and
+  # immune to /tmp cleanup because nothing under DATA_DIR is in the path.
   local precompact_hook_json=""
   if [ "${steer_compact}" -eq 1 ]; then
-    _write_shim roost-compact-hook "${ROOST_DATA_DIR}"
-    precompact_hook_json="\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-compact-hook\"}]}],"
+    precompact_hook_json="\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-compact-hook\"}]}],"
   fi
   if [ "${perm_irc}" -eq 1 ]; then
-    _write_shim irc-permission-prompt "${ROOST_DATA_DIR}"
-    perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-permission-prompt\"}]}]"
+    perm_hook_json=",\"PermissionRequest\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-permission-prompt\"}]}]"
   fi
   # PreToolUse may hold up to two matcher entries: Bash (when --perm-irc, so
   # the safety-analyzer can't bypass the operator's review) and
   # AskUserQuestion (when --ask-irc / --ask-target routes questions to IRC).
   local pretooluse_entries=()
   if [ "${perm_irc}" -eq 1 ]; then
-    _write_shim irc-pretooluse-prompt "${ROOST_DATA_DIR}"
-    pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-pretooluse-prompt\"}]}")
+    pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-pretooluse-prompt\"}]}")
   fi
   if [ "${ask_routing}" -eq 1 ]; then
-    _write_shim irc-ask-question "${ROOST_DATA_DIR}"
-    pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/irc-ask-question\"}]}")
+    pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-ask-question\"}]}")
   fi
   if [ "${#pretooluse_entries[@]}" -gt 0 ]; then
     local _ptu_joined=""
@@ -868,7 +874,7 @@ cmd_spawn() {
       ;;
   esac
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
-  printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_DATA_DIR}/roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}${permissions_json}}" > "${ROOST_SETTINGS}"
+  printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}${permissions_json}}" > "${ROOST_SETTINGS}"
   # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators
@@ -1154,6 +1160,28 @@ cmd_send() {
   printf '%s' "${message}" | "${ROOST_DIR}/bin/roost-tmux-inject" "${session_name}" "roost-send-${nick}"
 }
 
+# Hook entry-point dispatcher. roost-settings.json wires hook commands as
+# `${ROOST_BIN} hook-exec <name>`; this subcommand exec's the matching script
+# under ${ROOST_DIR}/bin/. ROOST_DIR is re-resolved via the symlink walk at
+# the top of this file on every call, so post-brew-upgrade calls land on the
+# current Cellar version. Lives at the roost-binary level (not a per-session
+# shim file) so /tmp cleanup of ROOST_DATA_DIR can't strand the hook path.
+cmd_hook_exec() {
+  if [ "$#" -lt 1 ]; then
+    echo "error: hook-exec requires a hook name" >&2
+    echo "usage: roost hook-exec <name> [args...]" >&2
+    exit 1
+  fi
+  local name="$1"
+  shift
+  local target="${ROOST_DIR}/bin/${name}"
+  if [ ! -x "${target}" ]; then
+    echo "roost hook-exec: not executable: ${target}" >&2
+    exit 127
+  fi
+  exec "${target}" "$@"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 if [ "$#" -eq 0 ]; then
   usage
@@ -1164,30 +1192,32 @@ shift
 case "${1:-}" in
   -h|--help)
     case "${cmd}" in
-      init)     usage_init ;;
-      spawn)    usage_spawn ;;
-      shutdown) usage_shutdown ;;
-      list)     usage_list ;;
-      attach)   usage_attach ;;
-      tail)     usage_tail ;;
-      status)   usage_status ;;
-      send)     usage_send ;;
-      root)     usage_root ;;
-      *)        usage ;;
+      init)      usage_init ;;
+      spawn)     usage_spawn ;;
+      shutdown)  usage_shutdown ;;
+      list)      usage_list ;;
+      attach)    usage_attach ;;
+      tail)      usage_tail ;;
+      status)    usage_status ;;
+      send)      usage_send ;;
+      hook-exec) usage_hook_exec ;;
+      root)      usage_root ;;
+      *)         usage ;;
     esac
     exit 0
     ;;
 esac
 case "${cmd}" in
-  init)     cmd_init "$@" ;;
-  spawn)    cmd_spawn "$@" ;;
-  shutdown) cmd_shutdown "$@" ;;
-  list)     cmd_list "$@" ;;
-  attach)   cmd_attach "$@" ;;
-  tail)     cmd_tail "$@" ;;
-  status)   cmd_status "$@" ;;
-  send)     cmd_send "$@" ;;
-  root)     echo "${ROOST_DIR}" ;;
+  init)      cmd_init "$@" ;;
+  spawn)     cmd_spawn "$@" ;;
+  shutdown)  cmd_shutdown "$@" ;;
+  list)      cmd_list "$@" ;;
+  attach)    cmd_attach "$@" ;;
+  tail)      cmd_tail "$@" ;;
+  status)    cmd_status "$@" ;;
+  send)      cmd_send "$@" ;;
+  hook-exec) cmd_hook_exec "$@" ;;
+  root)      echo "${ROOST_DIR}" ;;
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
 esac
