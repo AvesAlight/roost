@@ -97,7 +97,39 @@ describe('classifyBash', () => {
     expect(classifyBash('cd -P /tmp')).toBeNull()
   })
 
-  it('null: command substitution $(...)', () => {
+  it('command-substitution-argv0: double-quoted $(...) as argv0 (roost root pattern)', () => {
+    expect(classifyBash('"$(roost root)/bin/foo" arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: unquoted $(...) as argv0', () => {
+    expect(classifyBash('$(cmd) arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: backtick form as argv0', () => {
+    expect(classifyBash('`roost root`/bin/foo arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: leading whitespace before $(...)', () => {
+    expect(classifyBash('  "$(roost root)/bin/foo" arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: double-quoted $(...) as argv0 with additional substituted args', () => {
+    expect(classifyBash('"$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" 1')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: output-capture assignment VAR=$(\"$(...)\") — the associate-pm.md:171 shape', () => {
+    expect(classifyBash('cost_block=$("$(roost root)/bin/roost-token-usage" report)')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: VAR=$(cmd) unquoted', () => {
+    expect(classifyBash('VAR=$(cmd) arg')).toBe('command-substitution-argv0')
+  })
+
+  it('command-substitution-argv0: VAR=`cmd` backtick assignment', () => {
+    expect(classifyBash('VAR=`cmd` arg')).toBe('command-substitution-argv0')
+  })
+
+  it('null: command substitution $(...) as argument (not argv0)', () => {
     expect(classifyBash('echo $(date)')).toBeNull()
   })
 
@@ -107,6 +139,18 @@ describe('classifyBash', () => {
 
   it('null: arithmetic with literals only', () => {
     expect(classifyBash('echo $((1+1))')).toBeNull()
+  })
+
+  it('null: arithmetic $((1+1)) as argv0 does not match command-substitution-argv0', () => {
+    expect(classifyBash('$((1+1))')).toBeNull()
+  })
+
+  it('null: echo with cost_block= in string is not a var-assignment at argv0', () => {
+    expect(classifyBash('echo cost_block="$(foo)"')).toBeNull()
+  })
+
+  it('null: VAR=literal-value env-prefix invocation (real argv0 is cmd)', () => {
+    expect(classifyBash('VAR=value $(cmd)')).toBeNull()
   })
 
   it('null: typical pipeline', () => {
@@ -155,6 +199,12 @@ const SAFETY_CHECK_PAYLOAD = JSON.stringify({
 const BENIGN_PAYLOAD = JSON.stringify({
   tool_name: 'Bash',
   tool_input: { command: 'ls /tmp', description: 'list tmp' },
+  transcript_path: '',
+})
+
+const CMD_SUBST_ARGV0_PAYLOAD = JSON.stringify({
+  tool_name: 'Bash',
+  tool_input: { command: '"$(roost root)/bin/roost-token-usage" snapshot', description: 'token usage snapshot' },
   transcript_path: '',
 })
 
@@ -300,6 +350,49 @@ describe('pretooluse-prompt hook subprocess', () => {
     expect(exit).toBe(0)
     expect(stdout.trim()).toBe('')
   }, 5_000)
+
+  it('logs classifier kind to stderr for command-substitution-argv0', async () => {
+    const sockPath = makeSock('classifier-stderr')
+    const stub = startPermbotStub(sockPath, { reply: 'y' })
+    await stub.ready
+
+    const [{ stderr }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+      }, CMD_SUBST_ARGV0_PAYLOAD),
+      stub.done,
+    ])
+
+    expect(stderr).toContain('classifier: command-substitution-argv0')
+    expect(stderr).toContain('classifier: approved')
+  }, 10_000)
+
+  it('writes classifier entries to permbot.log', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'classifier-log-test-'))
+    const sockPath = path.join(dataDir, 'permbot.sock')
+    const logPath  = path.join(dataDir, 'permbot.log')
+    const stub = startPermbotStub(sockPath, { reply: 'y' })
+    await stub.ready
+
+    try {
+      await Promise.all([
+        runHook({
+          ROOST_IRC_NICK: 'worker-test',
+          ROOST_PERM_SOCK: sockPath,
+          ROOST_PERM_TARGET: 'operator',
+        }, CMD_SUBST_ARGV0_PAYLOAD),
+        stub.done,
+      ])
+
+      const log = fs.readFileSync(logPath, 'utf8')
+      expect(log).toContain('classifier: command-substitution-argv0')
+      expect(log).toContain('classifier: approved')
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true })
+    }
+  }, 10_000)
 
   it('owner-gate short-circuits when nested (#188)', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pretooluse-gate-test-'))

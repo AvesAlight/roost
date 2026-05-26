@@ -14,6 +14,8 @@
 // Reuses the permbot socket and DM fallback from permission-prompt.ts so the
 // queue, nudge logic, and operator UX stay in one place.
 
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { checkOwnership } from './owner-gate.js'
 import { socketRoundtrip } from './permbot-socket.js'
 import {
@@ -29,6 +31,9 @@ const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
 const PERM_TARGET = process.env['ROOST_PERM_TARGET'] ?? ''
 const DATA_DIR    = process.env['ROOST_DATA_DIR'] ?? ''
 const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
+const LOG_PATH    = SOCK_PATH  ? path.join(path.dirname(SOCK_PATH), 'permbot.log')
+                  : DATA_DIR   ? path.join(DATA_DIR, 'permbot.log')
+                  : ''
 // 570s default — just under Claude Code's 600s hook timeout. Override via
 // ROOST_PERM_TIMEOUT_SECS for tests that need to exercise the timeout path
 // without waiting nine minutes.
@@ -44,15 +49,19 @@ const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOS
 // (e.g. `cd-git-compound`) lands here. Tests pin one example per kind from
 // the issue table so any classifier drift surfaces as a test failure.
 export type BashMissKind =
-  | 'newline-hash'          // CC: "semantics"
-  | 'process-substitution'  // CC: "process-substitution"
-  | 'multi-cd'              // CC: "multi-cd"
-  | 'cd-compound'           // CC: "cd-git-compound" | "cd-compound-write" | "cd-compound-redirect"
-  | 'cd-multi-positional'   // CC: "cd-multi-positional"
-  | 'sed-dangerous'         // CC: "sed-dangerous"
-  | 'shell-operators'       // CC: "shell-operators"
-  | 'flag-validation'       // CC: "flag-validation"
-  | 'too-complex'           // CC: "too-complex"
+  | 'newline-hash'                 // CC: "semantics"
+  | 'process-substitution'         // CC: "process-substitution"
+  | 'multi-cd'                     // CC: "multi-cd"
+  | 'cd-compound'                  // CC: "cd-git-compound" | "cd-compound-write" | "cd-compound-redirect"
+  | 'cd-multi-positional'          // CC: "cd-multi-positional"
+  | 'sed-dangerous'                // CC: "sed-dangerous"
+  | 'shell-operators'              // CC: "shell-operators"
+  | 'flag-validation'              // CC: "flag-validation"
+  | 'too-complex'                  // CC: "too-complex"
+  | 'command-substitution-argv0'   // CC 2.1.150: no bashMissKind for argv0-substitution found (grepped binary
+                                   // for command-substitution, subst-argv, argv-subst, runtime-determined).
+                                   // Our extension: argv0 is $(...) or `...` — shell must exec it to resolve
+                                   // the binary, defeating static analysis.
 
 /**
  * Returns the bashMissKind a command resembles, or null if it should pass
@@ -123,7 +132,29 @@ export function classifyBash(command: string): BashMissKind | null {
   // refs) — the bash AST parser rejects these.
   if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return 'too-complex'
 
+  // CC 2.1.150: no equivalent bashMissKind (grepped binary for command-substitution,
+  // subst-argv, argv-subst, runtime-determined — not found). Our extension.
+  // argv0 is a command substitution ($(...) or `...`) — shell must exec it to resolve
+  // the binary, defeating static analysis. Covers: direct ("?$(...), `...`) and
+  // output-capture assignment (VAR=$(...), VAR="$(...), VAR=`...`). (?!\() excludes $((...)).
+  if (/^\s*(?:"?\$\((?!\()|[A-Za-z_][A-Za-z0-9_]*=(?:"?\$\((?!\()|`)|`)/.test(command)) {
+    return 'command-substitution-argv0'
+  }
+
   return null
+}
+
+// ---- Classifier logging -----------------------------------------------------
+
+// Writes a greppable classifier outcome line to stderr and, when a log path
+// is resolvable, to permbot.log. One appendFileSync call per line keeps writes
+// under PIPE_BUF so concurrent appends from permbot and this hook don't interleave.
+export function classifierLog(outcome: string): void {
+  const line = `pretooluse-hook[${WORKER}]: classifier: ${outcome}\n`
+  process.stderr.write(line)
+  if (LOG_PATH) {
+    try { fs.appendFileSync(LOG_PATH, line, { flag: 'a' }) } catch { /* ignore */ }
+  }
 }
 
 // ---- Output -----------------------------------------------------------------
@@ -169,15 +200,21 @@ if (import.meta.main) {
   const kind = classifyBash(command)
   if (kind === null) passthrough()
 
+  classifierLog(kind!)
+
   // Owner-gate short-circuit: nested claudes inherit ROOST_DATA_DIR
   // via tmux env and would otherwise route the parent's prompt to the
   // owner's permbot. Fall through to the local TUI for non-owner sessions.
   if (DATA_DIR && SESSION_ID) {
     const ownership = checkOwnership(DATA_DIR, SESSION_ID)
-    if (ownership === 'passive') passthrough()
+    if (ownership === 'passive') {
+      classifierLog('passive')
+      passthrough()
+    }
   }
 
   if (!SOCK_PATH || !PERM_TARGET) {
+    classifierLog('no-socket')
     process.stderr.write(`pretooluse-hook[${WORKER}]: not configured (missing ROOST_PERM_SOCK or ROOST_PERM_TARGET), falling through\n`)
     passthrough()
   }
@@ -196,14 +233,22 @@ if (import.meta.main) {
   const reply = await askDaemon(summary)
   if (reply === null) {
     await sendFallbackDm(summary, 'permbot unavailable / timed out (PreToolUse Bash)')
+    classifierLog('ask-timeout')
     emit('ask', 'permbot unavailable / timed out; falling back to terminal')
   }
 
   const parts = reply!.trim().split(/\s+/, 2)
   const norm = (parts[0] ?? '').toLowerCase()
   const msg  = parts[1] ?? ''
-  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg || 'operator approved via IRC')
-  if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg || 'operator denied via IRC')
+  if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) {
+    classifierLog('approved')
+    emit('allow', msg || 'operator approved via IRC')
+  }
+  if (['n', 'no', 'deny', 'block'].includes(norm)) {
+    classifierLog('denied')
+    emit('deny', msg || 'operator denied via IRC')
+  }
   await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
+  classifierLog('ask-unrecognized-reply')
   emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)
 }
