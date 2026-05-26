@@ -247,9 +247,8 @@ export function startPermbot(
       stop()
     } else if (kind === 'disconnected') {
       // The unix socket stays open while IRC reconnects; in-flight requests time
-      // out as usual (no operator on the other end to answer). New requests queue
-      // and dispatch once we re-register. The hook's askDaemon falls back only if
-      // the socket itself is gone, which it isn't during a transient drop.
+      // out as usual. The hook's askDaemon falls back only if the socket itself
+      // is gone, which it isn't during a transient drop.
       log('IRC connection lost — waiting for auto-reconnect')
     } else if (kind === 'reconnected') {
       log(`IRC reconnected${detail ? ': ' + detail : ''}`)

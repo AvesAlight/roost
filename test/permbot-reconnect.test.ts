@@ -98,11 +98,17 @@ describe.if(isErgoAvailable())('permbot IRC drop mid-session', () => {
       // No operator replies, so we expect a clean timeout — proves the socket+queue path is intact.
       expect(resp).toEqual({ timeout: true })
 
-      // permbot.log carries the forensic milestones an operator greps for.
+      // permbot.log carries the forensic milestones an operator greps for. CAP
+      // negotiation fires on both initial connect and reconnect, so this asserts
+      // the grep-contract slice that's observable without waiting for the 30s
+      // PING tick. (PING/PONG line shape is locked by the mock-based unit test
+      // in permbot.test.ts → 'permbot lifecycle logging'.)
       const logContent = fs.readFileSync(logFile, 'utf8')
       expect(logContent).toMatch(/registered with IRC/)
       expect(logContent).toMatch(/IRC connection lost/)
       expect(logContent).toMatch(/IRC reconnected/)
+      expect(logContent).toMatch(/CAP LS:/)
+      expect(logContent).toMatch(/CAP ACK:/)
     } finally {
       try { stopPermbot?.() } catch { /* ignore */ }
       try { fs.unlinkSync(logFile) } catch { /* ignore */ }

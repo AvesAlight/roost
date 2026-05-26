@@ -7,6 +7,10 @@ import * as path from 'node:path'
 import { startPermbot } from '../src/permbot.js'
 import type { IrcMessage, MessageMeta, RoostIrcClient, SystemKind, SystemContent, UnreadInfo } from '../src/irc-client.js'
 
+function tmpLog(): string {
+  return path.join(os.tmpdir(), `permbot-log-test-${process.pid}-${Math.random().toString(36).slice(2)}.log`)
+}
+
 // ---- Mock client ------------------------------------------------------------
 
 function makeMockClient() {
@@ -367,5 +371,47 @@ describe('permbot ask-question channel routing', () => {
     replyChannel('operator', '#ch', 'chat')
     const resp = await respPromise
     expect(resp).toEqual({ reply: 'chat' })
+  })
+})
+
+describe('permbot lifecycle logging', () => {
+  it('writes lifecycle milestones to debugLog so operator grep contract holds', async () => {
+    // Issue #578 acceptance: `grep -E 'PING|PONG|reconnect|CAP|registered' permbot.log`
+    // must surface the full handshake/reconnect lifecycle. Lock the contract via the
+    // mock so a future SystemKind rename or handler tweak can't silently break it.
+    const sockPath = tmpSock()
+    const logFile = tmpLog()
+    const { client, emitSystem } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, worker: 'wkr', debugLog: logFile },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    emitSystem('registered', { nick: 'wkr-permbot' })
+    emitSystem('cap-ls', 'CAP LS: server-time,draft/multiline')
+    emitSystem('cap-ack', 'CAP ACK: server-time,draft/multiline')
+    emitSystem('cap-nak', 'CAP NAK: invalid-cap')
+    emitSystem('ping', 'PING received foo, PONG sent')
+    emitSystem('pong', 'PONG received bar')
+    emitSystem('reconnecting', 'reconnect attempt 1/10 in 2000ms')
+    emitSystem('disconnected', '[roost] disconnected from IRC')
+    emitSystem('reconnected', '[roost] reconnected to IRC')
+
+    const content = fs.readFileSync(logFile, 'utf8')
+    try {
+      expect(content).toMatch(/registered with IRC/)
+      expect(content).toMatch(/PING received/)
+      expect(content).toMatch(/PONG received/)
+      expect(content).toMatch(/CAP LS:/)
+      expect(content).toMatch(/CAP ACK:/)
+      expect(content).toMatch(/CAP NAK:/)
+      expect(content).toMatch(/reconnect attempt/)
+      expect(content).toMatch(/IRC connection lost/)
+      expect(content).toMatch(/IRC reconnected/)
+    } finally {
+      try { fs.unlinkSync(logFile) } catch { /* ignore */ }
+    }
   })
 })
