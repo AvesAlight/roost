@@ -399,6 +399,24 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on(`batch end ${BATCH_TYPE_CHATHISTORY}`, (e: BatchEndEvent) => this.handleChathistoryBatch(e))
     this.irc.on('socket close', () => this.handleSocketClose())
     this.irc.on('socket error', (err: Error) => this.handleSocketError(err))
+    // Forensic lifecycle events — surfaced for permbot's on-disk log. See SystemKind
+    // declaration for why these are exposed despite being noisy.
+    this.irc.on('ping', (e: { message?: string }) => this.emitSystem('ping', `PING received${e?.message ? ' ' + e.message : ''}, PONG sent`))
+    this.irc.on('pong', (e: { message?: string }) => this.emitSystem('pong', `PONG received${e?.message ? ' ' + e.message : ''}`))
+    this.irc.on('reconnecting', (e: { attempt?: number; max_retries?: number; wait?: number }) =>
+      this.emitSystem('reconnecting', `reconnect attempt ${e?.attempt ?? '?'}/${e?.max_retries ?? '?'} in ${e?.wait ?? '?'}ms`))
+    this.irc.on('cap ls', (e: { capabilities?: Record<string, string | boolean> }) => {
+      const names = e?.capabilities ? Object.keys(e.capabilities).sort().join(',') : ''
+      this.emitSystem('cap-ls', `CAP LS: ${names || '(empty)'}`)
+    })
+    this.irc.on('cap ack', (e: { capabilities?: string[] | Record<string, unknown> }) => {
+      const caps = Array.isArray(e?.capabilities) ? e.capabilities : Object.keys(e?.capabilities ?? {})
+      this.emitSystem('cap-ack', `CAP ACK: ${caps.sort().join(',') || '(none)'}`)
+    })
+    this.irc.on('cap nak', (e: { capabilities?: string[] | Record<string, unknown> }) => {
+      const caps = Array.isArray(e?.capabilities) ? e.capabilities : Object.keys(e?.capabilities ?? {})
+      this.emitSystem('cap-nak', `CAP NAK: ${caps.sort().join(',') || '(none)'}`)
+    })
     // 432 ERR_ERRONEUSNICKNAME, 433 ERR_NICKNAMEINUSE, 436 ERR_NICKCOLLISION
     for (const code of ['432', '433', '436']) {
       this.irc.on(code, () => {
