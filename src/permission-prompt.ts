@@ -18,6 +18,14 @@ const SESSION_ID  = process.env['CLAUDE_CODE_SESSION_ID'] ?? ''
 // keep in sync with src/pretooluse-prompt.ts (SOCKET_SAFETY_TIMEOUT)
 const SOCKET_SAFETY_TIMEOUT = Math.min(570, Math.max(1, Number(process.env['ROOST_PERM_TIMEOUT_SECS'] ?? '570')))
 
+// Fallback-DM deadlines. Split in two so a slow ergo registration doesn't eat
+// the budget reserved for flushing PRIVMSGs through quit(). The previous single
+// 10s timer meant a 9.5s register left 0.5s for say+quit+disconnect — under
+// load the parent process exited before quit() drained, the operator saw no
+// DM, and there was no log line to explain why. Tests override via env.
+const FALLBACK_REG_TIMEOUT_MS   = Math.max(1, Number(process.env['ROOST_FALLBACK_REG_TIMEOUT_MS']   ?? '5000'))
+const FALLBACK_FLUSH_TIMEOUT_MS = Math.max(1, Number(process.env['ROOST_FALLBACK_FLUSH_TIMEOUT_MS'] ?? '5000'))
+
 const PASSTHROUGH_PREFIXES = ['mcp__roost-irc__', 'mcp__plugin_roost_roost-irc__']
 
 // ---- Output -----------------------------------------------------------------
@@ -165,32 +173,69 @@ export async function askDaemon(summary: string): Promise<string | null> {
 
 // ---- Fallback DM via RoostIrcClient (transient connection) ------------------
 
+function flog(msg: string): void {
+  process.stderr.write(`perm-hook[${WORKER}]: fallback-dm: ${msg}\n`)
+}
+
 export async function sendFallbackDm(summary: string, reason: string): Promise<void> {
   if (!PERM_TARGET) return
   const nick = `pnotify-${WORKER}`
+  flog(`starting transient connection -> ${PERM_TARGET}`)
   const { RoostIrcClientImpl } = await import('./irc-client-impl.js')
   const client = new RoostIrcClientImpl({
     nick, autoJoin: [], historySize: 0, joinHistoryLines: 0, joinHistoryMinutes: 0,
   })
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, 10_000)
+    let done = false
+    const finish = (): void => { if (!done) { done = true; resolve() } }
+
+    // Registration deadline: armed at connect, cleared once 'registered' or
+    // 'cap-missing' fires. If it expires first, the IRC handshake never
+    // completed (ergo unreachable, CAP negotiation hung, etc.) and we bail
+    // without attempting PRIVMSGs.
+    const regTimer = setTimeout(() => {
+      flog(`registration timeout fired at ${FALLBACK_REG_TIMEOUT_MS}ms`)
+      try { client.quit() } catch { /* socket may already be dead */ }
+      finish()
+    }, FALLBACK_REG_TIMEOUT_MS)
+
+    // Flush deadline: armed only AFTER PRIVMSGs are sent + quit() called.
+    // Lets us wait for the 'disconnected' event (proof quit() drained the
+    // outbound buffer) without racing the registration timer.
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+
     let sent = false
-    client.on('system', (kind) => {
-      // 'registered' fires when multiline cap is available (real ergo);
-      // 'cap-missing' fires otherwise — both mean the connection is ready.
+    client.on('system', (kind, content) => {
       if ((kind === 'registered' || kind === 'cap-missing') && !sent) {
         sent = true
-        client.say(PERM_TARGET, `[${WORKER}] terminal fallback: ${reason}`)
-        for (const ln of summary.split('\n')) {
-          if (ln.trim()) client.say(PERM_TARGET, `  ${ln.trimEnd()}`)
-        }
-        client.say(PERM_TARGET, `(worker blocked on terminal — use \`roost tail ${WORKER}\` to see context, \`roost send ${WORKER} y\` to unblock)`)
-        // quit() flushes buffered writes before the connection drops;
-        // wait for 'disconnected' so PRIVMSGs are actually delivered.
+        clearTimeout(regTimer)
+        // Both states mean the connection is ready for PRIVMSGs, but
+        // cap-missing carries the reason (which cap wasn't advertised) and the
+        // operator usually wants that signal. Keep "registered" as the
+        // canonical grep prefix; append the cap-missing reason verbatim.
+        flog(kind === 'cap-missing' ? `registered (cap-missing: ${String(content)})` : 'registered successfully')
+        const lines = [
+          `[${WORKER}] terminal fallback: ${reason}`,
+          ...summary.split('\n').filter(l => l.trim()).map(l => `  ${l.trimEnd()}`),
+          `(worker blocked on terminal — use \`roost tail ${WORKER}\` to see context, \`roost send ${WORKER} y\` to unblock)`,
+        ]
+        for (const l of lines) client.say(PERM_TARGET, l)
+        flog(`PRIVMSGs sent (count=${lines.length})`)
         client.quit()
-      } else if (kind === 'disconnected' || kind === 'registration-failed') {
-        clearTimeout(timer)
-        resolve()
+        flushTimer = setTimeout(() => {
+          flog(`flush timeout fired at ${FALLBACK_FLUSH_TIMEOUT_MS}ms — DM may not have delivered`)
+          finish()
+        }, FALLBACK_FLUSH_TIMEOUT_MS)
+      } else if (kind === 'disconnected') {
+        flog('transient client disconnected (quit complete)')
+        clearTimeout(regTimer)
+        if (flushTimer) clearTimeout(flushTimer)
+        finish()
+      } else if (kind === 'registration-failed') {
+        flog('registration failed')
+        clearTimeout(regTimer)
+        if (flushTimer) clearTimeout(flushTimer)
+        finish()
       }
     })
     client.connect({ host: PERM_HOST, port: PERM_PORT, nick, username: nick, gecos: 'perm-notify' })

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, beforeAll } from 'bun:test'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as os from 'node:os'
@@ -6,6 +6,8 @@ import * as path from 'node:path'
 import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
 import { suppressLateRejection } from './helpers/tool.js'
 import { startPermbotStub, makeSock, captureIRC } from './helpers/permbot-stub.js'
+import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { connectPeer } from './helpers/peer.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
 
@@ -335,4 +337,99 @@ describe('permission-prompt hook', () => {
       fs.rmSync(dataDir, { recursive: true, force: true })
     }
   })
+})
+
+// ---- fallback DM against real ergo -----------------------------------------
+//
+// Wire-level coverage (test above, line ~191) verifies PRIVMSGs are emitted
+// against a stub IRC server. That stub skips CAP negotiation timing, server
+// caps the real ergo advertises, and the registered→say→quit→disconnected
+// ordering — which is exactly where the production failure landed (the hook
+// ran, the fallback path fired, but no DM reached the operator). This test
+// drives the hook subprocess against a real ergo and asserts the ask-target
+// receives the PRIVMSG, with a loose timing bound to catch regressions where
+// delivery still works but takes 30s.
+
+describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
+  let ergo: ErgoContext
+
+  beforeAll(async () => {
+    ergo = (await startErgo())!
+  })
+
+  it('delivers DM to operator when permbot socket is absent', async () => {
+    const operator = await connectPeer(ergo, 'op-real-1')
+    // Hook sends a header PRIVMSG, then one PRIVMSG per summary line. Wait for
+    // both: the header confirms the "terminal fallback" framing, the Bash line
+    // confirms summary lines actually made it across before quit().
+    const seenHeader = operator.waitForMessage(
+      operator.nick,
+      (m) => m.text.includes('terminal fallback') && m.nick.startsWith('pnotify-'),
+      8000,
+    )
+    const seenSummary = operator.waitForMessage(
+      operator.nick,
+      (m) => m.text.includes('Bash') && m.nick.startsWith('pnotify-'),
+      8000,
+    )
+
+    const start = Date.now()
+    const proc = Bun.spawn(['bun', HOOK], {
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        ROOST_IRC_NICK: 'worker-real-1',
+        ROOST_PERM_TARGET: operator.nick,
+        ROOST_PERM_HOST: ergo.host,
+        ROOST_PERM_PORT: String(ergo.port),
+      },
+      stdin: new TextEncoder().encode(PAYLOAD),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    const [stderr] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
+    const [header, summary] = await Promise.all([seenHeader, seenSummary])
+    const elapsed = Date.now() - start
+
+    expect(header.text).toContain('permbot unavailable')
+    expect(summary.text).toContain('Bash')
+    expect(elapsed).toBeLessThan(8000)
+    expect(stderr).toContain('starting transient connection')
+    expect(stderr).toContain('registered successfully')
+    expect(stderr).toContain('PRIVMSGs sent')
+    expect(stderr).toContain('transient client disconnected (quit complete)')
+  }, 15_000)
+
+  it('logs registration timeout when ergo never answers', async () => {
+    // Sink that accepts TCP but never speaks IRC — registration deadline must
+    // fire and the hook must still exit 0 with the documented log line.
+    const sink = net.createServer(() => { /* hold socket open, send nothing */ })
+    await new Promise<void>(r => sink.listen(0, '127.0.0.1', () => r()))
+    const { port } = sink.address() as net.AddressInfo
+
+    try {
+      const proc = Bun.spawn(['bun', HOOK], {
+        env: {
+          PATH: process.env.PATH ?? '/usr/bin:/bin',
+          ROOST_IRC_NICK: 'worker-real-2',
+          ROOST_PERM_TARGET: 'op-real-2',
+          ROOST_PERM_HOST: '127.0.0.1',
+          ROOST_PERM_PORT: String(port),
+          ROOST_FALLBACK_REG_TIMEOUT_MS: '300',
+          ROOST_FALLBACK_FLUSH_TIMEOUT_MS: '300',
+        },
+        stdin: new TextEncoder().encode(PAYLOAD),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const stderr = await new Response(proc.stderr).text()
+      await proc.exited
+
+      expect(stderr).toContain('starting transient connection')
+      expect(stderr).toContain('registration timeout fired')
+      expect(proc.exitCode).toBe(0)
+    } finally {
+      await new Promise<void>(r => sink.close(() => r()))
+    }
+  }, 10_000)
 })
