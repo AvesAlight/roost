@@ -205,11 +205,15 @@ export async function sendFallbackDm(summary: string, reason: string): Promise<v
     let flushTimer: ReturnType<typeof setTimeout> | null = null
 
     let sent = false
-    client.on('system', (kind) => {
+    client.on('system', (kind, content) => {
       if ((kind === 'registered' || kind === 'cap-missing') && !sent) {
         sent = true
         clearTimeout(regTimer)
-        flog('registered successfully')
+        // Both states mean the connection is ready for PRIVMSGs, but
+        // cap-missing carries the reason (which cap wasn't advertised) and the
+        // operator usually wants that signal. Keep "registered" as the
+        // canonical grep prefix; append the cap-missing reason verbatim.
+        flog(kind === 'cap-missing' ? `registered (cap-missing: ${String(content)})` : 'registered successfully')
         const lines = [
           `[${WORKER}] terminal fallback: ${reason}`,
           ...summary.split('\n').filter(l => l.trim()).map(l => `  ${l.trimEnd()}`),
@@ -223,8 +227,7 @@ export async function sendFallbackDm(summary: string, reason: string): Promise<v
           finish()
         }, FALLBACK_FLUSH_TIMEOUT_MS)
       } else if (kind === 'disconnected') {
-        flog('received disconnected event')
-        flog('quit completed')
+        flog('transient client disconnected (quit complete)')
         clearTimeout(regTimer)
         if (flushTimer) clearTimeout(flushTimer)
         finish()

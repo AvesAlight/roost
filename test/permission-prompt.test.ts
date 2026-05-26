@@ -397,7 +397,7 @@ describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
     expect(stderr).toContain('starting transient connection')
     expect(stderr).toContain('registered successfully')
     expect(stderr).toContain('PRIVMSGs sent')
-    expect(stderr).toContain('received disconnected event')
+    expect(stderr).toContain('transient client disconnected (quit complete)')
   }, 15_000)
 
   it('logs registration timeout when ergo never answers', async () => {
