@@ -1175,6 +1175,10 @@ cmd_hook_exec() {
   local name="$1"
   shift
   local target="${ROOST_DIR}/bin/${name}"
+  if [ ! -e "${target}" ]; then
+    echo "roost hook-exec: not found: ${target}" >&2
+    exit 127
+  fi
   if [ ! -x "${target}" ]; then
     echo "roost hook-exec: not executable: ${target}" >&2
     exit 127
