@@ -46,6 +46,10 @@ Agents reliably obey explicit output-shaping rules — an instruction to name on
 
 When a learning applies to "anyone touching these files" rather than to a specific role's behavior, path-scope beats audience-scope. Audience-scope limits reach to the named roles; path-scope fires for any agent reading matching files regardless of role. The test: does the rule hold because of who the agent is, or because of what code they're reading? If the latter, use paths: frontmatter.
 
+## 2026-05-26: Park defense-in-depth fix and observe after direct fix ships (from #585)
+
+When a symptom could plausibly be caused by two in-flight fixes (one direct, one defense-in-depth), park the defense-in-depth and observe after the direct fix ships. Shipping both at once means you can't tell which was load-bearing, and you may have spent budget on a band-aid that was solving a symptom of the real bug. Concrete: #585's data-dir-deletion fix (#586) and #580's classifyBash narrowness fix (#583) — parked #583, observed. If no escapes post-upgrade, #583 closes.
+
 ## 2026-05-21: Frame live-probe gating as milestone-savings, not pre-flip overhead (from #495)
 
 Frame live-probe gating as milestone-savings, not pre-flip overhead. When a worker (or you) treats the probe as optional polish, the gate stops firing — but the catch (a rewrite from scratch) costs far less than shipping a query that 400s on every tick. #495's Linear schema bug and #519's zsh extended_glob bug were both caught this way; neither would have surfaced from mocked tests.

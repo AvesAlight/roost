@@ -34,6 +34,10 @@ irc-framework's auto_reconnect gates on `registered_ms_ago > 5000` — reconnect
 
 When splitting connect-time timers into stages (registration → ready → flush), arm each stage's timer at stage entry, not all at connect. Arming both upfront recreates the all-or-nothing race in two timers instead of one — the flush window collapses while you wait on registration. Also: irc-framework's `registration-failed` only fires on nick-collision numerics (432/433/436), not on stalled CAP or a silent server. Use a wall-clock regTimer for hung-handshake detection.
 
+## 2026-05-26: Files in /tmp die on a schedule — don't store session-persistent state there (from #585)
+
+macOS tmp_cleaner runs daily at midnight, wiping files with atime+mtime+ctime all >3d (verified via `/System/Library/LaunchDaemons/com.apple.tmp_cleaner.plist` + `strings /usr/libexec/tmp_cleaner`). Long-running sessions that don't touch a /tmp file for 3+ days will lose it. For any path re-used across days (shim, lock, socket, log), prefer a brew-symlink-stable or absolute-clone-stable location. Only use /tmp for transient single-session state.
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
