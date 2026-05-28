@@ -201,7 +201,11 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     this.breakerReset(now)
     const state: NewIssuesPluginState = { repos: nextRepos }
     taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state, taggedEvents, channels: this.rememberChannels([]) }
+    // [] (not rememberChannels): membership is config-static (per-entry channels
+    // join at boot, project channel unioned by the orchestrator), so there's
+    // nothing dynamic to replay — skipChannels falls back to desiredChannels
+    // while the breaker is open.
+    return { state, taggedEvents, channels: [] }
   }
 }
 
