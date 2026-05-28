@@ -21,6 +21,7 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import type { GhCommit } from './github-api.js'
 import { GhPluginBase } from './base.js'
+import { formatReadFailureNote } from './backoff.js'
 
 export interface CommitWatchEntry {
   repo: string
@@ -179,6 +180,9 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       return { state, taggedEvents, channels: [] }
     }
 
+    const now = Date.now()
+    if (this.breakerOpen(now)) return this.breakerSkipResult(prevState ?? { commits: {} }, config)
+
     // Sequential — typical configs have <5 entries; serializing keeps WARN
     // log lines next to the entry they're about.
     for (const entry of watched) {
@@ -186,13 +190,20 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       const branch = entry.branch ?? DEFAULT_BRANCH
       const channels = entry.channels?.length ? [...entry.channels] : [projectChannel]
 
-      let commits: GhCommit[]
-      try {
-        commits = await this.client.fetchRepoCommits(entry.repo, branch, entry.path, PER_PAGE)
-      } catch (e) {
-        this.log(`github-commits: fetch failed for ${key}: ${e}\n`)
+      const r = await this.readEntry(
+        key,
+        channels,
+        formatReadFailureNote(this.name, key, `unwatch ${formatRepoSpec(entry.repo, entry.branch, entry.path)}`),
+        () => this.client.fetchRepoCommits(entry.repo, branch, entry.path, PER_PAGE),
+        now,
+      )
+      // Rate-limit discards this tick's partial work and preserves prev state.
+      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { commits: {} }, projectChannel, config)
+      if (!r.ok) {
+        taggedEvents.push(...r.events)
         continue
       }
+      const commits = r.value
 
       if (commits.length === 0) continue
       const newest = commits[0]
@@ -237,7 +248,8 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       state.commits[key] = { last_sha: newest.sha }
     }
 
+    this.breakerReset(now)
     taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state, taggedEvents, channels: this.desiredChannels(config) }
+    return { state, taggedEvents, channels: this.rememberChannels(this.desiredChannels(config)) }
   }
 }

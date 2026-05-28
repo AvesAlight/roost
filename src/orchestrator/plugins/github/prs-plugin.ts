@@ -3,6 +3,7 @@ import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel, linearIssueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginLogger, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
+import { formatReadFailureNote } from './backoff.js'
 import { GhScraper } from './scraper.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
@@ -162,17 +163,34 @@ export class GitHubPrsPlugin extends GhBase {
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null
+    const now = Date.now()
+    if (this.breakerOpen(now)) return this.breakerSkipResult(prevState ?? { prs: {} }, config)
+
     const scraper = new GhScraper(this.client, agentLogins)
 
     // Scrape in parallel — entries are independent. Preserve config order.
     // prevPr: undefined = seed; null = new entry; PrSnap = normal diff.
+    // readEntry returns a discriminated result instead of throwing, so a
+    // rate-limit on one entry doesn't abandon its siblings mid-flight.
     const scraped = await Promise.all(watched.map(async entry => {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
       const prevPr: PrSnap | null | undefined = prev === null ? undefined : (prev.prs[key] ?? null)
-      const { snap, events } = await scraper.scrapePr(repo, number, prevPr)
-      return { key, snap, events, entryChannels }
+      const r = await this.readEntry(
+        key,
+        [projectChannel],
+        formatReadFailureNote(this.name, key, `unwatch pr ${number}`),
+        () => scraper.scrapePr(repo, number, prevPr),
+        now,
+      )
+      return { key, prevPr, entryChannels, r }
     }))
+
+    // Any rate-limit → back off the whole tick; discard partial work, preserve prev.
+    if (scraped.some(s => !s.r.ok && s.r.rateLimited)) {
+      return this.breakerTripResult(now, prevState ?? { prs: {} }, projectChannel, config)
+    }
+    this.breakerReset(now)
 
     // Cross-link lookup: one batched Linear query per tick, gated on a
     // non-empty linear-issues watch set. Empty-watched is the load-bearing
@@ -187,7 +205,22 @@ export class GitHubPrsPlugin extends GhBase {
     // Static (config) + dynamic (linked-issues from scrape). Each linked-issue
     // channel is slugged against its own repo (closures can cross repos).
     const channels = new Set<string>(this.desiredChannels(config))
-    for (const { key, snap, events, entryChannels } of scraped) {
+    for (const { key, prevPr, entryChannels, r } of scraped) {
+      if (!r.ok) {
+        if (r.rateLimited) continue  // unreachable: any rate-limit returned above; narrows the type
+        // Transient skip: carry the prev snapshot forward and re-add its dynamic
+        // linked-issue/Linear channels so a flap doesn't PART them (the PR's own
+        // #issue-N is already in desiredChannels). Emit the cooldown note.
+        if (prevPr) {
+          curState.prs[key] = prevPr
+          const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
+          for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
+          for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) channels.add(linearIssueChannel(project, ident))
+        }
+        taggedEvents.push(...r.events)
+        continue
+      }
+      const { snap, events } = r.value
       curState.prs[key] = snap
       const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
       for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
@@ -233,6 +266,6 @@ export class GitHubPrsPlugin extends GhBase {
     }
 
     taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state: curState, taggedEvents, channels: [...channels] }
+    return { state: curState, taggedEvents, channels: this.rememberChannels([...channels]) }
   }
 }

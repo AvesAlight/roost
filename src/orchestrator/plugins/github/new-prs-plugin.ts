@@ -20,6 +20,7 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import { labelNames, type GhRepoPr } from './github-api.js'
 import { GhPluginBase } from './base.js'
+import { formatReadFailureNote } from './backoff.js'
 
 export interface NewPrsWatchEntry {
   repo: string
@@ -142,6 +143,10 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
     const watchEntries = slice.watched ?? []
     if (!watchEntries.length) return { state: prevState ?? { repos: {} }, taggedEvents: [], channels: [] }
 
+    const projectChannel = resolveProjectChannel(config)
+    const now = Date.now()
+    if (this.breakerOpen(now)) return this.breakerSkipResult(prevState ?? { repos: {} }, config)
+
     // Re-seed cleanly from older shapes (no `repos` key).
     const prev = (prevState != null && typeof prevState === 'object' && 'repos' in prevState)
       ? prevState as NewPrsPluginState
@@ -155,9 +160,23 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
       const { repo, channels } = entry
       const announcementChannels = channels?.length
         ? [...channels]
-        : [resolveProjectChannel(config)]
+        : [projectChannel]
 
-      const prs = await this.client.fetchRepoOpenPrs(repo)
+      const r = await this.readEntry(
+        repo,
+        announcementChannels,
+        formatReadFailureNote(this.name, repo, `unwatch new-prs ${repo}`),
+        () => this.client.fetchRepoOpenPrs(repo),
+        now,
+      )
+      // Rate-limit discards this tick's partial work and preserves prev state —
+      // the next clean tick re-reads and announces what's genuinely new.
+      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { repos: {} }, projectChannel, config)
+      if (!r.ok) {
+        taggedEvents.push(...r.events)
+        continue
+      }
+      const prs = r.value
 
       // All open PR numbers go into state — prevents replay if agent_logins changes.
       const currentNumbers = prs
@@ -191,9 +210,10 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
       nextRepos[repo] = [...seen].sort((a, b) => a - b)
     }
 
+    this.breakerReset(now)
     const state: NewPrsPluginState = { repos: nextRepos }
-    taggedEvents.push(...await this.observeRateLimit(resolveProjectChannel(config)))
-    return { state, taggedEvents, channels: [] }
+    taggedEvents.push(...await this.observeRateLimit(projectChannel))
+    return { state, taggedEvents, channels: this.rememberChannels([]) }
   }
 }
 

@@ -1,11 +1,13 @@
 import type { PluginLogger } from '../../plugin.js'
 import type { RateLimitInfo } from '../_rate-limit.js'
 
-// Stderr patterns we retry on. 404/401/422/etc. throw on first attempt; 422
-// is logged verbatim in spawnGh so a 422-as-race shows in dispatcher logs.
+// Stderr patterns we retry on (network/server transients). Rate-limit and 404
+// are handled separately below — rate-limit fails fast (the caller's breaker
+// owns the backoff schedule); 404 retries on a shorter base since an upstream
+// edge-flap clears on the next request, not after server recovery. 422 throws
+// on first attempt, logged verbatim so a 422-as-race shows in dispatcher logs.
 const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
   { re: /HTTP 5\d\d/i, label: 'http-5xx' },
-  { re: /HTTP 429/i, label: 'http-429-rate-limit' },
   { re: /\btimed out\b/i, label: 'timeout' },
   { re: /\bcontext deadline exceeded\b/i, label: 'timeout' },
   { re: /\bi\/o timeout\b/i, label: 'timeout' },
@@ -17,12 +19,36 @@ const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
 ]
 
 const HTTP_422 = /HTTP 422/i
+const HTTP_404 = /HTTP 404/i
+const HTTP_403 = /HTTP 403/i
+const HTTP_429 = /HTTP 429/i
+const RATE_LIMIT_MSG = /rate limit|secondary rate/i
 
 function classifyTransient(stderr: string): string | null {
   for (const { re, label } of TRANSIENT_PATTERNS) {
     if (re.test(stderr)) return label
   }
   return null
+}
+
+// Rate-limit = HTTP 429, or HTTP 403 carrying a rate-limit message (primary or
+// secondary). A 403 without that message is a real permission error and is left
+// to throw. Retrying a rate-limit in-loop just burns the budget we're limited
+// on, so spawnGh fails fast and the caller's breaker applies the backoff.
+function isRateLimitStderr(stderr: string): boolean {
+  if (HTTP_429.test(stderr)) return true
+  return HTTP_403.test(stderr) && RATE_LIMIT_MSG.test(stderr)
+}
+
+export function isRateLimitError(e: unknown): boolean {
+  return e instanceof GhError && isRateLimitStderr(e.stderr)
+}
+
+// Expected/transient gh error class the per-entry readEntry path skips with a
+// cooldown-gated note (vs failing the whole tick): a 404 that survived its
+// retries, or any network/server transient that exhausted its retries.
+export function isExpectedTransientError(e: unknown): boolean {
+  return e instanceof GhError && (HTTP_404.test(e.stderr) || classifyTransient(e.stderr) != null)
 }
 
 export class GhError extends Error {
@@ -67,6 +93,7 @@ export interface SpawnDeps {
   sleep?: (ms: number) => Promise<void>
   attempts?: number          // total tries; default 3
   baseMs?: number            // first backoff; default 1000
+  notFoundBaseMs?: number    // first backoff for 404 retries; default 250
   jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
   random?: () => number      // 0..1; default Math.random
   exec?: (args: string[]) => Promise<unknown>  // default runGhOnce
@@ -79,6 +106,7 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
   const log = deps.log
   const totalAttempts = deps.attempts ?? 3
   const baseMs = deps.baseMs ?? 1000
+  const notFoundBaseMs = deps.notFoundBaseMs ?? 250
   const jitterFraction = deps.jitterFraction ?? 0.5
   const random = deps.random ?? Math.random
   const exec = deps.exec ?? runGhOnce
@@ -90,18 +118,25 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
     } catch (e) {
       // Non-GhError = upstream contract bug (missing gh, spawn crash) — bypass retry.
       if (!(e instanceof GhError)) throw e
+      // Rate-limit fails fast — retrying burns the budget we're limited on. The
+      // caller's breaker owns the minutes-scale backoff.
+      if (isRateLimitStderr(e.stderr)) {
+        log(`gh-retry: ${cmd} rate-limited (not retried here) — stderr verbatim:\n${e.stderr}\n`)
+        throw e
+      }
       if (HTTP_422.test(e.stderr)) {
         log(`gh-retry: ${cmd} HTTP 422 (non-transient) — stderr verbatim:\n${e.stderr}\n`)
         throw e
       }
-      const matched = classifyTransient(e.stderr)
+      const is404 = HTTP_404.test(e.stderr)
+      const matched = is404 ? 'http-404' : classifyTransient(e.stderr)
       if (!matched) throw e
       const attemptNum = i + 1
       if (attemptNum >= totalAttempts) {
         log(`gh-retry: ${cmd} exhausted ${totalAttempts} attempts (matched=${matched}) — stderr verbatim:\n${e.stderr}\n`)
         throw new GhError(`${e.message}\n(after ${totalAttempts} retries)`, e.stderr, totalAttempts)
       }
-      const backoff = Math.round(baseMs * Math.pow(2, i) * (1 + random() * jitterFraction))
+      const backoff = Math.round((is404 ? notFoundBaseMs : baseMs) * Math.pow(2, i) * (1 + random() * jitterFraction))
       log(`gh-retry: ${cmd} attempt ${attemptNum}/${totalAttempts} matched=${matched}, backoff ${backoff}ms before next try\n`)
       await sleep(backoff)
     }
