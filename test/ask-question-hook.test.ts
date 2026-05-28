@@ -195,6 +195,26 @@ describe('ask-question-hook subprocess', () => {
     expect(out.hookSpecificOutput.updatedInput.answers['Which framework?']).toBe('React')
   }, 10_000)
 
+  it('returns deny with the cause when the daemon reports unreachable', async () => {
+    const sockPath = makeSock('ask-hook')
+    const cause = "permbot unreachable: 432 Erroneous nickname for nick 'permbot-worker-test' (19 chars) — raise limits.nicklen in ergo.yaml"
+    const stub = startPermbotStub(sockPath, { error: cause, unreachable: true })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_ASK_CHANNEL: '#ask-channel',
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain(cause)
+  }, 10_000)
+
   it('returns deny when permbot times out', async () => {
     const sockPath = makeSock('ask-hook')
     // Stub that accepts connections but never responds → triggers socket timeout

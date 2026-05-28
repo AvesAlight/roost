@@ -267,6 +267,28 @@ describe('permission-prompt hook', () => {
     expect(out.hookSpecificOutput.decision.message).toBe('operator denied via IRC')
   }, 10_000)
 
+  it('fails closed (deny) with the cause when the daemon reports unreachable', async () => {
+    const sockPath = makeSock('perm-hook')
+    const cause = "permbot unreachable: 432 Erroneous nickname for nick 'permbot-worker-test' (19 chars) — likely exceeds the server nicklen; raise limits.nicklen in ergo.yaml if the nick exceeds it, then respawn the agent (a wedged permbot cannot self-heal)"
+    const stub = startPermbotStub(sockPath, { error: cause, unreachable: true })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+        // No PERM_HOST/PORT: proves the unreachable path does NOT attempt a
+        // fallback DM (which would hit the same registration failure).
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { decision: { behavior: string; message?: string } } }
+    expect(out.hookSpecificOutput.decision.behavior).toBe('deny')
+    expect(out.hookSpecificOutput.decision.message).toBe(cause)
+  }, 10_000)
+
   it('emits ask when operator reply is unrecognized', async () => {
     const sockPath = makeSock('perm-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })

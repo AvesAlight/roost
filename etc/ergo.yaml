@@ -169,7 +169,10 @@ languages:
     path: languages
 
 limits:
-    nicklen: 32
+    # Headroom for the longest derived nicks: permbot-/pnotify- prefixes on a
+    # multi-repo <project>-<slug>-reviewer-<NNNN> worker nick. A nick over this
+    # limit is rejected at registration with 432 — keep it generous.
+    nicklen: 48
     identlen: 20
     realnamelen: 150
     channellen: 64
