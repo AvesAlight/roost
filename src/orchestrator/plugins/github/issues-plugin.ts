@@ -30,6 +30,10 @@ export class GitHubIssuesPlugin extends GhBase {
     const projectChannel = resolveProjectChannel(config)
     const defaultRepo = config.repo
     const watched = this.watched(config)
+    // Nothing to poll: return before the breaker block. An idle plugin must not
+    // reset the shared breaker — at half-open it would clear a sibling's
+    // in-flight escalation every tick and pin the backoff at its first window.
+    if (!watched.length) return { state: prevState ?? { issues: {} }, taggedEvents: [], channels: [] }
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null
@@ -49,7 +53,7 @@ export class GitHubIssuesPlugin extends GhBase {
       const r = await this.readEntry(
         key,
         [projectChannel],
-        formatReadFailureNote(this.name, key, `unwatch ${number}`),
+        formatReadFailureNote(this.name, key, `unwatch ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`),
         () => scraper.scrapeIssue(repo, number, prevIssue),
         now,
       )
