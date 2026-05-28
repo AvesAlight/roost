@@ -65,8 +65,9 @@ export type SystemKind =
   | 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
   | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls'
 // string for disconnected/reconnected/cap-missing/ping/pong/reconnecting/cap-*;
-// { nick } for registered; { code } for registration-failed.
-export type SystemContent = string | { code?: number; nick?: string }
+// { nick } for registered; { code, nick, reason } for registration-failed
+// (reason is the server's text for the numeric, e.g. "Erroneous nickname").
+export type SystemContent = string | { code?: number; nick?: string; reason?: string }
 
 export type MembershipKind = 'join' | 'leave' | 'nick'
 

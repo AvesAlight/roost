@@ -211,6 +211,27 @@ describe('pretooluse-prompt hook subprocess', () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
   }, 10_000)
 
+  it('fails closed (deny) with the cause when the daemon reports unreachable', async () => {
+    const sockPath = makeSock('pretooluse-hook')
+    const cause = "permbot unreachable: 432 Erroneous nickname for nick 'permbot-worker-test' (19 chars) — raise limits.nicklen in ergo.yaml"
+    const stub = startPermbotStub(sockPath, { error: cause, unreachable: true })
+    await stub.ready
+
+    const [{ stdout }] = await Promise.all([
+      runHook({
+        ROOST_IRC_NICK: 'worker-test',
+        ROOST_PERM_SOCK: sockPath,
+        ROOST_PERM_TARGET: 'operator',
+        // No PERM_HOST/PORT: the unreachable path must NOT attempt a fallback DM.
+      }),
+      stub.done,
+    ])
+
+    const out = JSON.parse(stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string } }
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBe(cause)
+  }, 10_000)
+
   it('emits ask + falls back when operator reply is unrecognized', async () => {
     const sockPath = makeSock('pretooluse-hook')
     const stub = startPermbotStub(sockPath, { reply: 'maybe later' })

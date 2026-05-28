@@ -374,6 +374,53 @@ describe('permbot ask-question channel routing', () => {
   })
 })
 
+describe('permbot registration failure (fail loud + fail closed)', () => {
+  it('on registration-failed: fails in-flight, queued, and future requests with the unreachable cause; keeps the socket', async () => {
+    const sockPath = tmpSock()
+    const logFile = tmpLog()
+    const { client, emitSystem } = makeMockClient()
+    const { stop, ready } = startPermbot(
+      { nick: 'permbot-test', sockPath, worker: 'wkr', debugLog: logFile },
+      client,
+    )
+    stops.push(stop)
+    await ready
+
+    const { response: inflight } = await socketSend(sockPath, { summary: 'Read /x', timeout: 30, kind: 'permission', replyTarget: 'operator' })
+    const { response: queued } = await socketSend(sockPath, { summary: 'Read /y', timeout: 30, kind: 'permission', replyTarget: 'operator' })
+    await new Promise(r => setTimeout(r, 30))
+
+    // The permbot's IRC nick is rejected at registration (e.g. exceeds nicklen).
+    const longNick = 'permbot-this-is-a-very-long-worker-nick-indeed'
+    emitSystem('registration-failed', { code: 432, nick: longNick, reason: 'Erroneous nickname' })
+
+    const [r1, r2] = await Promise.all([inflight, queued]) as Array<{ error?: string; unreachable?: boolean }>
+    for (const r of [r1, r2]) {
+      expect(r.unreachable).toBe(true)
+      expect(r.error).toContain('permbot unreachable')
+      expect(r.error).toContain('432')
+      expect(r.error).toContain('nicklen')
+      expect(r.error).toContain(`(${longNick.length} chars)`)
+      expect(r.error).toContain('respawn')
+    }
+
+    // A request arriving AFTER the failure is rejected immediately, not queued.
+    const post = await socketRoundtrip(sockPath, { summary: 'Read /z', timeout: 30, kind: 'permission', replyTarget: 'operator' }) as { unreachable?: boolean }
+    expect(post.unreachable).toBe(true)
+
+    // We did NOT stop()/unlink — the socket stays up so the cause keeps reaching the hook.
+    expect(fs.existsSync(sockPath)).toBe(true)
+
+    const logContent = fs.readFileSync(logFile, 'utf8')
+    try {
+      expect(logContent).toMatch(/FATAL permbot unreachable/)
+      expect(logContent).toMatch(/raise limits\.nicklen/)
+    } finally {
+      try { fs.unlinkSync(logFile) } catch { /* ignore */ }
+    }
+  })
+})
+
 describe('permbot lifecycle logging', () => {
   it('writes lifecycle milestones to debugLog so operator grep contract holds', async () => {
     // Issue #578 acceptance: `grep -E 'PING|PONG|reconnect|CAP|registered' permbot.log`

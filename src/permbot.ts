@@ -7,7 +7,7 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
 import type { IrcMessage, RoostIrcClient } from './irc-client.js'
-import { CHAT_KEYWORDS, type PermBotKind } from './permbot-socket.js'
+import { CHAT_KEYWORDS, describeNickReject, type PermBotKind } from './permbot-socket.js'
 
 // ---- Types ------------------------------------------------------------------
 
@@ -81,10 +81,23 @@ export function startPermbot(
   const queue: QueueEntry[] = []
   let inFlight: InFlight | null = null
   let shuttingDown = false
+  // Set when the permbot's IRC link permanently fails to register (432, etc.).
+  // Holds the deny reason. While set, every request is rejected immediately
+  // rather than queued against a connection that will never deliver. Cleared
+  // only if a later 'registered' fires — defensive; a 432-wedged client never
+  // reaches a second 001, so recovery is operator respawn, not auto-heal.
+  let unreachable: string | null = null
 
   function respond(socket: net.Socket, payload: object): void {
     try { socket.write(JSON.stringify(payload) + '\n') } catch { /* ignore */ }
     socket.destroy()
+  }
+
+  // Loud failure goes to BOTH stderr (captured by the tmux session) and
+  // permbot.log so an operator greps it from either surface.
+  function logLoud(msg: string): void {
+    process.stderr.write(`roost-irc[${nick}]: ${msg}\n`)
+    log(msg)
   }
 
   function maybeDispatch(): void {
@@ -185,6 +198,12 @@ export function startPermbot(
       }
       const kind: PermBotKind = req.kind
 
+      if (unreachable !== null) {
+        log(`request rejected (unreachable): kind=${kind} replyTarget=${replyTarget}`)
+        respond(socket, { error: unreachable, unreachable: true })
+        return
+      }
+
       log(`queued request: kind=${kind} replyTarget=${replyTarget} ${JSON.stringify(req)}`)
       queue.push({ socket, summary, timeout, kind, replyTarget, channel })
       maybeDispatch()
@@ -241,15 +260,36 @@ export function startPermbot(
   client.on('system', (kind, content) => {
     const detail = typeof content === 'string' ? content : ''
     if (kind === 'registered') {
+      if (unreachable !== null) {
+        unreachable = null
+        logLoud('IRC registration recovered — clearing unreachable state')
+      }
       log('registered with IRC (001 received)')
     } else if (kind === 'registration-failed') {
-      log('FATAL nick registration failure, shutting down')
-      stop()
+      // Fail loud + fail closed: the IRC link will never deliver, so reject
+      // everything now instead of letting the hook wait out its socket timeout
+      // with no connection. The socket server stays up so the cause reaches
+      // the hook (and the operator's log) — we do NOT stop()/unlink here.
+      const failContent = typeof content === 'object' && content !== null ? content : {}
+      unreachable = `permbot unreachable: ${describeNickReject(failContent)}`
+      logLoud(`FATAL ${unreachable}`)
+      if (inFlight !== null) {
+        clearTimeout(inFlight.timer)
+        clearTimeout(inFlight.nudgeTimer)
+        respond(inFlight.socket, { error: unreachable, unreachable: true })
+        inFlight = null
+      }
+      for (const e of queue) respond(e.socket, { error: unreachable, unreachable: true })
+      queue.length = 0
     } else if (kind === 'disconnected') {
       // The unix socket stays open while IRC reconnects; in-flight requests time
       // out as usual. The hook's askDaemon falls back only if the socket itself
-      // is gone, which it isn't during a transient drop.
-      log('IRC connection lost — waiting for auto-reconnect')
+      // is gone, which it isn't during a transient drop. But a never-registered
+      // client (432) won't auto-reconnect, so don't claim it will — that's the
+      // log line that masked the original incident.
+      log(unreachable !== null
+        ? 'IRC connection closed after registration failure — no auto-reconnect (see FATAL above)'
+        : 'IRC connection lost — waiting for auto-reconnect')
     } else if (kind === 'reconnected') {
       log(`IRC reconnected${detail ? ': ' + detail : ''}`)
     } else if (kind === 'reconnecting') {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { checkOwnership } from './owner-gate.js'
-import { socketRoundtrip, CHAT_KEYWORDS, permbotNickFor } from './permbot-socket.js'
+import { socketRoundtrip, CHAT_KEYWORDS, permbotNickFor, type DaemonResponse } from './permbot-socket.js'
 
 const HOOK_EVENT   = 'PreToolUse'
 const WORKER       = process.env['ROOST_IRC_NICK'] ?? 'unknown'
@@ -128,7 +128,7 @@ export function mapReplyToAnswers(reply: string, questions: Question[]): Record<
 
 // ---- Socket round-trip to permbot -------------------------------------------
 
-export async function askPermbot(summary: string): Promise<string | null> {
+export async function askPermbot(summary: string): Promise<DaemonResponse> {
   const req: Record<string, unknown> = { summary, timeout: SOCKET_TIMEOUT, kind: 'question' }
   if (ASK_CHANNEL) req['channel'] = ASK_CHANNEL  // omit → DM mode
   if (ASK_TARGET) req['replyTarget'] = ASK_TARGET
@@ -170,16 +170,19 @@ if (import.meta.main) {
   // In channel mode include the permbot nick so the hint tells operators how to DM.
   const permbotNick = ASK_CHANNEL ? permbotNickFor(WORKER) : undefined
   const summary = formatQuestionsForIRC(questions, permbotNick)
-  const reply = await askPermbot(summary)
+  const res = await askPermbot(summary)
 
-  if (reply === null) {
+  if (res.kind === 'unreachable') {
+    deny(`${res.cause}. Decide without user input or retry after the operator fixes it.`)
+  }
+  if (res.kind !== 'reply') {
     deny(`No IRC reply within ${SOCKET_TIMEOUT}s — permbot unavailable or timed out. Decide without user input or retry.`)
   }
 
-  if (CHAT_KEYWORDS.has(reply!.trim().toLowerCase())) {
+  if (CHAT_KEYWORDS.has(res.reply.trim().toLowerCase())) {
     deny('operator requested to chat — decide without user input or re-ask via a follow-up message')
   }
 
-  const answers = mapReplyToAnswers(reply!, questions)
+  const answers = mapReplyToAnswers(res.reply, questions)
   allow(questions, answers)
 }

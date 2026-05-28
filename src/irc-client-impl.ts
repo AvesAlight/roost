@@ -417,12 +417,20 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       const caps = Array.isArray(e?.capabilities) ? e.capabilities : Object.keys(e?.capabilities ?? {})
       this.emitSystem('cap-nak', `CAP NAK: ${caps.sort().join(',') || '(none)'}`)
     })
-    // 432 ERR_ERRONEUSNICKNAME, 433 ERR_NICKNAMEINUSE, 436 ERR_NICKCOLLISION
-    for (const code of ['432', '433', '436']) {
-      this.irc.on(code, () => {
-        if (!this.ircReady) this.emitSystem('registration-failed', { code: Number(code) })
-      })
+    // Registration-failure detection. irc-framework remaps these numerics to
+    // NAMED events before emitting — it never emits the bare numeric — so we
+    // listen on the names, not '432'/'433'. 432 ERR_ERRONEOUSNICKNAME →
+    // 'nick invalid', 433 ERR_NICKNAMEINUSE → 'nick in use'. The library does
+    // no auto-rename, so either numeric stalls registration permanently. The
+    // !ircReady gate scopes this to the handshake: a post-registration /NICK
+    // rejection is not a registration failure. (436 ERR_NICKCOLLISION has no
+    // irc-framework event mapping and is a server-to-server numeric that a
+    // single-server ergo never emits, so there's nothing to listen for.)
+    const onNickReject = (code: number) => (e: { nick?: string; reason?: string }) => {
+      if (!this.ircReady) this.emitSystem('registration-failed', { code, nick: e?.nick, reason: e?.reason })
     }
+    this.irc.on('nick invalid', onNickReject(432))
+    this.irc.on('nick in use', onNickReject(433))
   }
 
   // ---- IRC event handlers ------------------------------------------------

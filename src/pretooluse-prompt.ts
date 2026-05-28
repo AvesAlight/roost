@@ -15,7 +15,7 @@
 // queue, nudge logic, and operator UX stay in one place.
 
 import { checkOwnership } from './owner-gate.js'
-import { socketRoundtrip } from './permbot-socket.js'
+import { socketRoundtrip, type DaemonResponse } from './permbot-socket.js'
 import {
   summarize,
   extractIntent,
@@ -142,7 +142,7 @@ function emit(decision: 'allow' | 'deny' | 'ask', reason = ''): never {
 
 // ---- Socket round-trip ------------------------------------------------------
 
-async function askDaemon(summary: string): Promise<string | null> {
+async function askDaemon(summary: string): Promise<DaemonResponse> {
   const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT, kind: 'permission' }
   if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => {
@@ -193,17 +193,24 @@ if (import.meta.main) {
   }
   const summary = summaryLines.join('\n')
 
-  const reply = await askDaemon(summary)
-  if (reply === null) {
+  const res = await askDaemon(summary)
+  if (res.kind === 'unreachable') {
+    // Fail closed with the cause — the permbot is up but its IRC link never
+    // registered, so no operator can answer. No fallback DM: pnotify's nick
+    // would hit the same registration failure.
+    process.stderr.write(`pretooluse-hook[${WORKER}]: ${res.cause}\n`)
+    emit('deny', res.cause)
+  }
+  if (res.kind !== 'reply') {
     await sendFallbackDm(summary, 'permbot unavailable / timed out (PreToolUse Bash)')
     emit('ask', 'permbot unavailable / timed out; falling back to terminal')
   }
 
-  const parts = reply!.trim().split(/\s+/, 2)
+  const parts = res.reply.trim().split(/\s+/, 2)
   const norm = (parts[0] ?? '').toLowerCase()
   const msg  = parts[1] ?? ''
   if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg || 'operator approved via IRC')
   if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg || 'operator denied via IRC')
-  await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
-  emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)
+  await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(res.reply)}`)
+  emit('ask', `unrecognized reply ${JSON.stringify(res.reply)}; falling back to terminal`)
 }

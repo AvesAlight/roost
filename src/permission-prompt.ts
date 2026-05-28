@@ -3,7 +3,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { checkOwnership } from './owner-gate.js'
-import { socketRoundtrip } from './permbot-socket.js'
+import { socketRoundtrip, describeNickReject, type DaemonResponse } from './permbot-socket.js'
 
 const WORKER      = process.env['ROOST_IRC_NICK'] ?? 'unknown'
 const SOCK_PATH   = process.env['ROOST_PERM_SOCK'] ?? ''
@@ -165,7 +165,7 @@ export function resolveTranscriptPath(transcriptPath: string, agentId: string): 
 
 // ---- Socket round-trip to permbot daemon ------------------------------------
 
-export async function askDaemon(summary: string): Promise<string | null> {
+export async function askDaemon(summary: string): Promise<DaemonResponse> {
   const req: Record<string, unknown> = { summary, timeout: SOCKET_SAFETY_TIMEOUT, kind: 'permission' }
   if (PERM_TARGET) req['replyTarget'] = PERM_TARGET
   return socketRoundtrip(SOCK_PATH, req, (msg) => { process.stderr.write(`perm-hook[${WORKER}]: ${msg}\n`) })
@@ -232,7 +232,11 @@ export async function sendFallbackDm(summary: string, reason: string): Promise<v
         if (flushTimer) clearTimeout(flushTimer)
         finish()
       } else if (kind === 'registration-failed') {
-        flog('registration failed')
+        // The DM can't deliver on an unregistered nick, but name the cause so
+        // it's greppable rather than a bare "registration failed". pnotify's
+        // nick is longer than the permbot's, so it hits 432 even more readily.
+        const detail = typeof content === 'object' && content !== null ? content : {}
+        flog(`registration rejected — ${describeNickReject(detail)}`)
         clearTimeout(regTimer)
         if (flushTimer) clearTimeout(flushTimer)
         finish()
@@ -281,17 +285,25 @@ if (import.meta.main) {
   }
   const summary = summaryLines.join('\n')
 
-  const reply = await askDaemon(summary)
-  if (reply === null) {
+  const res = await askDaemon(summary)
+  if (res.kind === 'unreachable') {
+    // Fail closed: the permbot is up but its IRC link never registered, so no
+    // operator can answer. Deny with the cause instead of hanging at a terminal
+    // prompt nobody is watching. Skip the fallback DM — pnotify's nick would hit
+    // the same registration failure.
+    process.stderr.write(`perm-hook[${WORKER}]: ${res.cause}\n`)
+    emit('deny', res.cause)
+  }
+  if (res.kind !== 'reply') {
     await sendFallbackDm(summary, 'permbot unavailable / timed out')
     emit('ask', 'permbot unavailable / timed out; falling back to terminal')
   }
 
-  const parts = reply!.trim().split(/\s+/, 2)
+  const parts = res.reply.trim().split(/\s+/, 2)
   const norm = (parts[0] ?? '').toLowerCase()
   const msg  = parts[1] ?? ''
   if (['y', 'yes', 'allow', 'ok', 'approve'].includes(norm)) emit('allow', msg || 'operator approved via IRC')
   if (['n', 'no', 'deny', 'block'].includes(norm)) emit('deny', msg || 'operator denied via IRC')
-  await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(reply)}`)
-  emit('ask', `unrecognized reply ${JSON.stringify(reply)}; falling back to terminal`)
+  await sendFallbackDm(summary, `unrecognized reply ${JSON.stringify(res.reply)}`)
+  emit('ask', `unrecognized reply ${JSON.stringify(res.reply)}; falling back to terminal`)
 }
