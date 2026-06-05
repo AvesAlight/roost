@@ -2,11 +2,20 @@ import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
-import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type TaggedEvent } from '../../plugin.js'
+import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
-import { GhClient, fetchRateLimit } from './github-api.js'
-import { observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { GhClient, GhError, fetchRateLimit, isExpectedTransientError, isRateLimitError } from './github-api.js'
+import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { RateLimitBreaker, formatBackoffNotice } from './backoff.js'
+
+// Per-entry read outcome. `readEntry` never throws the expected gh-error
+// classes — it returns one of these so a caller's Promise.all over entries
+// never abandons sibling reads (bun late-rejection footgun) on the first error.
+export type ReadEntryResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; rateLimited: true }
+  | { ok: false; rateLimited: false; events: TaggedEvent[] }
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
 // scaffolding; non-watching plugins (e.g. GitHubNewIssuesPlugin) extend directly.
@@ -19,6 +28,18 @@ export abstract class GhPluginBase extends BasePlugin {
   // Cross-instance cooldown handle — one warning per 10 min total.
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
+  // One breaker shared across every GH plugin — they poll one shared GH budget,
+  // so a rate-limit on any of them should quiet all of them.
+  private static readonly _breaker = new RateLimitBreaker()
+
+  // Per-entry skip-note cooldown (per instance — a per-watcher signal, unlike
+  // the cross-instance rate-limit warn cooldown). Keyed by the entry's read key.
+  private _skipWarnedAt = new Map<string, number>()
+
+  // Last channel set this plugin returned from a clean tick — replayed while the
+  // breaker is open so a multi-minute backoff doesn't PART the watched channels.
+  private _lastChannels: string[] = []
+
   constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
     super(defaultChannel)
     this.log = log
@@ -27,6 +48,82 @@ export abstract class GhPluginBase extends BasePlugin {
 
   protected agentLogins(config: OrchestratorConfig): Set<string> {
     return new Set(config.agent_logins ?? [])
+  }
+
+  // Test-only: reset the shared breaker between cases. The breaker is a
+  // class-static, so trip state would otherwise leak across tests.
+  static resetBreakerForTest(): void {
+    GhPluginBase._breaker.forceClose()
+  }
+
+  // ---- gh-call resilience (rate-limit breaker + per-entry transient skip) ---
+
+  // True while the breaker is open — callers return `breakerSkipResult` and skip
+  // all polling for the tick.
+  protected breakerOpen(now: number): boolean {
+    return GhPluginBase._breaker.shouldSkip(now)
+  }
+
+  // Silent skip while the breaker is open: preserve state, replay last channels.
+  protected breakerSkipResult(prevState: unknown, config: OrchestratorConfig): PluginTickResult {
+    return { state: prevState, taggedEvents: [], channels: this.skipChannels(config) }
+  }
+
+  // A rate-limit surfaced this tick: open/escalate the breaker, emit one notice
+  // when it actually advanced, preserve state and channels.
+  protected breakerTripResult(now: number, prevState: unknown, projectChannel: string, config: OrchestratorConfig): PluginTickResult {
+    const window = GhPluginBase._breaker.trip(now)
+    const taggedEvents: TaggedEvent[] = window != null
+      ? [{ channels: [projectChannel], payload: { kind: 'oneline', text: formatBackoffNotice(window) } }]
+      : []
+    return { state: prevState, taggedEvents, channels: this.skipChannels(config) }
+  }
+
+  // Close the breaker after a clean tick (half-open recovery).
+  protected breakerReset(now: number): void {
+    GhPluginBase._breaker.reset(now)
+  }
+
+  // Record the channels a clean tick is returning, for breaker-open replay.
+  protected rememberChannels(channels: string[]): string[] {
+    this._lastChannels = channels
+    return channels
+  }
+
+  private skipChannels(config: OrchestratorConfig): string[] {
+    return this._lastChannels.length ? this._lastChannels : this.desiredChannels(config)
+  }
+
+  // Run one watched entry's read. Returns a discriminated result instead of
+  // throwing the expected gh-error classes:
+  //   - success                       → { ok: true, value }
+  //   - rate-limit                    → { ok: false, rateLimited: true }  (caller trips the breaker)
+  //   - 404 / transient past retries  → { ok: false, rateLimited: false, events } (cooldown-gated note, skip entry)
+  //   - 422 / non-GhError             → re-thrown (a real defect surfaces as dispatcher_error)
+  // `noteText` is the cooldown-gated message; `noteChannels` route it.
+  protected async readEntry<T>(
+    cooldownKey: string,
+    noteChannels: string[],
+    noteText: string,
+    body: () => Promise<T>,
+    now = Date.now(),
+  ): Promise<ReadEntryResult<T>> {
+    try {
+      return { ok: true, value: await body() }
+    } catch (e) {
+      if (!(e instanceof GhError)) throw e
+      if (isRateLimitError(e)) return { ok: false, rateLimited: true }
+      if (!isExpectedTransientError(e)) throw e
+      this.log(`[${this.name}] read failing for ${cooldownKey}: ${e.message}\n`)
+      const last = this._skipWarnedAt.get(cooldownKey) ?? 0
+      if (now - last <= WARN_COOLDOWN_MS) return { ok: false, rateLimited: false, events: [] }
+      this._skipWarnedAt.set(cooldownKey, now)
+      return {
+        ok: false,
+        rateLimited: false,
+        events: [{ channels: [...noteChannels], payload: { kind: 'oneline', text: noteText } }],
+      }
+    }
   }
 
   // End-of-tick: log current GH rate budget and emit an IRC warning to the

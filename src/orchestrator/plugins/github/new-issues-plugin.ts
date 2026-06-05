@@ -16,6 +16,7 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import { labelNames, type GhRepoIssue } from './github-api.js'
 import { GhPluginBase } from './base.js'
+import { formatReadFailureNote } from './backoff.js'
 
 export interface NewIssuesWatchEntry {
   repo: string
@@ -138,6 +139,10 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
     const watchEntries = slice.watched ?? []
     if (!watchEntries.length) return { state: prevState ?? { repos: {} }, taggedEvents: [], channels: [] }
 
+    const projectChannel = resolveProjectChannel(config)
+    const now = Date.now()
+    if (this.breakerOpen(now)) return this.breakerSkipResult(prevState ?? { repos: {} }, config)
+
     // Re-seed cleanly from older shapes (no `repos` key).
     const prev = (prevState != null && typeof prevState === 'object' && 'repos' in prevState)
       ? prevState as NewIssuesPluginState
@@ -150,9 +155,23 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       const { repo, channels } = entry
       const announcementChannels = channels?.length
         ? [...channels]
-        : [resolveProjectChannel(config)]
+        : [projectChannel]
 
-      const issues = await this.client.fetchRepoOpenIssues(repo)
+      const r = await this.readEntry(
+        repo,
+        announcementChannels,
+        formatReadFailureNote(this.name, repo, `unwatch new-issues ${repo}`),
+        () => this.client.fetchRepoOpenIssues(repo),
+        now,
+      )
+      // Rate-limit discards this tick's partial work and preserves prev state —
+      // the next clean tick re-reads and announces what's genuinely new.
+      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { repos: {} }, projectChannel, config)
+      if (!r.ok) {
+        taggedEvents.push(...r.events)
+        continue
+      }
+      const issues = r.value
       const currentNumbers = issues
         .map(i => i.number)
         .filter((n): n is number => n != null)
@@ -179,8 +198,13 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       nextRepos[repo] = [...seen].sort((a, b) => a - b)
     }
 
+    this.breakerReset(now)
     const state: NewIssuesPluginState = { repos: nextRepos }
-    taggedEvents.push(...await this.observeRateLimit(resolveProjectChannel(config)))
+    taggedEvents.push(...await this.observeRateLimit(projectChannel))
+    // [] (not rememberChannels): membership is config-static (per-entry channels
+    // join at boot, project channel unioned by the orchestrator), so there's
+    // nothing dynamic to replay — skipChannels falls back to desiredChannels
+    // while the breaker is open.
     return { state, taggedEvents, channels: [] }
   }
 }

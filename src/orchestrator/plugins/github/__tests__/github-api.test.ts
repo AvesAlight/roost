@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, isRateLimitError, isExpectedTransientError } from '../github-api.js'
 import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 function mkErr(stderr: string): GhError {
@@ -88,7 +88,28 @@ describe('spawnGh (retry-aware)', () => {
     expect(h.logs[2]).toContain('HTTP 502: Bad Gateway')
   })
 
-  it('does not retry on non-transient errors (404)', async () => {
+  it('retries a 404 (transient edge-flap) then succeeds, on the shorter base', async () => {
+    const h = harness()
+    let calls = 0
+    const out = await spawnGh(['api', '/x'], {
+      sleep: h.sleep,
+      log: h.log,
+      baseMs: 1000,
+      notFoundBaseMs: 100,
+      random: () => 0,
+      exec: async () => {
+        calls++
+        if (calls === 1) throw mkErr('gh: HTTP 404: Not Found')
+        return { ok: true }
+      },
+    })
+    expect(out).toEqual({ ok: true })
+    expect(calls).toBe(2)
+    expect(h.sleeps).toEqual([100])  // notFoundBaseMs, not baseMs
+    expect(h.logs[0]).toContain('matched=http-404')
+  })
+
+  it('exhausts a 404 after N attempts (real missing resource / sustained flap)', async () => {
     const h = harness()
     let calls = 0
     let caught: unknown = null
@@ -96,14 +117,17 @@ describe('spawnGh (retry-aware)', () => {
       await spawnGh(['api', '/x'], {
         sleep: h.sleep,
         log: h.log,
+        notFoundBaseMs: 1,
+        random: () => 0,
         exec: async () => { calls++; throw mkErr('gh: HTTP 404: Not Found') },
       })
     } catch (e) { caught = e }
-    expect(calls).toBe(1)
-    expect(h.sleeps).toEqual([])
-    expect(h.logs).toEqual([])
+    expect(calls).toBe(3)
     expect(caught).toBeInstanceOf(GhError)
-    expect((caught as GhError).attempts).toBe(1)
+    expect((caught as GhError).attempts).toBe(3)
+    // A persistent 404 is the per-entry skip class, not rate-limit.
+    expect(isExpectedTransientError(caught)).toBe(true)
+    expect(isRateLimitError(caught)).toBe(false)
   })
 
   it('treats 422 as non-transient but logs stderr verbatim', async () => {
@@ -130,7 +154,6 @@ describe('spawnGh (retry-aware)', () => {
     const cases: Array<[string, string]> = [
       ['gh: HTTP 500', 'http-5xx'],
       ['gh: HTTP 504: Gateway Timeout', 'http-5xx'],
-      ['gh: HTTP 429: rate limit', 'http-429-rate-limit'],
       ['dial tcp: i/o timeout', 'timeout'],
       ['context deadline exceeded', 'timeout'],
       ['request timed out', 'timeout'],
@@ -171,6 +194,66 @@ describe('spawnGh (retry-aware)', () => {
     } catch { /* exhausted */ }
     // i=0: 100 * 1 * 1.5 = 150; i=1: 100 * 2 * 1.5 = 300
     expect(h.sleeps).toEqual([150, 300])
+  })
+
+  it('does not retry HTTP 429 — fails fast for the breaker', async () => {
+    const h = harness()
+    let calls = 0
+    let caught: unknown = null
+    try {
+      await spawnGh(['api', '/x'], {
+        sleep: h.sleep,
+        log: h.log,
+        exec: async () => { calls++; throw mkErr('gh: HTTP 429: Too Many Requests') },
+      })
+    } catch (e) { caught = e }
+    expect(calls).toBe(1)
+    expect(h.sleeps).toEqual([])
+    expect(isRateLimitError(caught)).toBe(true)
+    expect(h.logs[0]).toContain('rate-limited (not retried here)')
+  })
+
+  it('treats HTTP 403 with a rate-limit message as rate-limit (no retry)', async () => {
+    const h = harness()
+    let calls = 0
+    let caught: unknown = null
+    try {
+      await spawnGh(['api', '/x'], {
+        sleep: h.sleep,
+        log: h.log,
+        exec: async () => { calls++; throw mkErr('gh: HTTP 403: API rate limit exceeded for user') },
+      })
+    } catch (e) { caught = e }
+    expect(calls).toBe(1)
+    expect(isRateLimitError(caught)).toBe(true)
+  })
+
+  it('treats an HTTP 403 secondary rate limit as rate-limit (no retry)', async () => {
+    let caught: unknown = null
+    try {
+      await spawnGh(['api', '/x'], {
+        sleep: async () => {},
+        log: () => {},
+        exec: async () => { throw mkErr('gh: HTTP 403: You have exceeded a secondary rate limit') },
+      })
+    } catch (e) { caught = e }
+    expect(isRateLimitError(caught)).toBe(true)
+  })
+
+  it('does not treat a non-rate-limit HTTP 403 as rate-limit or transient (throws once)', async () => {
+    const h = harness()
+    let calls = 0
+    let caught: unknown = null
+    try {
+      await spawnGh(['api', '/x'], {
+        sleep: h.sleep,
+        log: h.log,
+        exec: async () => { calls++; throw mkErr('gh: HTTP 403: Resource not accessible by integration') },
+      })
+    } catch (e) { caught = e }
+    expect(calls).toBe(1)
+    expect(isRateLimitError(caught)).toBe(false)
+    expect(isExpectedTransientError(caught)).toBe(false)
   })
 
   it('rethrows non-GhError immediately without classifying', async () => {
