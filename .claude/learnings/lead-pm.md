@@ -54,3 +54,7 @@ When a symptom could plausibly be caused by two in-flight fixes (one direct, one
 
 Frame live-probe gating as milestone-savings, not pre-flip overhead. When a worker (or you) treats the probe as optional polish, the gate stops firing — but the catch (a rewrite from scratch) costs far less than shipping a query that 400s on every tick. #495's Linear schema bug and #519's zsh extended_glob bug were both caught this way; neither would have surfaced from mocked tests.
 
+## 2026-05-28: §#449 corollary — a recovery probe must start from the actual failure state, not an adjacent happy path (from #591)
+
+When you verify that a system recovers from failure X, the probe's starting state must BE failure X. A fresh-connection probe proves new-registration works at the new config; it does NOT prove an already-wedged client self-heals — those are different tests. Concrete: I "verified" permbot recovery after the nicklen rehash by opening fresh probe sockets (each a new registration at nicklen 48 — all succeeded). But the wedged carrot reviewer was a client that had already been 432'd, and irc-framework never reconnects a client that never reached RPL_WELCOME. My probe validated a path the real failure never took. Worker-591 caught it by reading the reconnect-gating source. Pressure-test self-check: does the probe's initial state match the failure I'm claiming to recover from?
+
