@@ -182,7 +182,7 @@ describe('GitHubPrsPlugin.runTick', () => {
   })
 })
 
-describe('GitHubPrsPlugin.runTick — routing when no linked issues (#576)', () => {
+describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
   stubRateLimit()
 
   it('routes PR event to defaultChannel when no linked issues and no entry channels (resolveChannels empty/empty fallback)', async () => {
@@ -247,7 +247,7 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues (#576)', () 
   })
 })
 
-describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification (#601)', () => {
+describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
   stubRateLimit()
 
   it('emits note to project channel naming the routing destination when no entry channels', async () => {
