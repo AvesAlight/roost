@@ -46,6 +46,11 @@ roost spawn myproject-lead-pm \
   --prompt 'milestone=<milestone> human=<your-nick> gh-login=<your-gh-login>'
 ```
 
+Optionally add the **triage agent** for autonomous milestone hygiene — it
+assigns new issues to milestones and proposes backlog sweeps / new milestones
+for your confirm. It's opt-in (lead-pm doesn't spawn it); see
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 ## Prerequisites
