@@ -3,7 +3,6 @@ import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel, linearIssueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginLogger, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
-import { formatReadFailureNote } from './backoff.js'
 import { GhScraper } from './scraper.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
@@ -183,7 +182,7 @@ export class GitHubPrsPlugin extends GhBase {
       const r = await this.readEntry(
         key,
         [projectChannel],
-        formatReadFailureNote(this.name, key, `unwatch pr ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`),
+        `unwatch pr ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`,
         () => scraper.scrapePr(repo, number, prevPr),
         now,
       )

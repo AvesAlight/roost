@@ -5,9 +5,9 @@ import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
-import { GhClient, GhError, fetchRateLimit, isExpectedTransientError, isRateLimitError } from './github-api.js'
+import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError } from './github-api.js'
 import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
-import { RateLimitBreaker, formatBackoffNotice } from './backoff.js'
+import { RateLimitBreaker, READ_FAILURE_THRESHOLD, formatBackoffNotice, formatReadFailureNote } from './backoff.js'
 
 // Per-entry read outcome. `readEntry` never throws the expected gh-error
 // classes — it returns one of these so a caller's Promise.all over entries
@@ -32,9 +32,12 @@ export abstract class GhPluginBase extends BasePlugin {
   // so a rate-limit on any of them should quiet all of them.
   private static readonly _breaker = new RateLimitBreaker()
 
-  // Per-entry skip-note cooldown (per instance — a per-watcher signal, unlike
+  // Per-entry read-failure state (per instance — a per-watcher signal, unlike
   // the cross-instance rate-limit warn cooldown). Keyed by the entry's read key.
-  private _skipWarnedAt = new Map<string, number>()
+  //   consecutive — failing ticks in a row; reset to 0 on any clean read.
+  //   warnedAt    — last time the IRC note fired (cooldown gate against spam).
+  //   lastReadAt  — last time we actually attempted the read (throttle gate).
+  private _readFailures = new Map<string, { consecutive: number; warnedAt: number; lastReadAt: number }>()
 
   // Last channel set this plugin returned from a clean tick — replayed while the
   // breaker is open so a multi-minute backoff doesn't PART the watched channels.
@@ -95,29 +98,60 @@ export abstract class GhPluginBase extends BasePlugin {
   }
 
   // Run one watched entry's read. Returns a discriminated result instead of
-  // throwing the expected gh-error classes:
-  //   - success                       → { ok: true, value }
-  //   - rate-limit                    → { ok: false, rateLimited: true }  (caller trips the breaker)
-  //   - 404 / transient past retries  → { ok: false, rateLimited: false, events } (cooldown-gated note, skip entry)
-  //   - 422 / non-GhError             → re-thrown (a real defect surfaces as dispatcher_error)
-  // `noteText` is the cooldown-gated message; `noteChannels` route it.
+  // throwing, so one bad entry never aborts the tick's Promise.all (which would
+  // drop every sibling plugin's work — the dispatcher runs all runTicks together):
+  //   - success      → { ok: true, value }  (clears the entry's failure state)
+  //   - rate-limit   → { ok: false, rateLimited: true }  (caller trips the breaker)
+  //   - any GhError  → { ok: false, rateLimited: false, events } (skip the entry, warn)
+  //   - non-GhError  → re-thrown (a real infra/code bug, e.g. a spawn crash — fail loud)
+  // A watched entry erroring is a per-entry condition (401/404/403/422/network);
+  // only a genuine non-GhError defect should take the whole tick down.
+  //
+  // A per-entry consecutive-failure count drives two threshold behaviors off the
+  // one signal (see READ_FAILURE_THRESHOLD):
+  //   warn   — the IRC note fires only once the entry has failed THRESHOLD ticks
+  //            in a row, so a one-off flap (404/401/5xx that clears next tick)
+  //            never pings the channel. Past the threshold it repeats per cooldown.
+  //   throttle — once past the threshold the entry is likely dead, not flapping,
+  //            so we stop re-reading it every tick (each read is ~3 in-call gh
+  //            retries); we probe once per cooldown instead. A clean probe resets
+  //            the count and the entry recovers to every-tick reads.
+  // WARN_COOLDOWN_MS does double duty here: the warn-repeat gate and the probe
+  // cadence are the same window, so a degraded entry's note and re-probe align.
+  // `recoveryCmd` is the verbatim dispatcher DM to stop watching; `noteChannels`
+  // route the note. readEntry builds the note (it holds the error → the reason).
   protected async readEntry<T>(
     cooldownKey: string,
     noteChannels: string[],
-    noteText: string,
+    recoveryCmd: string,
     body: () => Promise<T>,
     now = Date.now(),
   ): Promise<ReadEntryResult<T>> {
+    // Throttle: a degraded entry probes once per cooldown, not every tick.
+    const st = this._readFailures.get(cooldownKey)
+    if (st && st.consecutive >= READ_FAILURE_THRESHOLD && now - st.lastReadAt < WARN_COOLDOWN_MS) {
+      return { ok: false, rateLimited: false, events: [] }
+    }
     try {
-      return { ok: true, value: await body() }
+      const value = await body()
+      this._readFailures.delete(cooldownKey)  // clean read → not failing
+      return { ok: true, value }
     } catch (e) {
       if (!(e instanceof GhError)) throw e
       if (isRateLimitError(e)) return { ok: false, rateLimited: true }
-      if (!isExpectedTransientError(e)) throw e
-      this.log(`[${this.name}] read failing for ${cooldownKey}: ${e.message}\n`)
-      const last = this._skipWarnedAt.get(cooldownKey) ?? 0
-      if (now - last <= WARN_COOLDOWN_MS) return { ok: false, rateLimited: false, events: [] }
-      this._skipWarnedAt.set(cooldownKey, now)
+      const fail = st ?? { consecutive: 0, warnedAt: 0, lastReadAt: 0 }
+      fail.consecutive += 1
+      fail.lastReadAt = now
+      this._readFailures.set(cooldownKey, fail)
+      this.log(`[${this.name}] read failing for ${cooldownKey} (${fail.consecutive} in a row): ${e.message}\n`)
+      // Below threshold: a flap, stay silent. Past it: warn, then cooldown-gate.
+      // The `<` matches the throttle gate above so warn + re-probe share one
+      // window exactly — at the boundary tick the entry both re-reads and re-warns.
+      if (fail.consecutive < READ_FAILURE_THRESHOLD) return { ok: false, rateLimited: false, events: [] }
+      const warnedRecently = fail.warnedAt !== 0 && now - fail.warnedAt < WARN_COOLDOWN_MS
+      if (warnedRecently) return { ok: false, rateLimited: false, events: [] }
+      fail.warnedAt = now
+      const noteText = formatReadFailureNote(this.name, cooldownKey, recoveryCmd, describeReadFailure(e.stderr))
       return {
         ok: false,
         rateLimited: false,

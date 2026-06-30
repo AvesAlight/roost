@@ -21,7 +21,6 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import type { GhCommit } from './github-api.js'
 import { GhPluginBase } from './base.js'
-import { formatReadFailureNote } from './backoff.js'
 
 export interface CommitWatchEntry {
   repo: string
@@ -193,7 +192,7 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       const r = await this.readEntry(
         key,
         channels,
-        formatReadFailureNote(this.name, key, `unwatch ${formatRepoSpec(entry.repo, entry.branch, entry.path)}`),
+        `unwatch ${formatRepoSpec(entry.repo, entry.branch, entry.path)}`,
         () => this.client.fetchRepoCommits(entry.repo, branch, entry.path, PER_PAGE),
         now,
       )

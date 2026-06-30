@@ -78,11 +78,11 @@ describe('format helpers', () => {
     expect(formatBackoffNotice(60 * M)).toBe('[dispatcher] GH rate-limited, backing off 60m')
   })
 
-  it('formatReadFailureNote hedges deleted-vs-flaking and embeds the verbatim recovery command', () => {
-    const note = formatReadFailureNote('github-new-issues', 'org/repo', 'unwatch new-issues org/repo')
+  it('formatReadFailureNote surfaces the failure reason and embeds the verbatim recovery command', () => {
+    const note = formatReadFailureNote('github-new-issues', 'org/repo', 'unwatch new-issues org/repo', 'deleted/renamed (HTTP 404)')
     expect(note).toBe(
-      `[dispatcher] github-new-issues: org/repo read failing (deleted/renamed or GH flaking) —` +
-      ` suppressing ${Math.round(WARN_COOLDOWN_MS / 60_000)}m; if persistent: unwatch new-issues org/repo`
+      `[dispatcher] github-new-issues: org/repo read failing: deleted/renamed (HTTP 404).` +
+      ` suppressing ${Math.round(WARN_COOLDOWN_MS / 60_000)}m; recover: unwatch new-issues org/repo`
     )
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, isRateLimitError, isExpectedTransientError } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure } from '../github-api.js'
 import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 function mkErr(stderr: string): GhError {
@@ -109,6 +109,41 @@ describe('spawnGh (retry-aware)', () => {
     expect(h.logs[0]).toContain('matched=http-404')
   })
 
+  it('retries a 401 (GitHub intermittently 401s a valid token) then succeeds', async () => {
+    const h = harness()
+    let calls = 0
+    const out = await spawnGh(['api', '/x'], {
+      sleep: h.sleep,
+      log: h.log,
+      baseMs: 100,
+      random: () => 0,
+      exec: async () => {
+        calls++
+        if (calls === 1) throw mkErr('gh: Bad credentials (HTTP 401)')
+        return { ok: true }
+      },
+    })
+    expect(out).toEqual({ ok: true })
+    expect(calls).toBe(2)
+    expect(h.sleeps).toEqual([100])  // baseMs (not the 404 short base) — 401 is a normal transient
+    expect(h.logs[0]).toContain('matched=http-401')
+  })
+
+  it('a sustained 401 is retried (transient) to exhaustion, not failed fast as rate-limit', async () => {
+    let calls = 0
+    let caught: unknown = null
+    try {
+      await spawnGh(['api', '/x'], {
+        sleep: async () => {},
+        log: () => {},
+        exec: async () => { calls++; throw mkErr('gh: Bad credentials (HTTP 401)') },
+      })
+    } catch (e) { caught = e }
+    expect(calls).toBe(3)  // retried like any transient, not failed-fast like a rate-limit
+    expect((caught as GhError).attempts).toBe(3)
+    expect(isRateLimitError(caught)).toBe(false)
+  })
+
   it('exhausts a 404 after N attempts (real missing resource / sustained flap)', async () => {
     const h = harness()
     let calls = 0
@@ -125,8 +160,7 @@ describe('spawnGh (retry-aware)', () => {
     expect(calls).toBe(3)
     expect(caught).toBeInstanceOf(GhError)
     expect((caught as GhError).attempts).toBe(3)
-    // A persistent 404 is the per-entry skip class, not rate-limit.
-    expect(isExpectedTransientError(caught)).toBe(true)
+    // A persistent 404 is retried (the per-entry skip class), not rate-limit.
     expect(isRateLimitError(caught)).toBe(false)
   })
 
@@ -240,7 +274,7 @@ describe('spawnGh (retry-aware)', () => {
     expect(isRateLimitError(caught)).toBe(true)
   })
 
-  it('does not treat a non-rate-limit HTTP 403 as rate-limit or transient (throws once)', async () => {
+  it('does not retry a non-rate-limit HTTP 403 — throws once (not transient, not rate-limit)', async () => {
     const h = harness()
     let calls = 0
     let caught: unknown = null
@@ -251,9 +285,8 @@ describe('spawnGh (retry-aware)', () => {
         exec: async () => { calls++; throw mkErr('gh: HTTP 403: Resource not accessible by integration') },
       })
     } catch (e) { caught = e }
-    expect(calls).toBe(1)
+    expect(calls).toBe(1)  // no retry → not classed transient
     expect(isRateLimitError(caught)).toBe(false)
-    expect(isExpectedTransientError(caught)).toBe(false)
   })
 
   it('rethrows non-GhError immediately without classifying', async () => {
@@ -270,6 +303,25 @@ describe('spawnGh (retry-aware)', () => {
     expect(calls).toBe(1)
     expect(h.sleeps).toEqual([])
     expect((caught as Error).message).toBe('bun.spawn died')
+  })
+})
+
+describe('describeReadFailure', () => {
+  it('names the operator action per status', () => {
+    expect(describeReadFailure('gh: Bad credentials (HTTP 401)')).toBe('auth rejected (HTTP 401), rotate token if it persists')
+    expect(describeReadFailure('gh: Not Found (HTTP 404)')).toBe('deleted/renamed (HTTP 404)')
+    expect(describeReadFailure('gh: Resource not accessible by integration (HTTP 403)')).toBe('permission denied (HTTP 403), check token scopes')
+    expect(describeReadFailure('gh: Validation Failed (HTTP 422)')).toBe('validation failed (HTTP 422), likely a query bug')
+  })
+
+  it('labels network/server transients as GH flaking', () => {
+    expect(describeReadFailure('gh: HTTP 503: Service Unavailable')).toBe('GH flaking (http-5xx)')
+    expect(describeReadFailure('dial tcp: i/o timeout')).toBe('GH flaking (timeout)')
+  })
+
+  it('falls back to the first stderr line for an unrecognized error', () => {
+    expect(describeReadFailure('gh: some brand new failure mode\nmore detail')).toBe('gh error: gh: some brand new failure mode')
+    expect(describeReadFailure('')).toBe('gh read failed')
   })
 })
 

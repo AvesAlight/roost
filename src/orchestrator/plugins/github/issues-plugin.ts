@@ -3,7 +3,6 @@ import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
-import { formatReadFailureNote } from './backoff.js'
 import { GhScraper } from './scraper.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
@@ -53,7 +52,7 @@ export class GitHubIssuesPlugin extends GhBase {
       const r = await this.readEntry(
         key,
         [projectChannel],
-        formatReadFailureNote(this.name, key, `unwatch ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`),
+        `unwatch ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`,
         () => scraper.scrapeIssue(repo, number, prevIssue),
         now,
       )

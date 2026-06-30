@@ -6,8 +6,15 @@ import type { RateLimitInfo } from '../_rate-limit.js'
 // owns the backoff schedule); 404 retries on a shorter base since an upstream
 // edge-flap clears on the next request, not after server recovery. 422 throws
 // on first attempt, logged verbatim so a 422-as-race shows in dispatcher logs.
+//
+// 401 (`gh: Bad credentials (HTTP 401)`) is here because GitHub intermittently
+// 401s a valid token — an internal auth service hiccup the API facade surfaces
+// as 401, cleared by the next request. We retry it like any transient rather
+// than crash the tick; a genuinely-revoked token still surfaces via the
+// per-entry consecutive-failure warn note (it just persists past the threshold).
 const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
   { re: /HTTP 5\d\d/i, label: 'http-5xx' },
+  { re: /HTTP 401/i, label: 'http-401' },
   { re: /\btimed out\b/i, label: 'timeout' },
   { re: /\bcontext deadline exceeded\b/i, label: 'timeout' },
   { re: /\bi\/o timeout\b/i, label: 'timeout' },
@@ -21,6 +28,7 @@ const TRANSIENT_PATTERNS: { re: RegExp; label: string }[] = [
 const HTTP_422 = /HTTP 422/i
 const HTTP_404 = /HTTP 404/i
 const HTTP_403 = /HTTP 403/i
+const HTTP_401 = /HTTP 401/i
 const HTTP_429 = /HTTP 429/i
 const RATE_LIMIT_MSG = /rate limit|secondary rate/i
 
@@ -29,6 +37,23 @@ function classifyTransient(stderr: string): string | null {
     if (re.test(stderr)) return label
   }
   return null
+}
+
+// Short operator-facing reason for a read that keeps failing, derived from gh
+// stderr. Surfaces the distinguishing *action* so a reader doesn't have to dig
+// the dispatcher log: rotate the token (401), unwatch a dead repo (404), fix
+// token scopes (403), file a query bug (422), or ride out a GitHub flake.
+// Called only after the rate-limit branch, so a 403 here is the permission kind,
+// not a rate-limit 403. Fed into the cooldown-gated warn note.
+export function describeReadFailure(stderr: string): string {
+  if (HTTP_401.test(stderr)) return 'auth rejected (HTTP 401), rotate token if it persists'
+  if (HTTP_404.test(stderr)) return 'deleted/renamed (HTTP 404)'
+  if (HTTP_403.test(stderr)) return 'permission denied (HTTP 403), check token scopes'
+  if (HTTP_422.test(stderr)) return 'validation failed (HTTP 422), likely a query bug'
+  const label = classifyTransient(stderr)
+  if (label) return `GH flaking (${label})`
+  const firstLine = stderr.split('\n').map(s => s.trim()).find(Boolean)
+  return firstLine ? `gh error: ${firstLine}` : 'gh read failed'
 }
 
 // Rate-limit = HTTP 429, or HTTP 403 carrying a rate-limit message (primary or
@@ -42,13 +67,6 @@ function isRateLimitStderr(stderr: string): boolean {
 
 export function isRateLimitError(e: unknown): boolean {
   return e instanceof GhError && isRateLimitStderr(e.stderr)
-}
-
-// Expected/transient gh error class the per-entry readEntry path skips with a
-// cooldown-gated note (vs failing the whole tick): a 404 that survived its
-// retries, or any network/server transient that exhausted its retries.
-export function isExpectedTransientError(e: unknown): boolean {
-  return e instanceof GhError && (HTTP_404.test(e.stderr) || classifyTransient(e.stderr) != null)
 }
 
 export class GhError extends Error {

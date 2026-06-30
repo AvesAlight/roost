@@ -20,7 +20,6 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import { labelNames, type GhRepoPr } from './github-api.js'
 import { GhPluginBase } from './base.js'
-import { formatReadFailureNote } from './backoff.js'
 
 export interface NewPrsWatchEntry {
   repo: string
@@ -165,7 +164,7 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
       const r = await this.readEntry(
         repo,
         announcementChannels,
-        formatReadFailureNote(this.name, repo, `unwatch new-prs ${repo}`),
+        `unwatch new-prs ${repo}`,
         () => this.client.fetchRepoOpenPrs(repo),
         now,
       )
