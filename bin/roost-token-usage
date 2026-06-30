@@ -9,7 +9,7 @@
 # See `src/token-usage.ts` for the full contract. Walks symlinks so the shim
 # resolves to the real plugin tree when called from a brew install.
 
-set -uo pipefail
+set -euo pipefail
 
 _src="${BASH_SOURCE[0]}"
 while [ -L "$_src" ]; do
@@ -20,4 +20,7 @@ done
 DIR="$( cd -P "$( dirname "$_src" )" && pwd )"
 unset _src _dir
 
-exec bun run "$DIR/../src/token-usage.ts" "$@"
+# shellcheck disable=SC1091
+source "${DIR}/_bun-lib.sh"
+BUN="$(find_bun)" || exit 1
+exec "${BUN}" run "${DIR}/../src/token-usage.ts" "$@"

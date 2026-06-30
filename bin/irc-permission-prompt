@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 # Thin launcher — delegates to the TypeScript implementation.
-ROOST_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-exec bun "${ROOST_DIR}/src/permission-prompt.ts"
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_bun-lib.sh"
+BUN="$(find_bun)" || exit 1
+exec "${BUN}" "${SCRIPT_DIR}/../src/permission-prompt.ts"

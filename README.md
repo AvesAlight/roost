@@ -51,7 +51,7 @@ See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end 
 ## Prerequisites
 
 - macOS or Linux
-- [bun](https://bun.sh) ≥ 1.0 (installed by the brew formula)
+- [bun](https://bun.sh) ≥ 1.0 (installed by the brew formula). From-source Linux installs add `~/.bun/bin` to `~/.bashrc` only — set `BUN_BIN=~/.bun/bin/bun` if the MCP or dispatcher fail to start.
 - [tmux](https://github.com/tmux/tmux) (installed by the brew formula)
 - [ergo](https://ergo.chat) (installed by the brew formula)
 - An IRC client ([weechat](https://weechat.org) recommended — `brew install weechat`)
