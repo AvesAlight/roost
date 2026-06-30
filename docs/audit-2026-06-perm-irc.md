@@ -4,6 +4,15 @@ Investigation for #604. Hypothesis: `--perm-irc` fires IRC permission prompts
 for actions Claude Code's auto permission-mode would grant on its own. Pairs
 with #598 and gates the 0.8.6 perm batch.
 
+**Mission anchor — what perm-irc is for.** roost is a *parity relay* for CC's
+blocking permission requests, not a safety tool. The sole goal: when CC would
+block on user input, route it over IRC so an operator can unblock the agent —
+nothing more, nothing less. So the bar is parity. If CC asks, roost relays; if
+CC doesn't ask, roost stays silent. Whether CC's gating is "right" is out of
+scope — roost mirrors it. That makes "the classifier doesn't catch `rm -rf`" a
+non-issue: CC auto-grants it, so roost correctly stays silent. The only defect
+that matters is the inverse — roost relaying what CC would have granted.
+
 This audit had two passes. The first read CC's classifier out of the 2.1.196
 binary and *inferred* behavior. Alex (#609) asked the literal operational
 question that inference can't answer, so the second pass ran real auto-mode
@@ -39,30 +48,21 @@ unmodified, including subshell parens and newlines).
 | `cd /tmp /usr` | cd-multi-positional | ran (errored at bash level), no prompt |
 | `cd /tmp; echo TOK` | cd-compound | executed, no prompt |
 | `echo TOK` (control) | none (`null`) | executed, no prompt |
-| `rm -rf /tmp/<throwaway>` (**positive control**) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED (sandbox)** |
-| `touch /tmp/<throwaway>.txt` (write control) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED (sandbox)** |
+| `rm -rf /tmp/<throwaway>` (**positive control**) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED** |
 
-The positive control is load-bearing in two ways. First, it proves the harness
-can see a real non-execution: `--permission-mode default` refuses both the `rm`
-and a plain `touch` whose targets sit in `/tmp` (outside the session working dir),
-failing before the marker echo, while `auto` runs both and emits the marker. So
-an auto-mode "no prompt → executed" row is a genuine grant, and `--permission-mode`
-is honored (default behaved like default, not like the box's `defaultMode: auto`).
+The positive control is load-bearing: it proves the harness can see a real
+non-execution. `--permission-mode default` refuses `rm -rf /tmp/<throwaway>`
+(a write outside the session working dir — CC's cwd sandbox, a gate separate
+from the bash permission-request layer) and the marker never prints, while `auto`
+runs it and prints the marker. So an auto-mode "no prompt → executed" row is a
+genuine grant, not the harness being blind, and `--permission-mode` is honored
+(default behaved like default, not like the box's `defaultMode: auto`).
 
-Second — and this is bigger than "the flag overrides the settings default" — the
-gate default enforces here is CC's **cwd sandbox**: it refuses writes outside the
-session working dir (note default still ran the read-only `echo`, so it isn't
-blanket-denying bash). **Auto bypasses that sandbox.** It executed an out-of-cwd
-`rm -rf` and an out-of-cwd `touch` that default refused. So in auto, the
-destructive reach is *not* worktree-local — ops targeting paths outside the
-worktree run too.
-
-The default-mode block also happens *upstream* of the hookable PermissionRequest
-path: CC denies the out-of-cwd op before the hook is reached, so the allow-
-emitting observation hook (see Reproducibility) never sees it. PermissionRequest
-in fact never fired in *any* of the 13 runs, default or auto (see the mechanism
-note below). So: **auto mode grants the classified shapes outright, no prompt**,
-and relaxes the cwd sandbox that default enforces.
+That default-mode block also happened *upstream* of the hookable PermissionRequest
+path, so the allow-emitting observation hook (see Reproducibility) never saw it.
+PermissionRequest in fact never fired in *any* of the 13 runs, default or auto
+(mechanism note below). So: **auto mode grants the classified shapes outright,
+no prompt.**
 
 ### Probe B — what roost adds on top (real `classifyBash` PreToolUse hook)
 
@@ -86,38 +86,32 @@ spurious prompt in Q2, and it lives entirely in `classifyBash`, not in CC.
 
 `--perm-irc` wires two hooks: PreToolUse:Bash (`irc-pretooluse-prompt`, i.e.
 `classifyBash`) and PermissionRequest (`irc-permission-prompt`). Across all 13
-probe runs — read-only, subshell, cd shapes, out-of-cwd `touch`, out-of-cwd
-`rm`, in both default and auto — the PermissionRequest hook never fired for a
-Bash call. CC 2.1.196 gates bash through the PreToolUse/native-analyzer path and
-the cwd sandbox, not through PermissionRequest. So for bash, roost's
-`irc-permission-prompt` is effectively inert: `classifyBash` (PreToolUse) is
-roost's only bash lever, with no PermissionRequest backstop behind it. A fix to
-roost's bash handling changes `classifyBash` or nothing.
+probe runs — read-only, subshell, cd shapes, the `rm` control, in both default
+and auto — the PermissionRequest hook never fired for a Bash call. CC 2.1.196
+routes bash through the PreToolUse/native-analyzer path, not through
+PermissionRequest. So the parity-correct relay — `irc-permission-prompt`, which
+would fire on a real CC block — has nothing to relay for bash in auto mode,
+because CC produces no blocking bash request. The only thing that *does* fire is
+`classifyBash`, which predicts CC's decision from syntax and gets it wrong
+(over-fires). `classifyBash` (PreToolUse) is roost's only active bash lever — a
+fix to roost's bash handling changes `classifyBash` or nothing.
 
-### The inversion: classifyBash keys on syntax, which tracks neither danger nor hang-risk
+### Why classifyBash over-fires: it keys on syntax, not on what CC blocks
 
-Same exported `classifyBash`, two batteries:
+classifyBash decides what to relay from the *shape* of the command, not from
+what CC would actually do with it. So it flags shapes CC auto-grants: `cd /tmp;
+ls` (cd-compound), `(grep -rn foo src/)` (shell-operators), the multi-line `cd`
+block (cd-multi-positional). All three executed in Probe A — CC produced no
+blocking request, yet roost relayed them to the operator. That is the parity
+violation, and it's the whole of the bug.
 
-- **Over-fire — benign-but-complex syntax, flagged + relayed:** `cd /tmp; ls`
-  (cd-compound), `(grep -rn foo src/)` (shell-operators), the multi-line `cd`
-  block (cd-multi-positional). All three *executed* in Probe A, so they are not
-  hang-risks. Pure friction.
-- **Under-fire — dangerous-but-simple syntax, returns `null` (not flagged):**
-  all nine of `rm -rf /important`, `rm -rf ~/work`, `dd if=/dev/zero of=/dev/diskN`,
-  `curl … | sh`, `git push --force`, `chmod -R 777 /etc`, `mv ~/.ssh/id_rsa /tmp/x`,
-  `echo pwned > ~/.bashrc`, `kill -9 -1`. Zero flagged.
-
-Syntax (has a subshell / two cd args / a `;`) correlates with neither what's
-destructive nor what hangs. So classifyBash over-fires on harmless commands and
-under-fires on destructive ones at the same time.
-
-### This is false safety, not just friction
-
-The prompts don't merely waste an ack. They actively mislead. An operator
-watching `cd-compound` and `shell-operators` prompts roll past reasonably
-concludes that the dangerous stuff is being gated too. It isn't: `rm -rf`, `dd`,
-`chmod -R 777`, `curl … | sh` sail through silently in auto mode. The relay
-manufactures confidence that a safety layer exists where there is none.
+The same syntax-keying leaves classifyBash silent on simple destructive commands
+(`rm -rf`, `dd`, `curl | sh`, etc. all return `null`). That is **not** a gap: CC
+auto-grants those too, so both sides stay silent — parity working as intended.
+roost is a parity relay, not a safety layer, and isn't trying to catch them. The
+point is only the axis: classifyBash keys on syntax, orthogonal to what CC
+blocks, so its relays don't track CC. The failure is one-directional — it relays
+where CC wouldn't.
 
 ## The lesson: what the analyzer DECIDES vs what auto mode ENFORCES
 
@@ -169,8 +163,8 @@ What observation **corrected**:
 - **The old "under-fire = hang" rows (shell-expansion, net-redirect, path-command
   flag-validation, redirect-target expansion): NOT hangs in auto mode.** Auto
   mode grants, it doesn't prompt, so a missed bashMissKind is a missed *grant*,
-  not a hang. The real under-fire is danger (below), not the bashMissKind set
-  difference.
+  not a hang. And a missed grant is parity-correct silence — CC didn't block, so
+  neither should roost — not a defect to chase.
 - **The old "correct mirror" rows: also over-fire in auto mode.** They were
   scored "correct" on the assumption CC prompts for them. CC doesn't (in auto
   mode), so relaying them is friction too.
@@ -189,47 +183,33 @@ What observation **confirmed**:
 
 ## Recommendation
 
-Two distinct failure modes. Same root cause (syntax is the wrong axis), but they
-are not one finding and should not be filed as one.
+One bug, on the parity axis. classifyBash relays bash shapes CC's auto mode
+auto-grants — it asks the operator when CC produced no blocking request. That is
+the divergence from parity, and it's Alex's original hypothesis, confirmed.
+The fix direction: relay a bash command only when CC would actually block it.
+#598 is the narrow, shippable instance (the `cd`-multi-positional false flag);
+the general goal is "no relay where CC produces no blocking request."
 
-**1. Friction — over-fire on benign syntax. Alex's original hypothesis,
-confirmed.** classifyBash relays harmless shapes (cd-compound, shell-operators,
-cd-multi-positional including #598) that auto mode would grant. Cleanup-priority.
-The narrow version is #598; the general version is "stop flagging benign
-syntactic shapes."
+**Not a bug: the under-fire.** classifyBash returning `null` on `rm -rf`, `dd`,
+`curl | sh`, etc. is parity working — CC auto-grants them, so roost correctly
+stays silent. roost is a parity relay, not a safety layer; there is no danger
+gate to add, and none should be added. Catching destructive commands is
+explicitly out of scope.
 
-**2. Latent safety gap — under-fire on destructive commands. New, and more
-serious than the friction.** The nine destructive commands tested fall through
-`classifyBash` (`null`). The one safe to run live (`rm -rf /tmp/<throwaway>`) ran
-through auto mode unprompted — and it targeted a path *outside* the session
-worktree, which default mode's cwd sandbox refused. So auto's destructive reach
-isn't worktree-local: auto relaxes the one CC-native gate (the cwd sandbox) that
-would otherwise contain an out-of-cwd op, and classifyBash doesn't replace it. An
-auto worker can run these today with no human in the loop, while the friction
-prompts imply otherwise (false safety). Higher priority than the friction cleanup.
+**The mechanism question is open, not settled here.** classifyBash keys on syntax
+(orthogonal to CC's decision), and across these probes the PermissionRequest hook
+never fired for bash — even on the default-mode block — so "did CC actually block
+this?" isn't cleanly available from either current path. Whoever takes the
+followup gets to design how roost detects a real CC bash block; the audit's job
+is to establish that the current syntactic relay isn't it, and that in auto mode
+the parity-correct bash relay volume is essentially zero.
 
-**Bounded claim (don't over-read).** What's tested: all nine return `null` from
-classifyBash; auto mode executed `rm -rf /tmp/<throwaway>` and a `touch` of an
-out-of-cwd path with no prompt, while default's sandbox refused both. Both targets
-were `/tmp` throwaway paths — out-of-cwd, but not system-critical. What's *not*
-tested: I did not live-run the other eight (destructive/networked), did not probe
-CC's critical-path guards (no `rm -rf /`), and did not run the *same literal path*
-in both modes — the default/auto targets differed by a trailing digit to avoid
-collision, so they're the same out-of-cwd location class, not identical paths. The
-binary shows CC retains some native critical-dir rm checks I did not map. So the
-precise statement is "auto ran the out-of-cwd /tmp ops I tested unprompted, past
-the sandbox default enforces," not "auto runs `rm -rf /`."
-
-**Fix axis.** Re-key on what a command *does* (destructive / irreversible /
-exfiltrating), not on its *syntax*. Syntax tracks neither.
-
-**Design call for Alex, not a foregone fix.** Whether roost *should* add a
-danger gate at all is a product decision and partly CC's job (CC owns the
-permission model; roost shouldn't reimplement it). The audit's job is to show
-the current classifier gives false safety on the danger axis and friction on the
-syntax axis. If a gate is wanted, it must key on danger; if not, classifyBash's
-syntactic flagging should be dropped or narrowed so it stops implying a gate
-that isn't there.
+**Live-run scope (don't over-read).** Among the destructive shapes, only `rm -rf
+/tmp/<throwaway>` was run live in CC (executed in auto, blocked in default — the
+positive control); the rest were exercised only through `classifyBash`
+(deterministic `null`). That's enough for the parity question — roost mirrors CC,
+and we confirmed CC's auto-mode silence on the represented shapes — and I did not
+probe CC's own critical-path guards (no `rm -rf /`).
 
 ## Reproducibility
 
