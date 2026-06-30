@@ -69,13 +69,6 @@ export function isRateLimitError(e: unknown): boolean {
   return e instanceof GhError && isRateLimitStderr(e.stderr)
 }
 
-// Expected/transient gh error class the per-entry readEntry path skips with a
-// cooldown-gated note (vs failing the whole tick): a 404 that survived its
-// retries, or any network/server transient that exhausted its retries.
-export function isExpectedTransientError(e: unknown): boolean {
-  return e instanceof GhError && (HTTP_404.test(e.stderr) || classifyTransient(e.stderr) != null)
-}
-
 export class GhError extends Error {
   readonly stderr: string
   readonly attempts: number

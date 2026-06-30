@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, isRateLimitError, isExpectedTransientError, describeReadFailure } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure } from '../github-api.js'
 import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 function mkErr(stderr: string): GhError {
@@ -129,17 +129,18 @@ describe('spawnGh (retry-aware)', () => {
     expect(h.logs[0]).toContain('matched=http-401')
   })
 
-  it('a sustained 401 exhausts and is classed transient (the per-entry warn class, not rate-limit)', async () => {
+  it('a sustained 401 is retried (transient) to exhaustion, not failed fast as rate-limit', async () => {
+    let calls = 0
     let caught: unknown = null
     try {
       await spawnGh(['api', '/x'], {
         sleep: async () => {},
         log: () => {},
-        exec: async () => { throw mkErr('gh: Bad credentials (HTTP 401)') },
+        exec: async () => { calls++; throw mkErr('gh: Bad credentials (HTTP 401)') },
       })
     } catch (e) { caught = e }
-    expect(caught).toBeInstanceOf(GhError)
-    expect(isExpectedTransientError(caught)).toBe(true)
+    expect(calls).toBe(3)  // retried like any transient, not failed-fast like a rate-limit
+    expect((caught as GhError).attempts).toBe(3)
     expect(isRateLimitError(caught)).toBe(false)
   })
 
@@ -159,8 +160,7 @@ describe('spawnGh (retry-aware)', () => {
     expect(calls).toBe(3)
     expect(caught).toBeInstanceOf(GhError)
     expect((caught as GhError).attempts).toBe(3)
-    // A persistent 404 is the per-entry skip class, not rate-limit.
-    expect(isExpectedTransientError(caught)).toBe(true)
+    // A persistent 404 is retried (the per-entry skip class), not rate-limit.
     expect(isRateLimitError(caught)).toBe(false)
   })
 
@@ -274,7 +274,7 @@ describe('spawnGh (retry-aware)', () => {
     expect(isRateLimitError(caught)).toBe(true)
   })
 
-  it('does not treat a non-rate-limit HTTP 403 as rate-limit or transient (throws once)', async () => {
+  it('does not retry a non-rate-limit HTTP 403 — throws once (not transient, not rate-limit)', async () => {
     const h = harness()
     let calls = 0
     let caught: unknown = null
@@ -285,9 +285,8 @@ describe('spawnGh (retry-aware)', () => {
         exec: async () => { calls++; throw mkErr('gh: HTTP 403: Resource not accessible by integration') },
       })
     } catch (e) { caught = e }
-    expect(calls).toBe(1)
+    expect(calls).toBe(1)  // no retry → not classed transient
     expect(isRateLimitError(caught)).toBe(false)
-    expect(isExpectedTransientError(caught)).toBe(false)
   })
 
   it('rethrows non-GhError immediately without classifying', async () => {
