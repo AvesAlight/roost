@@ -98,10 +98,10 @@ export class GitHubPrsPlugin extends GhBase {
   }
 
   // Channels for a PR event: linked-issue channels (each slugged per its own
-  // repo), project channel for no-linked-issues warnings, PR channel fallback.
-  // Linear channels (PRs cross-linked to Linear issues via attachments) are
-  // additive — appended to the github routing for every event with a `pr`
-  // number except the `pr_no_linked_issues` warning, which stays project-only.
+  // repo), or Linear channels when no GitHub issues are linked. Returns []
+  // when both are absent so resolveChannels falls back to entryChannels or
+  // defaultChannel. pr_no_linked_issues is handled inline in runTick and
+  // never reaches this function.
   private static prEventChannels(
     config: OrchestratorConfig,
     project: string,
@@ -112,14 +112,15 @@ export class GitHubPrsPlugin extends GhBase {
     linearChannels: string[],
   ): string[] {
     if (event.pr == null) return []
-    if (event.kind === 'pr_no_linked_issues') return [projectChannel]
     if (routable.length) {
       return [
         ...routable.map(li => issueChannel(project, li.number, channelSlug(config, li.repo))),
         ...linearChannels,
       ]
     }
-    return [issueChannel(project, event.pr, channelSlug(config, prRepo)), ...linearChannels]
+    // No GitHub linked issues: route to Linear channels when present; otherwise
+    // return [] so resolveChannels falls back to entryChannels or defaultChannel.
+    return linearChannels
   }
 
   // Stderr-only — operator-visible in daemon.log without IRC noise.
@@ -243,6 +244,19 @@ export class GitHubPrsPlugin extends GhBase {
         snap.warned_drops_for_oid = snap.head_oid
       }
       for (const event of events) {
+        if (event.kind === 'pr_no_linked_issues') {
+          // Notification to project channel only — distinct from review/CI event
+          // routing, which reaches the watch channel via resolveChannels below.
+          // Derive the routing destination from the same resolveChannels result
+          // the events use, so the note stays accurate when Linear cross-links exist.
+          const actualChannels = this.resolveChannels(linearChannels, entryChannels)
+          const nonProjectChannels = actualChannels.filter(ch => ch !== projectChannel)
+          const text = nonProjectChannels.length
+            ? `routing PR ${key} events → ${nonProjectChannels.join(' ')} (no linked issue)`
+            : `PR ${key} has no linked issues — routing events to ${projectChannel}. Add Closes #<issue> (or Fixes/Resolves) or specify #channels at watch time: ${event.url ?? ''}`
+          taggedEvents.push({ channels: [projectChannel], payload: { kind: 'oneline', text } })
+          continue
+        }
         if (event.kind === 'pr_added_to_watch') {
           const linked = event.linked_issues ?? []
           // Suppress only when there are neither github linked-issues nor
@@ -253,9 +267,10 @@ export class GitHubPrsPlugin extends GhBase {
               GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels),
               entryChannels
             ).filter(ch => ch !== projectChannel)
+            const routingStr = routingChannels.length ? routingChannels.join(', ') : projectChannel
             taggedEvents.push({
               channels: [projectChannel],
-              payload: { kind: 'oneline', text: `now watching PR ${key} — routing events to ${routingChannels.join(', ')}` },
+              payload: { kind: 'oneline', text: `now watching PR ${key} — routing events to ${routingStr}` },
             })
           }
           continue
