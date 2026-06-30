@@ -598,6 +598,30 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     } finally { spy.mockRestore() }
   })
 
+  it('pr_no_linked_issues note names the Linear channel as routing destination when cross-link exists but no GitHub link', async () => {
+    const warnEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues', repo: 'org/repo', pr: 25, url: 'u', title: 't',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap(), events: [warnEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-758' }] },
+        },
+      }
+      const result = await plugin(stubFromMap({
+        'C-758': [attachment('https://github.com/org/repo/pull/25')],
+      })).runTick(cfg, { prs: {} })
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('#proj-issue-c-758')
+      expect(text).not.toContain('#proj-leads')
+    } finally { spy.mockRestore() }
+  })
+
   it('declares Linear channels in desiredChannels for every watched Linear identifier', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj', repo: 'org/repo',
@@ -948,6 +972,28 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.channels).toContain('#proj-bar-issue-14')
+    } finally { spy.mockRestore() }
+  })
+
+  it('single-mode: pr_added_to_watch with only foreign-repo linked issues announces routing to projectChannel, not empty', async () => {
+    const seedEv: OrchestratorEvent = {
+      kind: 'pr_added_to_watch', repo: 'org/main', pr: 25, url: 'u', title: 't',
+      linked_issues: [{ repo: 'org/other', number: 14 }],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ repo: 'org/main', linked_issues: [{ repo: 'org/other', number: 14 }] }),
+      events: [seedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/main',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('#proj-leads')
+      expect(text).not.toMatch(/routing events to\s*$/)
     } finally { spy.mockRestore() }
   })
 
