@@ -38,6 +38,10 @@ When splitting connect-time timers into stages (registration → ready → flush
 
 macOS tmp_cleaner runs daily at midnight, wiping files with atime+mtime+ctime all >3d (verified via `/System/Library/LaunchDaemons/com.apple.tmp_cleaner.plist` + `strings /usr/libexec/tmp_cleaner`). Long-running sessions that don't touch a /tmp file for 3+ days will lose it. For any path re-used across days (shim, lock, socket, log), prefer a brew-symlink-stable or absolute-clone-stable location. Only use /tmp for transient single-session state.
 
+## 2026-06-30: Anchor audit/investigation findings to the tool's mission before grading severity (from #604)
+
+Before grading how serious an audit or investigation finding is, ask what the tool is FOR — importance is relative to the mission, not how alarming the finding looks in isolation. perm-irc is a parity relay (relay iff Claude Code blocks), not a safety tool, so "the classifier doesn't catch rm -rf" was off-mission — yet it got graded the "more serious" finding and sharpened further. Alex's mission re-anchor inverted the priority: the scary under-fire was parity working as intended, and the boring over-fire was the whole bug. Pressure-test at plan time: "what is this tool for, and are we framing findings against that mission?" Sibling to §449/§591 (verify behavior empirically) — this one is "frame findings against mission."
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
