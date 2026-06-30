@@ -182,6 +182,140 @@ describe('GitHubPrsPlugin.runTick', () => {
   })
 })
 
+describe('GitHubPrsPlugin.runTick — routing when no linked issues (#576)', () => {
+  stubRateLimit()
+
+  it('routes PR event to defaultChannel when no linked issues and no entry channels (resolveChannels empty/empty fallback)', async () => {
+    const ciEv: OrchestratorEvent = {
+      kind: 'ci_transitioned',
+      repo: 'org/repo', pr: 25, url: 'u',
+      from: 'PENDING', to: 'SUCCESS', head_oid: 'abc', linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [ciEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes PR review event to entry channels when no linked issues but entry channels specified', async () => {
+    const reviewEv: OrchestratorEvent = {
+      kind: 'pr_review_submitted',
+      repo: 'org/repo', pr: 25, url: 'u',
+      review_id: 1, review_url: 'ru', author: 'alice', state: 'APPROVED',
+      body: '', body_preview: '', is_worker_reply: false, linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [reviewEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-576'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes PR CI event to entry channels when no linked issues but entry channels specified', async () => {
+    const ciEv: OrchestratorEvent = {
+      kind: 'ci_transitioned',
+      repo: 'org/repo', pr: 25, url: 'u',
+      from: 'PENDING', to: 'FAILURE', head_oid: 'abc', linked_issues: [],
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [ciEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-576'])
+    } finally { spy.mockRestore() }
+  })
+})
+
+describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification (#601)', () => {
+  stubRateLimit()
+
+  it('emits note to project channel naming the routing destination when no entry channels', async () => {
+    const noLinkedEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues',
+      repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25 }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('org/repo#25')
+      expect(text).toContain('#proj-leads')
+      expect(text).not.toContain('won\'t be routed')
+    } finally { spy.mockRestore() }
+  })
+
+  it('emits confirmation to project channel when entry channels specified', async () => {
+    const noLinkedEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues',
+      repo: 'org/repo', pr: 25, url: 'u', title: 'P',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(text).toContain('org/repo#25')
+      expect(text).toContain('#proj-issue-576')
+      expect(text).not.toContain('won\'t be routed')
+    } finally { spy.mockRestore() }
+  })
+
+  it('routes notification to project channel only, not to entry channels', async () => {
+    const noLinkedEv: OrchestratorEvent = {
+      kind: 'pr_no_linked_issues',
+      repo: 'org/repo', pr: 25, url: 'u', title: 'P',
+    } as OrchestratorEvent
+    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+      snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#some-channel'] }] } },
+      }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.taggedEvents[0]?.channels).not.toContain('#some-channel')
+    } finally { spy.mockRestore() }
+  })
+})
+
 describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
   stubRateLimit()
 
@@ -267,7 +401,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         'C-758': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
       expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#proj-issue-25', '#proj-issue-c-758'])
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-c-758'])
       expect(result.channels).toContain('#proj-issue-c-758')
     } finally { spy.mockRestore() }
   })
@@ -292,7 +426,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       }
       const result = await plugin(queryFn).runTick(cfg, { prs: {} })
       expect(calls).toBe(0)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
       expect(result.channels).not.toContain('#proj-issue-c-758')
     } finally { spy.mockRestore() }
   })
@@ -325,7 +459,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       attached = false
       const tick2 = await p.runTick(cfg, tick1.state)
       expect(tick2.taggedEvents[0]?.channels).not.toContain('#proj-issue-c-758')
-      expect(tick2.taggedEvents[0]?.channels).toContain('#proj-issue-25')
+      expect(tick2.taggedEvents[0]?.channels).toEqual(['#proj'])
     } finally { spy.mockRestore() }
   })
 
@@ -412,7 +546,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         'C-2': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
       expect(result.taggedEvents[0]?.channels.sort()).toEqual([
-        '#proj-issue-25', '#proj-issue-c-1', '#proj-issue-c-2',
+        '#proj-issue-c-1', '#proj-issue-c-2',
       ])
     } finally { spy.mockRestore() }
   })
@@ -498,7 +632,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         },
       }
       const result = await plugin(async () => { throw new Error('linear down') }).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
     } finally { spy.mockRestore() }
   })
 })
@@ -767,8 +901,8 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).runTick(cfg, { prs: {} })
-      // Foreign repo dropped → falls back to the PR's own issue channel.
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-25'])
+      // Foreign repo dropped → all linked issues dropped → falls back to defaultChannel.
+      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
       // The cross-repo channel must not appear in the desired-channel set.
       expect(result.channels).not.toContain('#proj-issue-14')
       // Operator-visible stderr warning naming both sides + the remediation.
