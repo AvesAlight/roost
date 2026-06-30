@@ -57,11 +57,10 @@ per-PR doesn't).
   human confirm in `#<project>-leads`. Never touches a milestone it
   can't prove it set: all agents share one GitHub login, so a
   `[<project>-triage]` stamp comment is its only reliable provenance,
-  and anything unstamped is hands-off. Long-running; lives in
-  `#<project>-leads`, opts into `--steer-compact`. Standing and
-  long-running like the APM, but opt-in on the spawn mechanism: an
-  operator spawns it once at project setup — lead-pm auto-spawns the
-  APM, not triage.
+  and anything unstamped is hands-off. Standing and long-running like
+  the APM — lives in `#<project>-leads`, opts into `--steer-compact` —
+  but opt-in on the spawn mechanism: an operator spawns it once at
+  project setup; lead-pm auto-spawns the APM, not triage.
 - **Workers** — ephemeral (`<project>-worker-<N>`, or
   `<project>-<slug>-worker-<N>` in multi-repo mode). Join
   `#<project>-issue-<N>` on assignment, leave on completion.
@@ -159,8 +158,8 @@ roost spawn <project>-worker-718-A -c '#<project>-issue-718'
 roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
 
 # Triage agent (long-running milestone hygiene; opus/auto, self-authorizing).
-# -c is its audit channel; it derives + self-joins its new-issue listen
-# channel from config (default: the same #<project>-leads):
+# -c is its audit channel; on boot it derives + self-joins every channel the
+# github-new-issues feed announces to (default: the same #<project>-leads):
 roost spawn <project>-triage --agent triage --cache-ttl 1h --steer-compact \
   -c '#<project>-leads' --prompt 'human=<human>' \
   --ask-irc '#<project>-leads' --ask-target <project>-lead-pm
