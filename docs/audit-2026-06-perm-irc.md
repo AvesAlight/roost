@@ -44,7 +44,7 @@ roost to grant the read-only subset*, not *narrow what it catches*.
 | U2 | `cmd > /dev/tcp/...` (net redirect) | under-fire | `null` → hang | `net-redirect` bashMissKind → ask | **bug — roost (hang risk)** |
 | U3 | path-command flags (`cp --target-directory=…`) | under-fire | `null` → hang | `flag-validation` bashMissKind → ask | **bug — roost (hang risk)** |
 | U4 | redirect target is expansion (`> $(...)`) | under-fire | `null` → hang | `shell-expansion`/`redirected_statement` → ask | **bug — roost (hang risk)** |
-| M1 | subshell `(…)` / command group `{…}` | match | `shell-operators` → IRC ask | `shell-operators` (`hasSubshell`/`hasCommandGroup`) → ask | correct |
+| M1 | non-cd subshell `(grep …)` / command group `{ ls; }` | match | `shell-operators` → IRC ask | `shell-operators` (`hasSubshell`/`hasCommandGroup`) → ask | correct |
 | M2 | `cd … && git …`, `cd … && <write/redirect>` | match | `cd-compound` → IRC ask | `cd-git-compound` / `cd-compound-write/-redirect` → ask | correct |
 | M3 | real zsh `cd OLD NEW` | match | `cd-multi-positional` → IRC ask | `cd-multi-positional` → ask | correct |
 | M4 | bare `&&`/`\|` pipeline of read-only cmds | match | `null` → pass through | read-only fast-path → **allow** | correct (both grant) |
@@ -158,9 +158,12 @@ would have granted.
 
 ### O2 — `cd-compound` over-fires on read-only tails
 
-`cd /tmp; ls`, `cd src && grep -rn foo .`, `cd build | wc -l` → roost
-`cd-compound` → IRC ask. CC escalates cd-compound **only** for write, output
-redirection, or git tails (finding #3 above); a read-only tail is allowed.
+`cd /tmp; ls`, `cd src && grep -rn foo .`, `cd logs && tail -n 50 app.log` →
+roost `cd-compound` → IRC ask. CC escalates cd-compound **only** for write,
+output redirection, or git tails (finding #3 above); a read-only tail is
+allowed. (Note the alternation is `&&`/`||`/`;` only — a single-`|` read-only
+tail like `cd build | wc -l` is *not* matched and correctly passes through,
+M4-shaped. The over-fire is the `;`/`&&`/`||` read-only tails.)
 
 roost collapses CC's three distinct kinds into one detector
 (`pretooluse-prompt.ts:100`) that fires on `cd … (&&|\|\||;)` regardless of the
@@ -199,9 +202,14 @@ whole hook rests on.
 
 ### M-rows — correct mirrors (no action)
 
-shell-operators on subshell/group (M1), cd-compound on git/write/redirect tails
-(M2), real `cd OLD NEW` (M3), and read-only pipelines passing through (M4) all
-match CC 2.1.196. **The shell-operators seed repro in #604's comment does not
+shell-operators on a non-cd subshell/group (M1 — `(grep …)`, `{ ls; }`),
+cd-compound on git/write/redirect tails (M2), real `cd OLD NEW` (M3), and
+read-only pipelines passing through (M4) all match CC 2.1.196. (Detector
+ordering wrinkle: a subshell whose first token is `cd` — `(cd /tmp && ls)` —
+trips `cd-compound` first, since `CD_START` includes `(` and the cd-compound
+check precedes shell-operators. Still routes to IRC, so the verdict is
+unaffected; the M1 example is deliberately non-cd to keep it exact.) **The
+shell-operators seed repro in #604's comment does not
 reproduce as written**: `echo "…" && grep … | head` has no subshell/group, so
 roost returns `null` and CC's read-only fast-path allows it — neither prompts.
 The real observed command must have contained a top-level `(…)`/`{…}` (which
