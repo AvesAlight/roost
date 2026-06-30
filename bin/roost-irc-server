@@ -1,3 +1,41 @@
 #!/usr/bin/env bash
 # Wrapper so .mcp.json can reference this by name (via plugin bin/ PATH).
-exec bun run "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../src/irc-server.ts"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+find_bun() {
+  local candidate
+
+  # Explicit operator override — hard-error if set but not executable.
+  if [ -n "${BUN_BIN:-}" ]; then
+    if [ -x "${BUN_BIN}" ]; then
+      printf '%s' "${BUN_BIN}"; return 0
+    fi
+    printf 'roost-irc-server: BUN_BIN=%s is not executable\n' "${BUN_BIN}" >&2
+    return 1
+  fi
+
+  # bun installer convention: $BUN_INSTALL/bin/bun (default ~/.bun).
+  if [ -n "${BUN_INSTALL:-}" ]; then
+    candidate="${BUN_INSTALL}/bin/bun"
+    if [ -x "${candidate}" ]; then
+      printf '%s' "${candidate}"; return 0
+    fi
+  fi
+
+  # Default from-source install location.
+  candidate="${HOME}/.bun/bin/bun"
+  if [ -x "${candidate}" ]; then
+    printf '%s' "${candidate}"; return 0
+  fi
+
+  # PATH fallback (homebrew, system packages, custom installs).
+  if candidate="$(command -v bun 2>/dev/null)"; then
+    printf '%s' "${candidate}"; return 0
+  fi
+
+  printf 'roost-irc-server: bun not found. Set BUN_BIN to the bun binary path or install bun (https://bun.sh).\n' >&2
+  return 1
+}
+
+BUN="$(find_bun)" || exit 1
+exec "${BUN}" run "${SCRIPT_DIR}/../src/irc-server.ts"
