@@ -1,10 +1,15 @@
 /**
- * Verify bun resolution in bin/roost-irc-server and bin/dispatcher.
+ * Verify bun resolution in bin/roost-irc-server (primary) and the shared
+ * _bun-lib.sh helper that all in-session launchers source.
  *
  * Primary scenario mirrors the actual reported failure: bun installed
  * from-source to ~/.bun/bin, that directory absent from the non-interactive
  * login shell's PATH, BUN_BIN unset. The fix's candidate-3 fallback
  * (${HOME}/.bun/bin/bun) must pick it up and the MCP must connect to ergo.
+ *
+ * All launchers source the same _bun-lib.sh, so testing the resolution logic
+ * thoroughly via roost-irc-server (which has the full MCP connect probe) is
+ * sufficient — no per-launcher duplication needed.
  */
 import { describe, it, expect, beforeAll } from 'bun:test'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -76,6 +81,41 @@ describe.if(isErgoAvailable())('bin/roost-irc-server bun resolution — MCP conn
     }
   })
 
+  it('candidate-2 fallback: MCP connects via $BUN_INSTALL/bin/bun', async () => {
+    const realBun = Bun.which('bun')!
+    const tmpHome = mkdtempSync(join(tmpdir(), 'roost-bun-home-'))
+    const tmpInstall = mkdtempSync(join(tmpdir(), 'roost-bun-install-'))
+    let handle: Awaited<ReturnType<typeof wireMcpClient>> | undefined
+    try {
+      mkdirSync(join(tmpInstall, 'bin'), { recursive: true })
+      symlinkSync(realBun, join(tmpInstall, 'bin', 'bun'))
+
+      const transport = new StdioClientTransport({
+        command: IRC_SERVER_SCRIPT,
+        args: [],
+        env: {
+          ...scrubEnv(),
+          ROOST_IRC_SERVER: ergo.host,
+          ROOST_IRC_PORT: String(ergo.port),
+          ROOST_IRC_NICK: 'bun-res-cand2',
+          HOME: tmpHome,
+          PATH: pathWithoutBun(),
+          BUN_INSTALL: tmpInstall,
+        },
+        stderr: 'pipe',
+      })
+
+      handle = await wireMcpClient(transport, 'bun-res-cand2')
+      await pollUntilIrcReady(handle)
+      const { tools } = await handle.client.listTools()
+      expect(tools.map(t => t.name)).toContain('channel_message')
+    } finally {
+      await handle?.client.close()
+      rmSync(tmpHome, { recursive: true, force: true })
+      rmSync(tmpInstall, { recursive: true, force: true })
+    }
+  })
+
   it('BUN_BIN override: MCP connects when bun absent from PATH and HOME', async () => {
     const realBun = Bun.which('bun')!
     const tmpHome = mkdtempSync(join(tmpdir(), 'roost-bun-home-'))
@@ -107,11 +147,19 @@ describe.if(isErgoAvailable())('bin/roost-irc-server bun resolution — MCP conn
   })
 })
 
-describe('bin/roost-irc-server bun resolution — error cases', () => {
+describe('bun resolution errors — roost-irc-server', () => {
+  // Use a fresh empty tmpdir as the sole PATH entry (beyond system paths needed
+  // for the shebang) — guarantees no bun there regardless of what's installed.
+  let emptyBinDir: string
+
+  beforeAll(() => {
+    emptyBinDir = mkdtempSync(join(tmpdir(), 'roost-empty-bin-'))
+  })
+
   it('exits non-zero with message when bun not found anywhere', async () => {
     const proc = Bun.spawn([IRC_SERVER_SCRIPT], {
       env: {
-        PATH: '/usr/bin:/bin',
+        PATH: `${emptyBinDir}:/usr/bin:/bin`,
         HOME: '/nonexistent-bun-test',
         ROOST_IRC_SERVER: '127.0.0.1',
         ROOST_IRC_PORT: '16667',
@@ -131,7 +179,7 @@ describe('bin/roost-irc-server bun resolution — error cases', () => {
   it('exits non-zero when BUN_BIN is set but not executable', async () => {
     const proc = Bun.spawn([IRC_SERVER_SCRIPT], {
       env: {
-        PATH: '/usr/bin:/bin',
+        PATH: `${emptyBinDir}:/usr/bin:/bin`,
         HOME: '/nonexistent-bun-test',
         BUN_BIN: '/nonexistent/bun',
         ROOST_IRC_SERVER: '127.0.0.1',
@@ -151,11 +199,17 @@ describe('bin/roost-irc-server bun resolution — error cases', () => {
   })
 })
 
-describe('bin/dispatcher bun resolution — error case', () => {
+describe('bun resolution errors — dispatcher', () => {
+  let emptyBinDir: string
+
+  beforeAll(() => {
+    emptyBinDir = mkdtempSync(join(tmpdir(), 'roost-empty-bin-'))
+  })
+
   it('exits non-zero with message when bun not found anywhere', async () => {
     const proc = Bun.spawn([DISPATCHER_SCRIPT], {
       env: {
-        PATH: '/usr/bin:/bin',
+        PATH: `${emptyBinDir}:/usr/bin:/bin`,
         HOME: '/nonexistent-bun-test',
       },
       stdout: 'pipe',
