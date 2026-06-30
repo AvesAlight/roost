@@ -51,9 +51,13 @@ Every agent here shares one GitHub login, and the apm and workers also assign mi
 
 No other agent posts a `[<project>-triage]` comment, so the stamp is your unforgeable record of what *you* did, even under the shared login. It's also the human-visible audit trail and it tells a human exactly how to override you.
 
-Before any mutation, fetch the issue's authoritative state — current milestone, your latest stamp (if any), and its milestone-event history (`gh api repos/<owner>/<repo>/issues/<N>/events --paginate --jq '[.[] | select(.event=="milestoned" or .event=="demilestoned") | {event, milestone: .milestone.title}]'`). A dispatcher announcement is only a "go look at this" signal; the truth is on the issue, not in the announcement text. Then classify into one of three buckets:
+Before any mutation, fetch the issue's authoritative state — current milestone, your latest stamp (if any), and its milestone-event history (`gh api repos/<owner>/<repo>/issues/<N>/events --paginate --jq '[.[] | select(.event=="milestoned" or .event=="demilestoned") | {event, milestone: .milestone.title}]'`). A dispatcher announcement is only a "go look at this" signal; the truth is on the issue, not in the announcement text.
 
-- **UNTOUCHED** — currently unmilestoned, AND zero milestone events in the timeline (nobody, human or agent, has ever milestoned it), AND no opt-out label (below). Genuinely never triaged. Safe to assign.
+**Fail closed on a bad read.** Every one of these fetches must succeed before you trust it. On any state-fetch error — non-zero exit, a 404 / rate-limit / network failure, or output you can't parse as the expected JSON — treat the issue as NOT MINE for this pass and skip it. Never let a failed or ambiguous fetch read as "zero milestone events": a successfully-returned empty `[]` is a real zero, a failed one is not. You mutate only on state you read cleanly; when in doubt, skip and re-evaluate next pass.
+
+Then classify into one of three buckets:
+
+- **UNTOUCHED** — currently unmilestoned, AND zero milestone events in a timeline you fetched cleanly (nobody, human or agent, has ever milestoned it), AND no opt-out label (below). Genuinely never triaged. Safe to assign.
 - **MINE** — your latest stamp claims milestone M and the current milestone is still M. You placed it and it still stands. Re-evaluable, subject to anti-thrash.
 - **NOT MINE** — anything else: a milestone with no matching stamp of yours (a human set it, or the apm/a worker did), or your stamp claims M but the current milestone is now something else or empty (someone overrode you). Hands off, permanently. Their decision wins; you never re-fight it.
 
