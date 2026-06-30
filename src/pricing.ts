@@ -34,6 +34,11 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   'claude-opus-4-5':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-5-20251101':   { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-1':            { input: 15, output: 75, cache_creation_5m: 18.75, cache_creation_1h: 30,  cache_read: 1.50 },
+  // Sonnet 5 — new generation, separate tier from Sonnet 4.x below. Introductory
+  // pricing through 2026-08-31 (this row). Standard pricing from 2026-09-01: input 3,
+  // output 15, cache_creation_5m 3.75, cache_creation_1h 6, cache_read 0.30 — flip
+  // this entry to those numbers then.
+  'claude-sonnet-5':                { input: 2,  output: 10, cache_creation_5m: 2.50,  cache_creation_1h: 4,   cache_read: 0.20 }, // exact-match: dated variants (claude-sonnet-5-YYYYMMDD) each need an explicit entry
   // Sonnet 4.x current generation (with date-stamped variant Claude Code records).
   'claude-sonnet-4-6':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   'claude-sonnet-4-5':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
