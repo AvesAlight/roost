@@ -39,18 +39,30 @@ unmodified, including subshell parens and newlines).
 | `cd /tmp /usr` | cd-multi-positional | ran (errored at bash level), no prompt |
 | `cd /tmp; echo TOK` | cd-compound | executed, no prompt |
 | `echo TOK` (control) | none (`null`) | executed, no prompt |
-| `rm -rf <throwaway-dir>` (**positive control**) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED (no exec)** |
+| `rm -rf /tmp/<throwaway>` (**positive control**) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED (sandbox)** |
+| `touch /tmp/<throwaway>.txt` (write control) | none (`null`) | **auto: executed, no prompt** · **default: BLOCKED (sandbox)** |
 
-The positive control is load-bearing: `--permission-mode default` blocks the
-`rm` (the harness sees a real non-execution) while `auto` runs it. So (a) the
-harness can detect a block when one occurs, and (b) `--permission-mode` genuinely
-overrides the settings default. The default-mode block happens *upstream* of the
-hookable PermissionRequest path — CC denies the destructive `rm` (target outside
-the session working dir) before the hook is reached, so the allow-emitting
-observation hook (see Reproducibility) never sees it and can't override the
-block. PermissionRequest in fact never fired in *any* run, default or auto, so
-its allow was a harness backstop that was never exercised. So: **auto mode grants
-the classified shapes outright, no prompt.**
+The positive control is load-bearing in two ways. First, it proves the harness
+can see a real non-execution: `--permission-mode default` refuses both the `rm`
+and a plain `touch` whose targets sit in `/tmp` (outside the session working dir),
+failing before the marker echo, while `auto` runs both and emits the marker. So
+an auto-mode "no prompt → executed" row is a genuine grant, and `--permission-mode`
+is honored (default behaved like default, not like the box's `defaultMode: auto`).
+
+Second — and this is bigger than "the flag overrides the settings default" — the
+gate default enforces here is CC's **cwd sandbox**: it refuses writes outside the
+session working dir (note default still ran the read-only `echo`, so it isn't
+blanket-denying bash). **Auto bypasses that sandbox.** It executed an out-of-cwd
+`rm -rf` and an out-of-cwd `touch` that default refused. So in auto, the
+destructive reach is *not* worktree-local — ops targeting paths outside the
+worktree run too.
+
+The default-mode block also happens *upstream* of the hookable PermissionRequest
+path: CC denies the out-of-cwd op before the hook is reached, so the allow-
+emitting observation hook (see Reproducibility) never sees it. PermissionRequest
+in fact never fired in *any* of the 13 runs, default or auto (see the mechanism
+note below). So: **auto mode grants the classified shapes outright, no prompt**,
+and relaxes the cwd sandbox that default enforces.
 
 ### Probe B — what roost adds on top (real `classifyBash` PreToolUse hook)
 
@@ -69,6 +81,18 @@ relays the flagged shapes to the operator. Auto mode would have granted all
 three silently. The plain read-only control passes through (classifyBash returns
 `null`), so the relay is specifically the classifier's doing. That is the
 spurious prompt in Q2, and it lives entirely in `classifyBash`, not in CC.
+
+### Mechanism: classifyBash is roost's only bash lever; the PermissionRequest hook is inert for bash
+
+`--perm-irc` wires two hooks: PreToolUse:Bash (`irc-pretooluse-prompt`, i.e.
+`classifyBash`) and PermissionRequest (`irc-permission-prompt`). Across all 13
+probe runs — read-only, subshell, cd shapes, out-of-cwd `touch`, out-of-cwd
+`rm`, in both default and auto — the PermissionRequest hook never fired for a
+Bash call. CC 2.1.196 gates bash through the PreToolUse/native-analyzer path and
+the cwd sandbox, not through PermissionRequest. So for bash, roost's
+`irc-permission-prompt` is effectively inert: `classifyBash` (PreToolUse) is
+roost's only bash lever, with no PermissionRequest backstop behind it. A fix to
+roost's bash handling changes `classifyBash` or nothing.
 
 ### The inversion: classifyBash keys on syntax, which tracks neither danger nor hang-risk
 
@@ -176,20 +200,25 @@ syntactic shapes."
 
 **2. Latent safety gap — under-fire on destructive commands. New, and more
 serious than the friction.** The nine destructive commands tested fall through
-`classifyBash` (`null`) and, for the one safe to run live (`rm -rf
-<throwaway>`), through auto mode unprompted. An auto worker can run those today
-with no human in the loop, while the friction prompts imply otherwise (false
-safety). This warrants its own follow-up at higher priority than the friction
-cleanup.
+`classifyBash` (`null`). The one safe to run live (`rm -rf /tmp/<throwaway>`) ran
+through auto mode unprompted — and it targeted a path *outside* the session
+worktree, which default mode's cwd sandbox refused. So auto's destructive reach
+isn't worktree-local: auto relaxes the one CC-native gate (the cwd sandbox) that
+would otherwise contain an out-of-cwd op, and classifyBash doesn't replace it. An
+auto worker can run these today with no human in the loop, while the friction
+prompts imply otherwise (false safety). Higher priority than the friction cleanup.
 
 **Bounded claim (don't over-read).** What's tested: all nine return `null` from
-classifyBash; auto mode executed `rm -rf <throwaway>` with no prompt while
-default blocked it. What's *not* tested: I did not live-run the other eight
-(they're destructive/networked), and I did not probe CC's critical-path guards
-(no `rm -rf /`). The binary shows CC retains some native critical-dir rm checks
-I did not map. So the precise statement is "these nine are ungated by
-classifyBash, and auto mode ran the one destructive command I tested
-unprompted," not "auto mode runs everything."
+classifyBash; auto mode executed `rm -rf /tmp/<throwaway>` and a `touch` of an
+out-of-cwd path with no prompt, while default's sandbox refused both. Both targets
+were `/tmp` throwaway paths — out-of-cwd, but not system-critical. What's *not*
+tested: I did not live-run the other eight (destructive/networked), did not probe
+CC's critical-path guards (no `rm -rf /`), and did not run the *same literal path*
+in both modes — the default/auto targets differed by a trailing digit to avoid
+collision, so they're the same out-of-cwd location class, not identical paths. The
+binary shows CC retains some native critical-dir rm checks I did not map. So the
+precise statement is "auto ran the out-of-cwd /tmp ops I tested unprompted, past
+the sandbox default enforces," not "auto runs `rm -rf /`."
 
 **Fix axis.** Re-key on what a command *does* (destructive / irreversible /
 exfiltrating), not on its *syntax*. Syntax tracks neither.
