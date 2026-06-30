@@ -50,6 +50,16 @@ per-PR doesn't).
   tag the human + re-request review, merge + cleanup, follow-up
   filing, release-bump mechanics. Lives in the same channels as
   lead-pm.
+- **Triage** — `<project>-triage`. Autonomous milestone hygiene:
+  assigns genuinely-new issues (off the dispatcher's new-issue
+  announcement) to the right milestone unattended, and gates the
+  riskier moves — backlog sweeps and milestone creation — behind a
+  human confirm in `#<project>-leads`. Never touches a milestone it
+  can't prove it set: all agents share one GitHub login, so a
+  `[<project>-triage]` stamp comment is its only reliable provenance,
+  and anything unstamped is hands-off. Long-running; lives in
+  `#<project>-leads`, opts into `--steer-compact`. Spawned once at
+  project setup (like the APM), not auto-wired into lead-pm startup.
 - **Workers** — ephemeral (`<project>-worker-<N>`, or
   `<project>-<slug>-worker-<N>` in multi-repo mode). Join
   `#<project>-issue-<N>` on assignment, leave on completion.
@@ -145,6 +155,11 @@ roost spawn <project>-worker-718-A -c '#<project>-issue-718'
 
 # Reviewer joining for the review pass:
 roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
+
+# Triage agent (long-running milestone hygiene; opus/auto, self-authorizing):
+roost spawn <project>-triage --agent triage --cache-ttl 1h --steer-compact \
+  -c '#<project>-leads' --prompt 'human=<human>' \
+  --ask-irc '#<project>-leads' --ask-target <project>-lead-pm
 
 # Hard restart (channel-as-lifecycle: kick + new worker JOINs same
 # channel, orients from dispatcher state + channel topic + spawn

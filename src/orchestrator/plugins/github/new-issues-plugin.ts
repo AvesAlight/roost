@@ -209,6 +209,8 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   }
 }
 
+// The `<owner>/<repo>#<N>` token in this line is consumed by the triage
+// agent's trigger matcher — keep that token stable if you re-edit the wording.
 function formatNewIssue(repo: string, issue: GhRepoIssue): string {
   const tag = `${repo}#${issue.number}`
   const title = issue.title ?? ''
