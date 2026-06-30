@@ -145,8 +145,10 @@ export abstract class GhPluginBase extends BasePlugin {
       this._readFailures.set(cooldownKey, fail)
       this.log(`[${this.name}] read failing for ${cooldownKey} (${fail.consecutive} in a row): ${e.message}\n`)
       // Below threshold: a flap, stay silent. Past it: warn, then cooldown-gate.
+      // The `<` matches the throttle gate above so warn + re-probe share one
+      // window exactly — at the boundary tick the entry both re-reads and re-warns.
       if (fail.consecutive < READ_FAILURE_THRESHOLD) return { ok: false, rateLimited: false, events: [] }
-      const warnedRecently = fail.warnedAt !== 0 && now - fail.warnedAt <= WARN_COOLDOWN_MS
+      const warnedRecently = fail.warnedAt !== 0 && now - fail.warnedAt < WARN_COOLDOWN_MS
       if (warnedRecently) return { ok: false, rateLimited: false, events: [] }
       fail.warnedAt = now
       const noteText = formatReadFailureNote(this.name, cooldownKey, recoveryCmd, describeReadFailure(e.stderr))
