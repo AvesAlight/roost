@@ -610,7 +610,7 @@ require_ircd() {
   if ! (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "error: no IRC daemon listening on ${IRC_HOST}:${IRC_PORT}" >&2
     echo "  start ergo with:" >&2
-    echo "    cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml" >&2
+    echo "    mkdir -p ~/roost-ircd/logs && cd ~/roost-ircd && \"${ROOST_DIR}/var/ergo-bin/ergo\" run --conf \"${ROOST_DIR}/etc/ergo.yaml\"" >&2
     exit 2
   fi
 }
@@ -1132,7 +1132,7 @@ cmd_status() {
   if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
     echo "ircd: up on ${IRC_HOST}:${IRC_PORT}"
   else
-    echo "ircd: DOWN (start: cd ${ROOST_DIR}/var/ergo && ./ergo run --conf ${ROOST_DIR}/etc/ergo.yaml)"
+    echo "ircd: DOWN (start: mkdir -p ~/roost-ircd/logs && cd ~/roost-ircd && \"${ROOST_DIR}/var/ergo-bin/ergo\" run --conf \"${ROOST_DIR}/etc/ergo.yaml\")"
   fi
   local count
   count="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c "^${SESSION_PREFIX}")" || count=0
