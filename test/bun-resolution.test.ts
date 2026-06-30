@@ -49,7 +49,7 @@ describe.if(isErgoAvailable())('bin/roost-irc-server bun resolution — MCP conn
     ergo = (await startErgo())!
   })
 
-  it('candidate-3 fallback: MCP connects via ${HOME}/.bun/bin/bun with bun absent from PATH (primary failure scenario)', async () => {
+  it('candidate-4 fallback: MCP connects via ${HOME}/.bun/bin/bun with bun absent from PATH (primary failure scenario)', async () => {
     const realBun = Bun.which('bun')!
     const tmpHome = mkdtempSync(join(tmpdir(), 'roost-bun-home-'))
     let handle: Awaited<ReturnType<typeof wireMcpClient>> | undefined
@@ -81,7 +81,7 @@ describe.if(isErgoAvailable())('bin/roost-irc-server bun resolution — MCP conn
     }
   })
 
-  it('candidate-2 fallback: MCP connects via $BUN_INSTALL/bin/bun', async () => {
+  it('candidate-3 fallback: MCP connects via $BUN_INSTALL/bin/bun', async () => {
     const realBun = Bun.which('bun')!
     const tmpHome = mkdtempSync(join(tmpdir(), 'roost-bun-home-'))
     const tmpInstall = mkdtempSync(join(tmpdir(), 'roost-bun-install-'))

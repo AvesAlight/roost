@@ -6,9 +6,9 @@
 #
 # Resolution order:
 #   1. $BUN_BIN — explicit operator override; hard-errors if set but not executable
-#   2. $BUN_INSTALL/bin/bun — bun installer convention
-#   3. $HOME/.bun/bin/bun — default from-source install location
-#   4. command -v bun — PATH fallback (homebrew, system packages)
+#   2. command -v bun — PATH (matches the bun visible in the operator's shell)
+#   3. $BUN_INSTALL/bin/bun — bun installer convention
+#   4. $HOME/.bun/bin/bun — default from-source install location
 
 find_bun() {
   local candidate
@@ -24,6 +24,11 @@ find_bun() {
     return 1
   fi
 
+  # PATH (what the operator sees in their shell — prefer it over auto-detected locations).
+  if candidate="$(command -v bun 2>/dev/null)"; then
+    printf '%s' "${candidate}"; return 0
+  fi
+
   # bun installer convention: $BUN_INSTALL/bin/bun (default ~/.bun).
   if [ -n "${BUN_INSTALL:-}" ]; then
     candidate="${BUN_INSTALL}/bin/bun"
@@ -35,11 +40,6 @@ find_bun() {
   # Default from-source install location.
   candidate="${HOME}/.bun/bin/bun"
   if [ -x "${candidate}" ]; then
-    printf '%s' "${candidate}"; return 0
-  fi
-
-  # PATH fallback (homebrew, system packages, custom installs).
-  if candidate="$(command -v bun 2>/dev/null)"; then
     printf '%s' "${candidate}"; return 0
   fi
 
