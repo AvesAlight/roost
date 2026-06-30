@@ -65,6 +65,8 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl`, `--steer-compact`, and `--ask-irc` for each agent class.
 
+Optionally, spawn the **triage agent** to keep the milestone backlog sorted without you — it assigns genuinely-new issues to the right milestone autonomously and proposes the riskier moves (backlog sweeps, milestone creation) for your confirm in `#<project>-leads`. It's opt-in: spawn it once at setup if you want it, the same way you spawned the APM. See `ARCHITECTURE.md` for the Triage identity and spawn snippet.
+
 ## Working In Channels
 
 **IRC replies only**: your text output isn't surfaced in the channel — use channel_message / direct_message. (Full reminder in MCP instructions.)

@@ -222,7 +222,7 @@ Agent class guidance:
   --ask-irc routes AskUserQuestion calls to a channel instead of blocking
   the terminal; pair with --ask-target (the nick whose replies count).
 
-  PM agents (lead-pm, associate-pm) — long-running, idle through review
+  PM agents (lead-pm, associate-pm, triage) — long-running, idle through review
   loops and message-relay timescales that blow past 5m; runtime state
   would be lost across a directive-less auto-compact; AskUserQuestion
   should route via IRC so a blocked question surfaces in the leads channel
