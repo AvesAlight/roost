@@ -44,8 +44,13 @@ unmodified, including subshell parens and newlines).
 The positive control is load-bearing: `--permission-mode default` blocks the
 `rm` (the harness sees a real non-execution) while `auto` runs it. So (a) the
 harness can detect a block when one occurs, and (b) `--permission-mode` genuinely
-overrides the settings default. PermissionRequest never fired in auto mode for
-any row. So: **auto mode grants the classified shapes outright, no prompt.**
+overrides the settings default. The default-mode block happens *upstream* of the
+hookable PermissionRequest path — CC denies the destructive `rm` (target outside
+the session working dir) before the hook is reached, so the allow-emitting
+observation hook (see Reproducibility) never sees it and can't override the
+block. PermissionRequest in fact never fired in *any* run, default or auto, so
+its allow was a harness backstop that was never exercised. So: **auto mode grants
+the classified shapes outright, no prompt.**
 
 ### Probe B — what roost adds on top (real `classifyBash` PreToolUse hook)
 
@@ -207,7 +212,8 @@ bun -e 'import {classifyBash} from "./src/pretooluse-prompt.ts"; console.log(cla
 
 CC side: Probe A ran real `claude --permission-mode auto` (and `default`/`plan`
 for controls) 2.1.196 sessions with two observation hooks — a PreToolUse:Bash
-logger that passes through, and a PermissionRequest logger that emits allow — in
+logger that passes through, and a PermissionRequest logger that emits allow
+(which never fired — see the positive control) — in
 a clean cwd with roost's env stripped, so the inner session uses only the probe
 hooks. Each row confirmed the logged tool-call matched the intended expression
 before the result was read. The subshell shape was cross-checked in both
