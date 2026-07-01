@@ -45,7 +45,7 @@ Usage: roost <command> [args]
 Commands:
   init                     Bootstrap config, .gitignore, and copy prompts.
   spawn <nick> [options]   Bring up a Claude session on the roost.
-  agents                   List shipped agents and what 'spawn --agent' resolves.
+  agents [--all]           List installed agents ('spawn --agent' targets); --all adds what ships.
   shutdown <nick>          Kill the tmux session for that nick.
   list                     Show all roost-prefixed tmux sessions.
   attach <nick>            tmux attach to that nick's session.
@@ -258,21 +258,16 @@ EOF
 
 usage_agents() {
   cat <<EOF
-Usage: roost agents [--cwd PATH]
+Usage: roost agents [--all] [--cwd PATH]
 
-List the agents roost ships and the agents 'roost spawn --agent' can resolve
-from here. Two sections:
+List the agents you can spawn with 'roost spawn --agent' — by default just the
+ones installed here, resolved from <cwd>/.claude/agents and ~/.claude/agents and
+scope-tagged. The clean "who can I hire right now" list.
 
-  Shipped with roost   Every agent under the plugin's agents/ tree (name +
-                       description). A newly shipped agent shows here before
-                       'roost init' copies it into a project.
-
-  Spawnable here       What 'roost spawn --agent <name>' resolves from
-                       <cwd>/.claude/agents and ~/.claude/agents — the set spawn
-                       actually accepts.
-
-A shipped agent missing from the spawnable set is flagged with the command to
-install it. --cwd PATH inspects another project (default: current directory).
+  --all       Also list every agent roost ships (the plugin's agents/ tree, with
+              descriptions), and flag any that ship but aren't installed here,
+              with the command to install them. The discovery/bootstrap view.
+  --cwd PATH  Resolve against another project (default: current directory).
 EOF
 }
 
@@ -1123,38 +1118,41 @@ _resolvable_agents() {
 }
 
 cmd_agents() {
-  local cwd="${PWD}"
+  local cwd="${PWD}" show_all=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --all)     show_all=1; shift ;;
       --cwd)     cwd="${2:?roost agents: --cwd requires a path}"; shift 2 ;;
       -h|--help) usage_agents; exit 0 ;;
       *) echo "error: roost agents: unknown option: $1" >&2; usage_agents; exit 1 ;;
     esac
   done
 
-  local shipped resolvable resolved_names
-  shipped="$(_shipped_agents)"
+  local resolvable shipped=""
   resolvable="$(_resolvable_agents "${cwd}")"
-  resolved_names="$(printf '%s' "${resolvable}" | cut -f1)"
+  [ "${show_all}" -eq 1 ] && shipped="$(_shipped_agents)"
 
-  # Section 1: the shipped roster — the discovery answer.
-  echo "Shipped with roost (${ROOST_DIR}/agents):"
-  echo
-  if [ -n "${shipped}" ]; then
-    local _w=0 _n _d
-    while IFS=$'\t' read -r _n _; do
-      [ "${#_n}" -gt "${_w}" ] && _w="${#_n}"
-    done <<< "${shipped}"
-    while IFS=$'\t' read -r _n _d; do
-      printf '  %-*s  %s\n' "${_w}" "${_n}" "${_d}"
-    done <<< "${shipped}"
-  else
-    echo "  (none)"
+  # --all opens with the shipped roster — the discovery/bootstrap view.
+  if [ "${show_all}" -eq 1 ]; then
+    echo "Shipped with roost (${ROOST_DIR}/agents):"
+    echo
+    if [ -n "${shipped}" ]; then
+      local _w=0 _n _d
+      while IFS=$'\t' read -r _n _; do
+        [ "${#_n}" -gt "${_w}" ] && _w="${#_n}"
+      done <<< "${shipped}"
+      while IFS=$'\t' read -r _n _d; do
+        printf '  %-*s  %s\n' "${_w}" "${_n}" "${_d}"
+      done <<< "${shipped}"
+    else
+      echo "  (none)"
+    fi
+    echo
   fi
 
-  # Section 2: what `roost spawn --agent` resolves from here. listing ==
-  # spawnable, and a shipped-but-not-installed agent gets the install command.
-  echo
+  # Default view: the clean "agents to hire" list — exactly what
+  # `roost spawn --agent` resolves from here (same helper the not-found error
+  # reads, so the two can't drift).
   echo "Spawnable here (roost spawn --agent <name>) — resolved from .claude/agents/:"
   echo
   if [ -n "${resolvable}" ]; then
@@ -1165,8 +1163,18 @@ cmd_agents() {
     while IFS=$'\t' read -r _rn _rs; do
       printf '  %-*s  (%s)\n' "${_rw}" "${_rn}" "${_rs}"
     done <<< "${resolvable}"
+  elif [ "${show_all}" -eq 1 ]; then
+    echo "  (none installed — run 'roost init' to copy the shipped agents above)"
+  else
+    echo "  (none installed — run 'roost init' to copy the shipped agents, or 'roost agents --all' to see what ships)"
+  fi
 
-    local _missing="" _sn
+  # --all closes with reconciliation: shipped agents present in the roster but
+  # absent from the resolver set here, with the command to install them. Only
+  # meaningful when some are installed — the all-empty case is covered above.
+  if [ "${show_all}" -eq 1 ] && [ -n "${resolvable}" ]; then
+    local resolved_names _missing="" _sn
+    resolved_names="$(printf '%s' "${resolvable}" | cut -f1)"
     while IFS=$'\t' read -r _sn _; do
       case $'\n'"${resolved_names}"$'\n' in
         *$'\n'"${_sn}"$'\n'*) ;;
@@ -1178,8 +1186,6 @@ cmd_agents() {
       echo "Shipped but not installed here: ${_missing% }"
       echo "  → run 'roost init --force-agents' to copy them into .claude/agents/."
     fi
-  else
-    echo "  (none installed — run 'roost init' to copy the shipped agents)"
   fi
 }
 

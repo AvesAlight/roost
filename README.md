@@ -49,9 +49,9 @@ roost spawn myproject-lead-pm \
 See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
 Roost ships more agents than lead-pm — each is a `roost spawn --agent <name>`
-target. Run `roost agents` to see the full set with descriptions, plus which
-are installed in your project (and how to pull in any that aren't). The list
-comes straight from the plugin tree, so new agents show up on their own.
+target. `roost agents` lists the ones installed in your project; `roost agents
+--all` also shows what roost ships but you haven't installed yet, and how to
+pull them in.
 
 ## Prerequisites
 
