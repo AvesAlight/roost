@@ -3,7 +3,8 @@ import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel, linearIssueChannel, resolveProjectChannel } from '../../naming.js'
 import type { PluginLogger, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { GhBase } from './base.js'
-import { GhScraper } from './scraper.js'
+import { snapshotPrFromNode } from './scraper.js'
+import { GhError, isRateLimitError, rateLimitKind, type BatchOutcome, type GhPrNode } from './github-api.js'
 import { formatPayload } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { LinkedIssue, PrSnap, PrPluginState } from './types.js'
@@ -152,6 +153,21 @@ export class GitHubPrsPlugin extends GhBase {
     }
   }
 
+  // Node → (snapshot, events) for one clean batch entry. A thin instance wrapper
+  // over the pure scraper transform, kept as a seam so plugin-routing tests can
+  // inject a controlled (snap, events) pair here without building a full GraphQL
+  // node and running the diff. The node→snapshot mapping itself is covered
+  // directly in the scraper/graphql tests.
+  protected snapshotPr(
+    repo: string,
+    number: number,
+    node: GhPrNode,
+    prevPr: PrSnap | null | undefined,
+    agentLogins: Set<string>,
+  ): { snap: PrSnap; events: OrchestratorEvent[] } {
+    return snapshotPrFromNode(repo, number, node, prevPr, agentLogins)
+  }
+
   async runTick(
     config: OrchestratorConfig,
     prevState: unknown
@@ -170,31 +186,40 @@ export class GitHubPrsPlugin extends GhBase {
     const now = Date.now()
     if (this.breakerOpen(now)) return this.breakerSkipResult(prevState ?? { prs: {} }, config)
 
-    const scraper = new GhScraper(this.client, agentLogins)
-
-    // Scrape in parallel — entries are independent. Preserve config order.
-    // prevPr: undefined = seed; null = new entry; PrSnap = normal diff.
-    // readEntry returns a discriminated result instead of throwing, so a
-    // rate-limit on one entry doesn't abandon its siblings mid-flight.
-    const scraped = await Promise.all(watched.map(async entry => {
+    // Resolve every watched entry once. prevPr: undefined = seed; null = new
+    // entry; PrSnap = normal diff. Degraded entries (past the read-failure
+    // threshold, inside their probe cooldown) are omitted from the batch query
+    // and carried forward — probing them every tick is what we're throttling.
+    const resolved = watched.map(entry => {
       const { repo, number, channels: entryChannels } = resolveRepoEntry(entry, defaultRepo)
       const key = `${repo}#${number}`
-      const prevPr: PrSnap | null | undefined = prev === null ? undefined : (prev.prs[key] ?? null)
-      const r = await this.readEntry(
-        key,
-        [projectChannel],
-        `unwatch pr ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`,
-        () => scraper.scrapePr(repo, number, prevPr),
-        now,
-      )
-      return { key, prevPr, entryChannels, r }
-    }))
+      return {
+        key, repo, number, entryChannels,
+        recoveryCmd: `unwatch pr ${number}${repo !== defaultRepo ? ` ${repo}` : ''}`,
+        prevPr: (prev === null ? undefined : (prev.prs[key] ?? null)) as PrSnap | null | undefined,
+      }
+    })
+    const toQuery = resolved.filter(e => !this.entryThrottled(e.key, now))
 
-    // Any rate-limit → back off the whole tick; discard partial work, preserve prev.
-    if (scraped.some(s => !s.r.ok && s.r.rateLimited)) {
-      return this.breakerTripResult(now, prevState ?? { prs: {} }, projectChannel, config)
+    // One batched GraphQL read over every non-throttled entry: one request per
+    // tick regardless of watch count, vs ~6 REST calls per PR.
+    let batch: Map<string, BatchOutcome<GhPrNode>>
+    try {
+      batch = await this.client.fetchPrsBatch(toQuery.map(e => ({ repo: e.repo, number: e.number })))
+    } catch (e) {
+      // Non-GhError = real infra/code bug — fail loud (don't swallow a defect).
+      if (!(e instanceof GhError)) throw e
+      // Rate-limit → back off the whole tick; discard partial work, preserve
+      // prev. `kind` picks the schedule (secondary burst gets the ~1m floor).
+      if (isRateLimitError(e)) return this.breakerTripResult(now, prevState ?? { prs: {} }, projectChannel, config, rateLimitKind(e))
+      // Whole-batch transient failure isn't a per-entry condition, so it doesn't
+      // spike per-entry counts. Preserve prev, replay channels, and surface one
+      // throttled batch-level warn so a sustained outage doesn't go silent.
+      const taggedEvents = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
+      return { state: prevState ?? { prs: {} }, taggedEvents, channels: this.skipChannels(config) }
     }
     this.breakerReset(now)
+    this.clearBatchFailure()
 
     // Cross-link lookup: one batched Linear query per tick, gated on a
     // non-empty linear-issues watch set. Empty-watched is the load-bearing
@@ -209,22 +234,29 @@ export class GitHubPrsPlugin extends GhBase {
     // Static (config) + dynamic (linked-issues from scrape). Each linked-issue
     // channel is slugged against its own repo (closures can cross repos).
     const channels = new Set<string>(this.desiredChannels(config))
-    for (const { key, prevPr, entryChannels, r } of scraped) {
-      if (!r.ok) {
-        if (r.rateLimited) continue  // unreachable: any rate-limit returned above; narrows the type
-        // Transient skip: carry the prev snapshot forward and re-add its dynamic
-        // linked-issue/Linear channels so a flap doesn't PART them (the PR's own
-        // #issue-N is already in desiredChannels). Emit the cooldown note.
+    for (const { key, repo, number, entryChannels, recoveryCmd, prevPr } of resolved) {
+      const outcome = batch.get(key)
+      // No outcome = throttled this tick (omitted from the query). A per-alias
+      // failure = outcome.ok false. Both carry the prev snapshot forward and
+      // re-add its dynamic linked-issue/Linear channels so a skip doesn't PART
+      // them (the PR's own #issue-N is already in desiredChannels). A per-alias
+      // miss (404/renamed/forbidden) also bumps the entry's failure counter and
+      // warns past the threshold; a throttle skip stays silent.
+      if (!outcome || !outcome.ok) {
+        if (outcome && !outcome.ok) {
+          taggedEvents.push(...this.recordEntryFailure(key, [projectChannel], recoveryCmd, outcome.reason, outcome.logDetail, now))
+        }
         if (prevPr) {
           curState.prs[key] = prevPr
           const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
           for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
           for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) channels.add(linearIssueChannel(project, ident))
         }
-        taggedEvents.push(...r.events)
         continue
       }
-      const { snap, events } = r.value
+      // Clean read → clear any prior failure state and build the snapshot.
+      this.clearEntryFailure(key)
+      const { snap, events } = this.snapshotPr(repo, number, outcome.node, prevPr, agentLogins)
       curState.prs[key] = snap
       const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
       for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
