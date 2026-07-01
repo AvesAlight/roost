@@ -519,6 +519,171 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 28: --perm-irc + opus default (auto) → bash PreToolUse hook skipped --
+# Auto mode grants classified bash shapes outright, so wiring the relay would
+# only produce spurious operator prompts for things claude never blocked on.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"PermissionRequest"' "$data_dir/roost-settings.json" \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json" \
+    && ! grep -qF 'hook-exec irc-pretooluse-prompt' "$data_dir/roost-settings.json"; then
+  ok "--perm-irc + opus default (auto): bash PreToolUse hook skipped"
+else
+  fail "--perm-irc + opus default (auto): bash PreToolUse hook skipped" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 29: --perm-irc + --model sonnet (acceptEdits) → bash hook still wired --
+# acceptEdits still blocks on bash, so the relay is needed — parity unaffected.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --model sonnet --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json" \
+    && grep -qF 'hook-exec irc-pretooluse-prompt' "$data_dir/roost-settings.json"; then
+  ok "--perm-irc + sonnet (acceptEdits): bash PreToolUse hook still wired"
+else
+  fail "--perm-irc + sonnet (acceptEdits): bash PreToolUse hook still wired" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 30: --perm-irc + explicit --permission-mode bypassPermissions → skipped -
+# bypassPermissions skips all permission checks by design — same no-block
+# reasoning as auto, just via an explicit flag instead of the model default.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode bypassPermissions --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--perm-irc + explicit bypassPermissions: bash PreToolUse hook skipped"
+else
+  fail "--perm-irc + explicit bypassPermissions: bash PreToolUse hook skipped" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 31: --agent frontmatter permissionMode:auto + --perm-irc → skipped ---
+# The wrapper passes no --permission-mode on the --agent path, so the only way
+# to know the resolved mode is a local peek at the frontmatter it defers to.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: opusauto\ndescription: opus auto agent\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/opusauto.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent opusauto --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--agent frontmatter permissionMode:auto + --perm-irc: bash hook skipped"
+else
+  fail "--agent frontmatter permissionMode:auto + --perm-irc: bash hook skipped" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 32: --agent frontmatter permissionMode:acceptEdits + --perm-irc → wired -
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: sonnetedits\ndescription: accept-edits agent\nmodel: sonnet\npermissionMode: acceptEdits\n---\nbody\n' > "$TDIR/.claude/agents/sonnetedits.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent sonnetedits --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--agent frontmatter permissionMode:acceptEdits + --perm-irc: bash hook wired"
+else
+  fail "--agent frontmatter permissionMode:acceptEdits + --perm-irc: bash hook wired" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 33: explicit --permission-mode wins over a non-skip agent frontmatter --
+# Agent declares acceptEdits (would wire); explicit auto flag overrides it and
+# should skip — proves the gate keys off the resolved var, not the frontmatter
+# peek, whenever an explicit flag is present.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: sonnetedits2\ndescription: accept-edits agent\nmodel: sonnet\npermissionMode: acceptEdits\n---\nbody\n' > "$TDIR/.claude/agents/sonnetedits2.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent sonnetedits2 --permission-mode auto --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "explicit --permission-mode auto overrides non-skip agent frontmatter: bash hook skipped"
+else
+  fail "explicit --permission-mode auto overrides non-skip agent frontmatter: bash hook skipped" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 34: --agent with no declared permissionMode + --perm-irc → wired -----
+# Unknown resolved mode is not a skip-set member — conservative default keeps
+# the hook wired rather than risk silently dropping a real blocking relay.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: noperm\ndescription: agent with no permissionMode\nmodel: sonnet\n---\nbody\n' > "$TDIR/.claude/agents/noperm.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent noperm --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--agent with no permissionMode + --perm-irc: bash hook still wired (conservative default)"
+else
+  fail "--agent with no permissionMode + --perm-irc: bash hook still wired (conservative default)" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 35: --permission-mode dontAsk + --perm-irc → wired (unverified mode) --
+# dontAsk isn't confirmed to skip bash prompts (unlike auto/bypassPermissions),
+# so it's deliberately left out of the skip-set — conservative default wins.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode dontAsk --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--perm-irc + explicit dontAsk: bash PreToolUse hook still wired (unverified mode, not in skip-set)"
+else
+  fail "--perm-irc + explicit dontAsk: bash PreToolUse hook still wired (unverified mode, not in skip-set)" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 36: auto mode skips the bash hook but leaves AskUserQuestion wired ---
+# Scope check: the over-fire fix is bash-specific. --ask-irc's AskUserQuestion
+# routing has no auto-mode over-fire evidence behind it, so it stays wired
+# regardless of resolved permission mode.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --perm-irc --perm-target opnick --ask-irc '#chan' --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json" \
+    && grep -qF '"matcher":"AskUserQuestion"' "$data_dir/roost-settings.json" \
+    && grep -qF 'hook-exec irc-ask-question' "$data_dir/roost-settings.json"; then
+  ok "auto mode skips bash hook but leaves AskUserQuestion wired (scope check)"
+else
+  fail "auto mode skips bash hook but leaves AskUserQuestion wired (scope check)" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

@@ -126,7 +126,9 @@ Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
 wrapper defaults to auto for opus and acceptEdits for all other models.
-Explicit --permission-mode always wins.
+Explicit --permission-mode always wins. --perm-irc's bash relay reads this
+same resolved mode (peeking at agent frontmatter locally when needed) to
+skip wiring itself for modes that never block on bash — see --perm-irc below.
 
 Spawn also injects \`--append-system-prompt-file\` naming the joined
 channels as legitimate user-instruction sources, so the auto-mode
@@ -150,7 +152,11 @@ Options:
                              MCP server. It surfaces this worker's
                              tool-permission prompts as DMs to --perm-target.
                              Useful for non-Opus models that can't use auto
-                             mode. Lifecycle = MCP lifecycle.
+                             mode. Lifecycle = MCP lifecycle. The bash
+                             PreToolUse relay is skipped when the resolved
+                             permission mode is one that never blocks on
+                             bash (auto, bypassPermissions) — nothing to
+                             relay there, so wiring it would only add noise.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --ask-irc CHANNEL          Routes AskUserQuestion calls to a channel
@@ -722,6 +728,7 @@ cmd_spawn() {
     exit 1
   fi
   local _agent_path=""
+  local agent_perm_mode=""
   if [ -n "${agent}" ]; then
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
@@ -743,6 +750,15 @@ cmd_spawn() {
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
       exit 1
     fi
+    # Local peek at the frontmatter's permissionMode: — read-only, used only
+    # to decide hook wiring below. Never passed to claude: the --agent path
+    # still omits --permission-mode entirely so claude reads the frontmatter
+    # natively (see CLAUDE.md, "Agent frontmatter").
+    agent_perm_mode="$(awk '
+      NR==1 && $0=="---" { infm=1; next }
+      infm && $0=="---" { exit }
+      infm && /^permissionMode:/ { sub(/^permissionMode:[[:space:]]*/, ""); print; exit }
+    ' "${_agent_path}")"
   fi
   # Model-derived default for the --model path only. When --agent is set,
   # the wrapper deliberately passes no --permission-mode and lets claude
@@ -753,6 +769,11 @@ cmd_spawn() {
       *)      permission_mode="acceptEdits" ;;
     esac
   fi
+  # Resolved permission mode for hook-wiring decisions further down: explicit
+  # --permission-mode or the --model-derived default when either is set,
+  # else the --agent frontmatter peek above. Empty when --agent declares no
+  # permissionMode at all — treated as unknown below, not as a skip-set member.
+  local hook_perm_mode="${permission_mode:-${agent_perm_mode}}"
   # Warn rather than block — pin uses (rollback, A/B, repro) stay valid;
   # warning makes accidental pins visible.
   case "${model}" in
@@ -819,7 +840,9 @@ cmd_spawn() {
   # Per-session roost-settings.json. Written before the tmux/ircd preflight
   # so test seams can read it on preflight failure. PostCompact + SessionStart
   # matcher=compact are always wired; PreCompact is opt-in via --steer-compact;
-  # PermissionRequest and PreToolUse:Bash are added when --perm-irc is passed;
+  # PermissionRequest is added when --perm-irc is passed. PreToolUse:Bash is
+  # added when --perm-irc is passed AND the resolved permission mode can
+  # still produce a blocking bash prompt (see the skip-set below).
   # PreToolUse:AskUserQuestion is added when --ask-irc or --ask-target is set.
   # Cleaned up implicitly when data_dir is rm -rf'd on shutdown.
   local perm_sock=""
@@ -847,8 +870,24 @@ cmd_spawn() {
   # PreToolUse may hold up to two matcher entries: Bash (when --perm-irc, so
   # the safety-analyzer can't bypass the operator's review) and
   # AskUserQuestion (when --ask-irc / --ask-target routes questions to IRC).
+  #
+  # The Bash entry is skipped for permission modes that never produce a
+  # blocking bash prompt in the first place — wiring it there only relays
+  # noise the operator never needed to see:
+  #   auto              - grants classified bash shapes outright, no prompt
+  #   bypassPermissions - skips all permission checks by design
+  # Every other mode, including the empty/unresolved case (e.g. an --agent
+  # whose frontmatter declares no permissionMode) and modes not verified to
+  # skip bash prompts (e.g. dontAsk), keeps the hook wired. Unverified modes
+  # default to wired rather than skipped: a spurious relay is a minor
+  # annoyance, but skipping a mode that actually blocks reintroduces the
+  # terminal-only-prompt hang this hook exists to close.
   local pretooluse_entries=()
-  if [ "${perm_irc}" -eq 1 ]; then
+  local _skip_bash_hook=0
+  case "${hook_perm_mode}" in
+    auto|bypassPermissions) _skip_bash_hook=1 ;;
+  esac
+  if [ "${perm_irc}" -eq 1 ] && [ "${_skip_bash_hook}" -eq 0 ]; then
     pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-pretooluse-prompt\"}]}")
   fi
   if [ "${ask_routing}" -eq 1 ]; then
