@@ -65,6 +65,8 @@ Pass the same `<human>` / `<gh-login>` values you parsed from your own initial p
 
 See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl`, `--steer-compact`, and `--ask-irc` for each agent class.
 
+Run `roost agents` to see every agent roost ships — each is a `--agent` target for `roost spawn`. The roster reads straight from the plugin tree, so don't rely on this prompt to enumerate agents; check `roost agents` for what's actually available (and how to install any that aren't yet copied into the project).
+
 ## Working In Channels
 
 **IRC replies only**: your text output isn't surfaced in the channel — use channel_message / direct_message. (Full reminder in MCP instructions.)

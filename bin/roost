@@ -45,6 +45,7 @@ Usage: roost <command> [args]
 Commands:
   init                     Bootstrap config, .gitignore, and copy prompts.
   spawn <nick> [options]   Bring up a Claude session on the roost.
+  agents                   List shipped agents and what 'spawn --agent' resolves.
   shutdown <nick>          Kill the tmux session for that nick.
   list                     Show all roost-prefixed tmux sessions.
   attach <nick>            tmux attach to that nick's session.
@@ -252,6 +253,26 @@ Examples:
     --cwd ~/Dev/myproject \\
     --prompt-file /tmp/handoff.md \\
     -- --chrome --system-prompt ' '
+EOF
+}
+
+usage_agents() {
+  cat <<EOF
+Usage: roost agents [--cwd PATH]
+
+List the agents roost ships and the agents 'roost spawn --agent' can resolve
+from here. Two sections:
+
+  Shipped with roost   Every agent under the plugin's agents/ tree (name +
+                       description). A newly shipped agent shows here before
+                       'roost init' copies it into a project.
+
+  Spawnable here       What 'roost spawn --agent <name>' resolves from
+                       <cwd>/.claude/agents and ~/.claude/agents — the set spawn
+                       actually accepts.
+
+A shipped agent missing from the spawnable set is flagged with the command to
+install it. --cwd PATH inspects another project (default: current directory).
 EOF
 }
 
@@ -741,6 +762,15 @@ cmd_spawn() {
       echo "error: agent '${agent}' not found; searched:" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${cwd}" "${agent}" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
+      # Same resolver set 'roost agents' lists, so the two never disagree about
+      # what --agent accepts.
+      local _avail
+      _avail="$(_resolvable_agents "${cwd}" | cut -f1 | paste -sd' ' -)"
+      if [ -n "${_avail}" ]; then
+        echo "available agents: ${_avail}" >&2
+      else
+        echo "no agents installed — run 'roost init' to copy the shipped set, or 'roost agents' to see what ships" >&2
+      fi
       exit 1
     fi
   fi
@@ -1049,6 +1079,110 @@ cmd_spawn() {
   echo "  shutdown with: roost shutdown ${nick}"
 }
 
+# Read the single-line `description:` from an agent file's YAML frontmatter.
+# Prints nothing if there's no frontmatter description.
+_agent_description() {
+  awk '
+    /^---[[:space:]]*$/ { fence++; next }
+    fence == 1 && /^description:[[:space:]]*/ { sub(/^description:[[:space:]]*/, ""); print; exit }
+    fence >= 2 { exit }
+  ' "$1"
+}
+
+# Emit "name<TAB>description" for every agent roost ships (the plugin tree).
+# The discovery surface: a newly shipped agent appears here before `roost init`
+# copies it into a project.
+_shipped_agents() {
+  local _f _name
+  for _f in "${ROOST_DIR}/agents"/*.md; do
+    [ -f "${_f}" ] || continue
+    _name="$(basename "${_f}" .md)"
+    printf '%s\t%s\n' "${_name}" "$(_agent_description "${_f}")"
+  done
+}
+
+# Emit "name<TAB>scope" for every agent `roost spawn --agent` would resolve
+# from a given working dir, mirroring the resolver in cmd_spawn: project
+# .claude/agents shadows user ~/.claude/agents, deduped by basename. This is
+# exactly the spawnable set — the not-found error lists the same computation.
+_resolvable_agents() {
+  local _cwd="$1"
+  local _root _scope _f _name
+  local _seen=" "
+  for _root in "${_cwd}/.claude/agents" "${HOME}/.claude/agents"; do
+    [ -d "${_root}" ] || continue
+    if [ "${_root}" = "${HOME}/.claude/agents" ]; then _scope="user"; else _scope="project"; fi
+    while IFS= read -r _f; do
+      [ -n "${_f}" ] || continue
+      _name="$(basename "${_f}" .md)"
+      case "${_seen}" in *" ${_name} "*) continue ;; esac
+      _seen="${_seen}${_name} "
+      printf '%s\t%s\n' "${_name}" "${_scope}"
+    done < <(find -L "${_root}" -name '*.md' -type f 2>/dev/null | sort)
+  done
+}
+
+cmd_agents() {
+  local cwd="${PWD}"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cwd)     cwd="${2:?roost agents: --cwd requires a path}"; shift 2 ;;
+      -h|--help) usage_agents; exit 0 ;;
+      *) echo "error: roost agents: unknown option: $1" >&2; usage_agents; exit 1 ;;
+    esac
+  done
+
+  local shipped resolvable resolved_names
+  shipped="$(_shipped_agents)"
+  resolvable="$(_resolvable_agents "${cwd}")"
+  resolved_names="$(printf '%s' "${resolvable}" | cut -f1)"
+
+  # Section 1: the shipped roster — the discovery answer.
+  echo "Shipped with roost (${ROOST_DIR}/agents):"
+  echo
+  if [ -n "${shipped}" ]; then
+    local _w=0 _n _d
+    while IFS=$'\t' read -r _n _; do
+      [ "${#_n}" -gt "${_w}" ] && _w="${#_n}"
+    done <<< "${shipped}"
+    while IFS=$'\t' read -r _n _d; do
+      printf '  %-*s  %s\n' "${_w}" "${_n}" "${_d}"
+    done <<< "${shipped}"
+  else
+    echo "  (none)"
+  fi
+
+  # Section 2: what `roost spawn --agent` resolves from here. listing ==
+  # spawnable, and a shipped-but-not-installed agent gets the install command.
+  echo
+  echo "Spawnable here (roost spawn --agent <name>) — resolved from .claude/agents/:"
+  echo
+  if [ -n "${resolvable}" ]; then
+    local _rw=0 _rn _rs
+    while IFS=$'\t' read -r _rn _; do
+      [ "${#_rn}" -gt "${_rw}" ] && _rw="${#_rn}"
+    done <<< "${resolvable}"
+    while IFS=$'\t' read -r _rn _rs; do
+      printf '  %-*s  (%s)\n' "${_rw}" "${_rn}" "${_rs}"
+    done <<< "${resolvable}"
+
+    local _missing="" _sn
+    while IFS=$'\t' read -r _sn _; do
+      case $'\n'"${resolved_names}"$'\n' in
+        *$'\n'"${_sn}"$'\n'*) ;;
+        *) _missing="${_missing}${_sn} " ;;
+      esac
+    done <<< "${shipped}"
+    if [ -n "${_missing}" ]; then
+      echo
+      echo "Shipped but not installed here: ${_missing% }"
+      echo "  → run 'roost init --force-agents' to copy them into .claude/agents/."
+    fi
+  else
+    echo "  (none installed — run 'roost init' to copy the shipped agents)"
+  fi
+}
+
 cmd_shutdown() {
   if [ "$#" -lt 1 ]; then
     echo "error: shutdown requires a nick" >&2
@@ -1198,6 +1332,7 @@ case "${1:-}" in
     case "${cmd}" in
       init)      usage_init ;;
       spawn)     usage_spawn ;;
+      agents)    usage_agents ;;
       shutdown)  usage_shutdown ;;
       list)      usage_list ;;
       attach)    usage_attach ;;
@@ -1214,6 +1349,7 @@ esac
 case "${cmd}" in
   init)      cmd_init "$@" ;;
   spawn)     cmd_spawn "$@" ;;
+  agents)    cmd_agents "$@" ;;
   shutdown)  cmd_shutdown "$@" ;;
   list)      cmd_list "$@" ;;
   attach)    cmd_attach "$@" ;;
