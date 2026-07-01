@@ -156,8 +156,7 @@ Options:
                              PreToolUse relay is skipped when the resolved
                              permission mode never blocks on bash — nothing
                              to relay there, so wiring it would only add
-                             noise. See cmd_spawn's skip-set for which modes
-                             qualify.
+                             noise.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --ask-irc CHANNEL          Routes AskUserQuestion calls to a channel

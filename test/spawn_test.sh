@@ -538,19 +538,22 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test 29: --perm-irc + --model sonnet (acceptEdits) → bash hook still wired --
+# -- Test 29: --perm-irc + acceptEdits → bash hook still wired ----------------
 # acceptEdits still blocks on bash, so the relay is needed — parity unaffected.
+# Keyed off an explicit --permission-mode rather than a --model default: which
+# models default to which modes is expected to change, so this test only
+# needs to hold for the mode itself, not for any particular model.
 
 setup
-out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --model sonnet --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode acceptEdits --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 if [ -n "$data_dir" ] \
     && [ -f "$data_dir/roost-settings.json" ] \
     && grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json" \
     && grep -qF 'hook-exec irc-pretooluse-prompt' "$data_dir/roost-settings.json"; then
-  ok "--perm-irc + sonnet (acceptEdits): bash PreToolUse hook still wired"
+  ok "--perm-irc + acceptEdits: bash PreToolUse hook still wired"
 else
-  fail "--perm-irc + sonnet (acceptEdits): bash PreToolUse hook still wired" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+  fail "--perm-irc + acceptEdits: bash PreToolUse hook still wired" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
 fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
