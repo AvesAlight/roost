@@ -81,7 +81,7 @@ claude flag the wrapper doesn't otherwise know about.
 
 ## Spawnable agents (roost agents)
 
-`roost spawn --agent NAME` runs a session as that named agent. `roost agents`
+`roost spawn <nick> --agent NAME` runs a session as that named agent. `roost agents`
 lists the `NAME`s available:
 
 - **`roost agents`** — the agents installed here: what you can spawn right now.
