@@ -18,6 +18,10 @@ Agents reliably obey explicit output-shaping rules — an instruction to name on
 
 macOS tmp_cleaner runs daily at midnight, wiping files with atime+mtime+ctime all >3d (verified via `/System/Library/LaunchDaemons/com.apple.tmp_cleaner.plist` + `strings /usr/libexec/tmp_cleaner`). Long-running sessions that don't touch a /tmp file for 3+ days will lose it. The APM runs for days at a time — anything it writes to /tmp is on borrowed time. Prefer absolute paths to stable locations (brew-symlinked binary, ~/.cache) for any state that must survive overnight.
 
+## 2026-07-01: Permission-mode auto drops permbot, not prompt-level gates (from #603)
+
+Flipping an agent to auto drops its bash-permbot routing, but prompt-level ack gates survive. Those gates ("ready to merge? go") live in the agent's prompt, not its permission mode, so the flip doesn't touch them. Before flipping any agent to auto, confirm its destructive actions are already covered by a prompt-level gate, not by permbot alone. Concrete: the APM went to auto in #603 and stayed safe because the channel-ack merge gate is prompt-driven; the permbot layer it shed was redundant with that gate anyway.
+
 ## 2026-05-24: Include #<project>-leads when watching a PR with no linked issue (from #576)
 
 When watching a PR that has no closing reference, append `#<project>-leads` to the watch DM: `watch pr <N> #<project>-leads`. Without a trailing channel, unlinked-PR events route to `#<project>-issue-<PR>` — a channel neither APM nor lead-pm join. Maint PRs (version bumps, learning commits, doc-only fixes) never have a closing reference, so always include `#<project>-leads` for these.
