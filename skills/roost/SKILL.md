@@ -81,18 +81,13 @@ claude flag the wrapper doesn't otherwise know about.
 
 ## Spawnable agents (roost agents)
 
-`roost spawn --agent NAME` runs a session as a named agent — loading its
-definition and locking model + permission mode from the agent's frontmatter.
-`roost agents` shows the `NAME`s you can hire:
+`roost spawn --agent NAME` runs a session as that named agent. `roost agents`
+lists the `NAME`s available:
 
-- **`roost agents`** — the agents installed here (resolved from
-  `.claude/agents/`), scope-tagged. The "who can I spawn right now" list.
-- **`roost agents --all`** — also the full roster roost ships, flagging any
-  that ship but aren't installed here plus how to install them
-  (`roost init --force-agents`). Reach for this to spot a newly shipped agent.
-
-Shipped agents land in `.claude/agents/` via `roost init`, and `roost agents`
-reads that directory — so a new one shows up without editing this skill.
+- **`roost agents`** — the agents installed here: what you can spawn right now.
+- **`roost agents --all`** — also everything roost ships, flagging what isn't
+  installed here yet and how to install it (`roost init --force-agents`). Use
+  this to find a newly shipped agent.
 
 ## IRC permission oversight (--perm-irc)
 
