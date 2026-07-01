@@ -527,7 +527,7 @@ describe('readEntry failure-threshold state machine (direct, injected clock)', (
     expect(isSilentSkip(await p.call('k', fail, T0 + WARN_COOLDOWN_MS + 11))).toBe(true)
   })
 
-  it('surfaces the 401 reason once past the threshold (the #602 path)', async () => {
+  it('surfaces the 401 reason once past the threshold', async () => {
     const p = probe()
     const body = failBody('gh: Bad credentials (HTTP 401)')
     for (let i = 1; i < READ_FAILURE_THRESHOLD; i++) expect(isSilentSkip(await p.call('k', body, T0 + i))).toBe(true)
