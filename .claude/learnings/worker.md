@@ -46,6 +46,10 @@ A comment documenting a future-required change is a hope, not a trigger. When yo
 
 Before grading how serious an audit or investigation finding is, ask what the tool is FOR — importance is relative to the mission, not how alarming the finding looks in isolation. perm-irc is a parity relay (relay iff Claude Code blocks), not a safety tool, so "the classifier doesn't catch rm -rf" was off-mission — yet it got graded the "more serious" finding and sharpened further. Alex's mission re-anchor inverted the priority: the scary under-fire was parity working as intended, and the boring over-fire was the whole bug. Pressure-test at plan time: "what is this tool for, and are we framing findings against that mission?" Sibling to §449/§591 (verify behavior empirically) — this one is "frame findings against mission."
 
+## 2026-07-01: Assert test behavior by explicit input, not a default a milestone is about to flip (from #620)
+
+When a test asserts behavior through the default of a setting, and a milestone is set to change that default, the test becomes a landmine for the change. Assert by explicit input instead, so the default can flip without fighting the test. Concrete: #628's first cut pinned sonnet=acceptEdits, the exact default #603 flips to auto. Decoupling the tests to assert by explicit --permission-mode kept #628 single-purpose and out of #603's way.
+
 ## 2026-05-20: When you see N copies of the same intervention accumulating, debounce at the producer (from #470)
 
 When N copies of the same intervention accumulate in a queue, debounce at the producer — not the receiver. The receiver can't tell stale from fresh; the producer knows it just fired. Add a TTL-gated lock at injection time rather than retrofitting dedup downstream. Pattern: lock-before-inject when an inject point has no idempotency guarantee.
