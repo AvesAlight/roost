@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { PRICING, costFor, missCostFor, normalizeModelId } from '../src/pricing.js'
+import { PRICING, costFor, missCostFor, normalizeModelId, type ModelPricing } from '../src/pricing.js'
 
 const ZERO_USAGE = { input: 0, output: 0, cache_creation_5m: 0, cache_creation_1h: 0, cache_read: 0 }
 const SAMPLE_USAGE = { input: 1000, output: 500, cache_creation_5m: 200, cache_creation_1h: 100, cache_read: 50 }
@@ -58,17 +58,32 @@ describe('costFor / missCostFor unknown models', () => {
 })
 
 describe('exact match takes priority over the normalized fallback', () => {
-  it('an exact PRICING entry is used as-is even though it also has a dated shape', () => {
-    // claude-opus-4-1 has no trailing date stamp, so normalization is a
-    // no-op here — this just locks that the exact-match lookup path runs
-    // first and short-circuits before any fallback.
-    expect(costFor('claude-opus-4-1', SAMPLE_USAGE)).toBe(
-      (PRICING['claude-opus-4-1'].input * SAMPLE_USAGE.input
-        + PRICING['claude-opus-4-1'].output * SAMPLE_USAGE.output
-        + PRICING['claude-opus-4-1'].cache_creation_5m * SAMPLE_USAGE.cache_creation_5m
-        + PRICING['claude-opus-4-1'].cache_creation_1h * SAMPLE_USAGE.cache_creation_1h
-        + PRICING['claude-opus-4-1'].cache_read * SAMPLE_USAGE.cache_read) / 1_000_000,
-    )
+  // No shipped PRICING entry has both a dated and bare form anymore (that's
+  // exactly the duplication this PR removed), so a real divergent case has
+  // to be planted to actually exercise the `??` priority order rather than
+  // just asserting it structurally.
+  it('a literal dated entry is used over its bare alias, even when priced differently', () => {
+    const bare = 'claude-test-fixture-4-0'
+    const dated = 'claude-test-fixture-4-0-20260101'
+    const bareRate: ModelPricing = { input: 1, output: 1, cache_creation_5m: 1, cache_creation_1h: 1, cache_read: 1 }
+    const datedRate: ModelPricing = { input: 999, output: 999, cache_creation_5m: 999, cache_creation_1h: 999, cache_read: 999 }
+    const mutablePricing = PRICING as Record<string, ModelPricing>
+    mutablePricing[bare] = bareRate
+    mutablePricing[dated] = datedRate
+    try {
+      const expectedDatedCost = (
+        datedRate.input * SAMPLE_USAGE.input
+        + datedRate.output * SAMPLE_USAGE.output
+        + datedRate.cache_creation_5m * SAMPLE_USAGE.cache_creation_5m
+        + datedRate.cache_creation_1h * SAMPLE_USAGE.cache_creation_1h
+        + datedRate.cache_read * SAMPLE_USAGE.cache_read
+      ) / 1_000_000
+      expect(costFor(dated, SAMPLE_USAGE)).toBe(expectedDatedCost)
+      expect(costFor(dated, SAMPLE_USAGE)).not.toBe(costFor(bare, SAMPLE_USAGE))
+    } finally {
+      delete mutablePricing[bare]
+      delete mutablePricing[dated]
+    }
   })
 })
 
