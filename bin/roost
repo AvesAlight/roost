@@ -126,7 +126,8 @@ the user's login shell (from \$SHELL) so .bash_profile / .zprofile / ~/.config/f
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
-wrapper defaults to auto for opus and acceptEdits for all other models.
+wrapper defaults to auto for opus and sonnet, acceptEdits for everything
+else (haiku, or any unrecognized model).
 Explicit --permission-mode always wins. --perm-irc's bash relay reads this
 same resolved mode (peeking at agent frontmatter locally when needed) to
 skip wiring itself for modes that never block on bash — see --perm-irc below.
@@ -152,8 +153,10 @@ Options:
   --perm-irc                 Run an in-process permbot inside the worker's
                              MCP server. It surfaces this worker's
                              tool-permission prompts as DMs to --perm-target.
-                             Useful for non-Opus models that can't use auto
-                             mode. Lifecycle = MCP lifecycle. The bash
+                             Useful for haiku/unrecognized models (acceptEdits
+                             by default) or any model held in acceptEdits via
+                             --permission-mode for oversight. Lifecycle = MCP
+                             lifecycle. The bash
                              PreToolUse relay is skipped when the resolved
                              permission mode never blocks on bash — nothing
                              to relay there, so wiring it would only add
@@ -173,8 +176,9 @@ Options:
                              wrapper passes nothing (claude code reads
                              \`permissionMode:\` natively from the agent
                              frontmatter); with --model the wrapper defaults
-                             to auto for opus and acceptEdits for everything
-                             else. Explicit --permission-mode always wins.
+                             to auto for opus and sonnet, acceptEdits for
+                             everything else (haiku, or any unrecognized
+                             model). Explicit --permission-mode always wins.
   --cache-ttl TTL            Prompt-cache TTL: \`5m\` or \`1h\`. Translated
                              to claude-code's env-var knobs in the spawned
                              session (\`FORCE_PROMPT_CACHING_5M=1\` for 5m,
@@ -797,8 +801,8 @@ cmd_spawn() {
   # code read `permissionMode:` natively from the agent's frontmatter.
   if [ -z "${permission_mode}" ] && [ -z "${agent}" ]; then
     case "${model}" in
-      *opus*) permission_mode="auto" ;;
-      *)      permission_mode="acceptEdits" ;;
+      *opus*|*sonnet*) permission_mode="auto" ;;
+      *) permission_mode="acceptEdits" ;;
     esac
   fi
   # Resolved permission mode for hook-wiring decisions further down: explicit
