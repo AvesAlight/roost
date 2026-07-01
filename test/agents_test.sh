@@ -155,6 +155,34 @@ else
   fail "--help prints agents usage documenting --all" "out=$out"
 fi
 
+# -- Test 9: _agent_description folds YAML block scalars into one clean line ---
+# `_shipped_agents` (backing `roost agents --all`) only reads from the real
+# ${ROOST_DIR}/agents tree, so a folded-description regression can't be
+# exercised through the CLI without editing shipped agent files. bin/roost
+# guards its dispatch table behind `[[ "${BASH_SOURCE[0]}" == "${0}" ]]`,
+# so sourcing it in an isolated `bash -c` subprocess to call the helper
+# directly is safe — no dispatch runs, nothing leaks into this test's shell.
+
+setup
+printf -- '---\ndescription: >\n  A folded description\n  spanning multiple\n  source lines.\n---\nbody\n' > "$TDIR/folded.md"
+printf -- '---\ndescription: |\n  Line one.\n  Line two.\n---\nbody\n' > "$TDIR/literal.md"
+printf -- '---\ndescription: single line desc\n---\nbody\n' > "$TDIR/single.md"
+printf -- '---\nname: nodesc\n---\nbody\n' > "$TDIR/nodesc.md"
+folded_out="$(bash -c 'source "'"${ROOST_BIN}"'"; _agent_description "$1"' _ "$TDIR/folded.md")"
+literal_out="$(bash -c 'source "'"${ROOST_BIN}"'"; _agent_description "$1"' _ "$TDIR/literal.md")"
+single_out="$(bash -c 'source "'"${ROOST_BIN}"'"; _agent_description "$1"' _ "$TDIR/single.md")"
+nodesc_out="$(bash -c 'source "'"${ROOST_BIN}"'"; _agent_description "$1"' _ "$TDIR/nodesc.md")"
+if [ "$folded_out" = "A folded description spanning multiple source lines." ] \
+    && [ "$literal_out" = "Line one. Line two." ] \
+    && [ "$single_out" = "single line desc" ] \
+    && [ "$nodesc_out" = "" ]; then
+  ok "_agent_description: folds block scalars, leaves single-line/no-description behavior unchanged"
+else
+  fail "_agent_description: folds block scalars, leaves single-line/no-description behavior unchanged" \
+    "folded=[$folded_out] literal=[$literal_out] single=[$single_out] nodesc=[$nodesc_out]"
+fi
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
