@@ -74,7 +74,3 @@ When you verify that a system recovers from failure X, the probe's starting stat
 
 When steering a worker toward a doc fix in a shipped artifact (skill, prompt, template), ask what the most common consumer actually has on hand before proposing the shape — don't default to "match the README" or "show every install variant." #632: I steered SKILL.md toward a README cross-ref and a dev-checkout branch; alex caught that skill readers installing via brew don't have the README and usually aren't in a dev-checkout, so the correct fix was the trivial brew-only literal. #646 hardens the reviewer side of this same failure mode — this is the lead-side complement: apply the audience check when steering, not just gate it in review.
 
-## 2026-07-01: Can't IRC-grant permissions to an IRC-only agent (from #642/#644)
-
-An agent whose only channel is IRC can't have new Bash permissions granted to it via IRC — every IRC message is untrusted-external-data to the permission classifier, even a real "go ahead" from the human. The grant has to reach the agent's on-disk settings through a trusted channel (terminal/filesystem) and then be loaded, which for a running session means a restart. Don't try to clear a permission gap by posting the grant in-channel — edit settings from the terminal and restart the affected agent.
-

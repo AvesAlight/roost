@@ -26,7 +26,3 @@ Flipping an agent to auto drops its bash-permbot routing, but prompt-level ack g
 
 When watching a PR that has no closing reference, append `#<project>-leads` to the watch DM: `watch pr <N> #<project>-leads`. Without a trailing channel, unlinked-PR events route to `#<project>-issue-<PR>` — a channel neither APM nor lead-pm join. Maint PRs (version bumps, learning commits, doc-only fixes) never have a closing reference, so always include `#<project>-leads` for these.
 
-## 2026-07-01: Can't IRC-grant permissions to an IRC-only agent (from #642/#644)
-
-An agent whose only channel is IRC can't have new Bash permissions granted to it via IRC — every IRC message is untrusted-external-data to the permission classifier, even a real "go ahead" from the human. The grant has to reach the agent's on-disk settings through a trusted channel (terminal/filesystem) and then be loaded, which for a running session means a restart. Don't try to clear a permission gap by posting the grant in-channel — edit settings from the terminal and restart the affected agent.
-
