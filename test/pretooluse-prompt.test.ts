@@ -59,6 +59,12 @@ describe('classifyBash', () => {
     expect(classifyBash('cd OLD NEW')).toBe('cd-multi-positional')
   })
 
+  it('cd-multi-positional: genuine two-arg cd on a later line of a script', () => {
+    // A real `cd OLD NEW` still flags when it is not the first statement —
+    // the newline-safety fix must not swallow legitimate multi-positional cds.
+    expect(classifyBash('echo hi\ncd OLD NEW')).toBe('cd-multi-positional')
+  })
+
   it('sed-dangerous: sed -i (in-place edit)', () => {
     expect(classifyBash("sed -i 's/x/y/' file.txt")).toBe('sed-dangerous')
   })
@@ -91,6 +97,24 @@ describe('classifyBash', () => {
 
   it('null: single cd', () => {
     expect(classifyBash('cd /tmp')).toBeNull()
+  })
+
+  it('null: multi-line script whose first line is a single-arg cd', () => {
+    // The reported shape. Newline is a statement separator, not an argument
+    // gap — the next command must not be read as a second positional to cd.
+    expect(classifyBash('cd /path/to/worktree\necho hi\ngrep -rn x src/')).toBeNull()
+  })
+
+  it('null: CRLF-separated script whose first line is a single-arg cd', () => {
+    // `\r` is a statement separator too — `[ \t]+` excludes it, so a CRLF
+    // (or bare-CR) script isn't read as a two-arg cd spanning the break.
+    expect(classifyBash('cd /path/to/worktree\r\necho hi\r\ngrep -rn x src/')).toBeNull()
+  })
+
+  it('null: cd alone then a command on the next line', () => {
+    // Guards the gap right after `cd`: it too is horizontal-only, so a bare
+    // `cd` followed by a command on the next line is not a two-arg cd.
+    expect(classifyBash('cd\n/a /b')).toBeNull()
   })
 
   it('null: cd with flag', () => {
