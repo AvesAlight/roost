@@ -29,12 +29,13 @@ a tool surface.
 ## Command surface
 
 ```bash
-roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
+roost spawn <nick> [-c CHANS] [-m MODEL] [--agent NAME] [-s SESSION] [--mcp-config PATH] \
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
                    [--perm-irc --perm-target NICK] \
                    [--ask-irc CHANNEL --ask-target NICK]
+roost agents [--all]
 roost shutdown <nick>
 roost list
 roost attach <nick>
@@ -77,6 +78,21 @@ launch.
 Anything passed after `--` is forwarded verbatim to claude — use this
 for `--chrome`, `--system-prompt`, `--thinking-display`, or any other
 claude flag the wrapper doesn't otherwise know about.
+
+## Spawnable agents (roost agents)
+
+`roost spawn --agent NAME` runs a session as a named agent — loading its
+definition and locking model + permission mode from the agent's frontmatter.
+`roost agents` shows the `NAME`s you can hire:
+
+- **`roost agents`** — the agents installed here (resolved from
+  `.claude/agents/`), scope-tagged. The "who can I spawn right now" list.
+- **`roost agents --all`** — also the full roster roost ships, flagging any
+  that ship but aren't installed here plus how to install them
+  (`roost init --force-agents`). Reach for this to spot a newly shipped agent.
+
+Shipped agents land in `.claude/agents/` via `roost init`, and `roost agents`
+reads that directory — so a new one shows up without editing this skill.
 
 ## IRC permission oversight (--perm-irc)
 
