@@ -29,12 +29,13 @@ a tool surface.
 ## Command surface
 
 ```bash
-roost spawn <nick> [-c CHANS] [-m MODEL] [-s SESSION] [--mcp-config PATH] \
+roost spawn <nick> [-c CHANS] [-m MODEL] [--agent NAME] [-s SESSION] [--mcp-config PATH] \
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
                    [--perm-irc --perm-target NICK] \
                    [--ask-irc CHANNEL --ask-target NICK]
+roost agents [--all]
 roost shutdown <nick>
 roost list
 roost attach <nick>
@@ -77,6 +78,16 @@ launch.
 Anything passed after `--` is forwarded verbatim to claude — use this
 for `--chrome`, `--system-prompt`, `--thinking-display`, or any other
 claude flag the wrapper doesn't otherwise know about.
+
+## Spawnable agents (roost agents)
+
+`roost spawn <nick> --agent NAME` runs a session as that named agent. `roost agents`
+lists the `NAME`s available:
+
+- **`roost agents`** — the agents installed here: what you can spawn right now.
+- **`roost agents --all`** — also everything roost ships, flagging what isn't
+  installed here yet and how to install it (`roost init --force-agents`). Use
+  this to find a newly shipped agent.
 
 ## IRC permission oversight (--perm-irc)
 

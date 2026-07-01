@@ -104,6 +104,37 @@ else
 fi
 teardown
 
+# -- Test 6a: not-found error lists the resolvable agents as available ---------
+# The error surfaces what --agent *would* accept — same set 'roost agents'
+# lists, so the two can't disagree. HOME override keeps the real
+# ~/.claude/agents out of the list.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\ndescription: an installed one\n---\nbody\n' > "$TDIR/.claude/agents/installedone.md"
+err="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" spawn testnick --agent nope --cwd "$TDIR" 2>&1)"; exit_code=$?
+if [ "$exit_code" -ne 0 ] \
+    && echo "$err" | grep -q "available agents:" \
+    && echo "$err" | grep -q "installedone"; then
+  ok "missing agent: error lists installed agents as available"
+else
+  fail "missing agent: error lists installed agents as available" "exit=$exit_code err=$err"
+fi
+teardown
+
+# -- Test 6b: not-found error with nothing installed hints at init/agents ------
+
+setup
+err="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" spawn testnick --agent nope --cwd "$TDIR" 2>&1)"; exit_code=$?
+if [ "$exit_code" -ne 0 ] \
+    && echo "$err" | grep -q "no agents installed" \
+    && echo "$err" | grep -q "roost agents"; then
+  ok "missing agent, none installed: error hints roost init / roost agents"
+else
+  fail "missing agent, none installed: error hints roost init / roost agents" "exit=$exit_code err=$err"
+fi
+teardown
+
 # -- Test 7: explicit --permission-mode is echoed verbatim -------------------
 # The flag is passed through to claude as-is and shown in the spawn echo.
 
