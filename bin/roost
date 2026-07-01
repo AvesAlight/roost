@@ -753,25 +753,24 @@ cmd_spawn() {
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
     # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
-    local _agent_found=0
-    local _search_root
-    for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
-      if [ -d "${_search_root}" ]; then
-        _agent_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
-        if [ -n "${_agent_path}" ]; then
-          _agent_found=1
-          break
-        fi
+    # _resolvable_agents is the single search impl: this lookup, the not-found
+    # error's "available agents" list, and `roost agents` all read the same
+    # computation, so they can't disagree about what --agent accepts.
+    local _resolvable _an _as _ap
+    _resolvable="$(_resolvable_agents "${cwd}")"
+    while IFS=$'\t' read -r _an _as _ap; do
+      [ -n "${_an}" ] || continue
+      if [ "${_an}" = "${agent}" ]; then
+        _agent_path="${_ap}"
+        break
       fi
-    done
-    if [ "${_agent_found}" -eq 0 ]; then
+    done <<< "${_resolvable}"
+    if [ -z "${_agent_path}" ]; then
       echo "error: agent '${agent}' not found; searched:" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${cwd}" "${agent}" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
-      # Same resolver set 'roost agents' lists, so the two never disagree about
-      # what --agent accepts.
       local _avail
-      _avail="$(_resolvable_agents "${cwd}" | cut -f1 | paste -sd' ' -)"
+      _avail="$(printf '%s' "${_resolvable}" | cut -f1 | paste -sd' ' -)"
       if [ -n "${_avail}" ]; then
         echo "available agents: ${_avail}" >&2
       else
@@ -1146,10 +1145,14 @@ _shipped_agents() {
   done
 }
 
-# Emit "name<TAB>scope" for every agent `roost spawn --agent` would resolve
-# from a given working dir, mirroring the resolver in cmd_spawn: project
-# .claude/agents shadows user ~/.claude/agents, deduped by basename. This is
-# exactly the spawnable set — the not-found error lists the same computation.
+# Emit "name<TAB>scope<TAB>path" for every agent `roost spawn --agent` can
+# resolve from a given working dir: project .claude/agents shadows user
+# ~/.claude/agents, deduped by basename. This IS the resolver — cmd_spawn's
+# --agent lookup, the not-found error's "available agents" list, and `roost
+# agents` all read this one computation, so they can't drift from each other.
+# Within a root, duplicate basenames in different subdirs tie-break on sorted
+# path (deterministic); across roots, project always shadows user regardless
+# of path, via loop order below.
 _resolvable_agents() {
   local _cwd="$1"
   local _root _scope _f _name
@@ -1162,7 +1165,7 @@ _resolvable_agents() {
       _name="$(basename "${_f}" .md)"
       case "${_seen}" in *" ${_name} "*) continue ;; esac
       _seen="${_seen}${_name} "
-      printf '%s\t%s\n' "${_name}" "${_scope}"
+      printf '%s\t%s\t%s\n' "${_name}" "${_scope}" "${_f}"
     done < <(find -L "${_root}" -name '*.md' -type f 2>/dev/null | sort)
   done
 }
@@ -1210,7 +1213,7 @@ cmd_agents() {
     while IFS=$'\t' read -r _rn _; do
       [ "${#_rn}" -gt "${_rw}" ] && _rw="${#_rn}"
     done <<< "${resolvable}"
-    while IFS=$'\t' read -r _rn _rs; do
+    while IFS=$'\t' read -r _rn _rs _; do
       printf '  %-*s  (%s)\n' "${_rw}" "${_rn}" "${_rs}"
     done <<< "${resolvable}"
   elif [ "${show_all}" -eq 1 ]; then

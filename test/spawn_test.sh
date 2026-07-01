@@ -751,6 +751,40 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 38: duplicate basename in two subdirs of the same root resolves ------
+# deterministically to the sorted-first path ------------------------------------
+# #629: the --agent resolver moved off `find | head -1` (nondeterministic) onto
+# _resolvable_agents' sorted output. Two files sharing a basename in different
+# subdirs of the same scope must resolve to the same, stable winner every time.
+# Raw spawn output isn't diffable across runs (it embeds a fresh mktemp path
+# each time), so the signal is which file's frontmatter got read: give the
+# sorted-first file (a/dupe.md) permissionMode:auto and the sorted-last file
+# (z/dupe.md) permissionMode:acceptEdits, then check the --perm-irc bash-hook
+# skip decision — driven by whichever file the resolver actually opened —
+# agrees across two independent invocations.
+
+setup
+mkdir -p "$TDIR/.claude/agents/a" "$TDIR/.claude/agents/z"
+printf -- '---\ndescription: winner (a sorts first)\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/a/dupe.md"
+printf -- '---\ndescription: loser (z sorts last)\npermissionMode: acceptEdits\n---\nbody\n' > "$TDIR/.claude/agents/z/dupe.md"
+out1="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent dupe --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir1="$(echo "$out1" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+tmux kill-session -t "roost-testnick" 2>/dev/null || true
+out2="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent dupe --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir2="$(echo "$out2" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir1" ] && [ -f "$data_dir1/roost-settings.json" ] \
+    && [ -n "$data_dir2" ] && [ -f "$data_dir2/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir1/roost-settings.json" \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir2/roost-settings.json"; then
+  ok "duplicate basename in same scope: resolves deterministically (sorted-first file's frontmatter wins) across repeated calls"
+else
+  fail "duplicate basename in same scope: resolves deterministically (sorted-first file's frontmatter wins) across repeated calls" \
+    "data_dir1=$data_dir1 settings1=$(cat "$data_dir1/roost-settings.json" 2>/dev/null) data_dir2=$data_dir2 settings2=$(cat "$data_dir2/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir1" ] && rm -rf "$data_dir1"
+[ -n "$data_dir2" ] && rm -rf "$data_dir2"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
