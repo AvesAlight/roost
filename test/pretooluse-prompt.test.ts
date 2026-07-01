@@ -105,6 +105,12 @@ describe('classifyBash', () => {
     expect(classifyBash('cd /path/to/worktree\necho hi\ngrep -rn x src/')).toBeNull()
   })
 
+  it('null: CRLF-separated script whose first line is a single-arg cd', () => {
+    // `\r` is a statement separator too — `[ \t]+` excludes it, so a CRLF
+    // (or bare-CR) script isn't read as a two-arg cd spanning the break.
+    expect(classifyBash('cd /path/to/worktree\r\necho hi\r\ngrep -rn x src/')).toBeNull()
+  })
+
   it('null: cd alone then a command on the next line', () => {
     // Guards the gap right after `cd`: it too is horizontal-only, so a bare
     // `cd` followed by a command on the next line is not a two-arg cd.
