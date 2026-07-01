@@ -5,16 +5,16 @@ import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
-import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError } from './github-api.js'
+import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError, rateLimitKind } from './github-api.js'
 import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
-import { RateLimitBreaker, READ_FAILURE_THRESHOLD, formatBackoffNotice, formatReadFailureNote } from './backoff.js'
+import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS, BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote, type RateLimitKind } from './backoff.js'
 
 // Per-entry read outcome. `readEntry` never throws the expected gh-error
 // classes — it returns one of these so a caller's Promise.all over entries
 // never abandons sibling reads (bun late-rejection footgun) on the first error.
 export type ReadEntryResult<T> =
   | { ok: true; value: T }
-  | { ok: false; rateLimited: true }
+  | { ok: false; rateLimited: true; kind: RateLimitKind }
   | { ok: false; rateLimited: false; events: TaggedEvent[] }
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
@@ -73,11 +73,20 @@ export abstract class GhPluginBase extends BasePlugin {
   }
 
   // A rate-limit surfaced this tick: open/escalate the breaker, emit one notice
-  // when it actually advanced, preserve state and channels.
-  protected breakerTripResult(now: number, prevState: unknown, projectChannel: string, config: OrchestratorConfig): PluginTickResult {
-    const window = GhPluginBase._breaker.trip(now)
+  // when it actually advanced, preserve state and channels. `kind` picks the
+  // backoff schedule — secondary (burst) clears fast so it gets a ~1m floor;
+  // primary (budget) waits out the longer reset window.
+  protected breakerTripResult(
+    now: number,
+    prevState: unknown,
+    projectChannel: string,
+    config: OrchestratorConfig,
+    kind: RateLimitKind = 'primary',
+  ): PluginTickResult {
+    const schedule = kind === 'secondary' ? SECONDARY_BACKOFF_SCHEDULE_MS : BACKOFF_SCHEDULE_MS
+    const window = GhPluginBase._breaker.trip(now, schedule)
     const taggedEvents: TaggedEvent[] = window != null
-      ? [{ channels: [projectChannel], payload: { kind: 'oneline', text: formatBackoffNotice(window) } }]
+      ? [{ channels: [projectChannel], payload: { kind: 'oneline', text: formatBackoffNotice(window, kind) } }]
       : []
     return { state: prevState, taggedEvents, channels: this.skipChannels(config) }
   }
@@ -93,7 +102,10 @@ export abstract class GhPluginBase extends BasePlugin {
     return channels
   }
 
-  private skipChannels(config: OrchestratorConfig): string[] {
+  // Channel set to replay while a tick can't produce a fresh one (breaker open,
+  // or a whole-batch read failure) so a transient blip doesn't PART the watched
+  // channels. Last clean tick's set, or the config-static set before any.
+  protected skipChannels(config: OrchestratorConfig): string[] {
     return this._lastChannels.length ? this._lastChannels : this.desiredChannels(config)
   }
 
@@ -128,36 +140,66 @@ export abstract class GhPluginBase extends BasePlugin {
     now = Date.now(),
   ): Promise<ReadEntryResult<T>> {
     // Throttle: a degraded entry probes once per cooldown, not every tick.
-    const st = this._readFailures.get(cooldownKey)
-    if (st && st.consecutive >= READ_FAILURE_THRESHOLD && now - st.lastReadAt < WARN_COOLDOWN_MS) {
-      return { ok: false, rateLimited: false, events: [] }
-    }
+    if (this.entryThrottled(cooldownKey, now)) return { ok: false, rateLimited: false, events: [] }
     try {
       const value = await body()
-      this._readFailures.delete(cooldownKey)  // clean read → not failing
+      this.clearEntryFailure(cooldownKey)  // clean read → not failing
       return { ok: true, value }
     } catch (e) {
       if (!(e instanceof GhError)) throw e
-      if (isRateLimitError(e)) return { ok: false, rateLimited: true }
-      const fail = st ?? { consecutive: 0, warnedAt: 0, lastReadAt: 0 }
-      fail.consecutive += 1
-      fail.lastReadAt = now
-      this._readFailures.set(cooldownKey, fail)
-      this.log(`[${this.name}] read failing for ${cooldownKey} (${fail.consecutive} in a row): ${e.message}\n`)
-      // Below threshold: a flap, stay silent. Past it: warn, then cooldown-gate.
-      // The `<` matches the throttle gate above so warn + re-probe share one
-      // window exactly — at the boundary tick the entry both re-reads and re-warns.
-      if (fail.consecutive < READ_FAILURE_THRESHOLD) return { ok: false, rateLimited: false, events: [] }
-      const warnedRecently = fail.warnedAt !== 0 && now - fail.warnedAt < WARN_COOLDOWN_MS
-      if (warnedRecently) return { ok: false, rateLimited: false, events: [] }
-      fail.warnedAt = now
-      const noteText = formatReadFailureNote(this.name, cooldownKey, recoveryCmd, describeReadFailure(e.stderr))
-      return {
-        ok: false,
-        rateLimited: false,
-        events: [{ channels: [...noteChannels], payload: { kind: 'oneline', text: noteText } }],
-      }
+      if (isRateLimitError(e)) return { ok: false, rateLimited: true, kind: rateLimitKind(e) }
+      const events = this.recordEntryFailure(
+        cooldownKey, noteChannels, recoveryCmd, describeReadFailure(e.stderr), e.message, now,
+      )
+      return { ok: false, rateLimited: false, events }
     }
+  }
+
+  // ---- per-entry failure state (shared by readEntry and the batch path) -----
+  //
+  // The single-call readEntry and the batched PR/issue plugins share one
+  // consecutive-failure counter per entry (keyed by read key), driving the same
+  // two threshold behaviors (see READ_FAILURE_THRESHOLD): warn-after-N and
+  // read-throttle. The batch path can't use readEntry's try/around-a-body shape
+  // (one call fetches every entry), so it drives these three primitives directly.
+
+  // True when the entry is degraded and inside its probe cooldown — the caller
+  // should skip it (omit from the batch query) and carry its prev snapshot
+  // forward. The `<` matches recordEntryFailure's warn gate so re-probe and
+  // re-warn share one window exactly.
+  protected entryThrottled(key: string, now: number): boolean {
+    const st = this._readFailures.get(key)
+    return !!st && st.consecutive >= READ_FAILURE_THRESHOLD && now - st.lastReadAt < WARN_COOLDOWN_MS
+  }
+
+  // A clean read → the entry isn't failing.
+  protected clearEntryFailure(key: string): void {
+    this._readFailures.delete(key)
+  }
+
+  // Bump the consecutive-failure counter and return the cooldown-gated warn note
+  // (empty below the threshold, or when a warn already fired this cooldown).
+  // `reason` (from describeReadFailure / describeGraphqlAliasError) names the
+  // operator action; `logDetail` is the verbose line for daemon.log.
+  protected recordEntryFailure(
+    key: string,
+    noteChannels: string[],
+    recoveryCmd: string,
+    reason: string,
+    logDetail: string,
+    now: number,
+  ): TaggedEvent[] {
+    const fail = this._readFailures.get(key) ?? { consecutive: 0, warnedAt: 0, lastReadAt: 0 }
+    fail.consecutive += 1
+    fail.lastReadAt = now
+    this._readFailures.set(key, fail)
+    this.log(`[${this.name}] read failing for ${key} (${fail.consecutive} in a row): ${logDetail}\n`)
+    if (fail.consecutive < READ_FAILURE_THRESHOLD) return []
+    const warnedRecently = fail.warnedAt !== 0 && now - fail.warnedAt < WARN_COOLDOWN_MS
+    if (warnedRecently) return []
+    fail.warnedAt = now
+    const noteText = formatReadFailureNote(this.name, key, recoveryCmd, reason)
+    return [{ channels: [...noteChannels], payload: { kind: 'oneline', text: noteText } }]
   }
 
   // End-of-tick: log current GH rate budget and emit an IRC warning to the

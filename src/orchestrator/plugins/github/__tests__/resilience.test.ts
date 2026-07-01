@@ -9,11 +9,13 @@
 // rate-limit→breaker, 422 isolating per-entry (no longer a whole-tick crash),
 // non-GhError→throw.
 //
-// Block 2 (per-N plugins: prs/issues) — the multi-entry skip path that block 1
-// can't reach: carrying a flapped entry's prev snapshot (and its dynamic
-// channels) forward, a single 401 isolating to its entry while the sibling is
-// processed (pre-fix this crashed the whole tick), the cross/multi-repo recovery
-// command, and the empty-watch early-return.
+// Block 2 (per-N plugins: prs/issues) — the batched-read paths block 1 can't
+// reach: a per-alias miss (one dead PR) isolating while its sibling resolves and
+// the breaker does NOT escalate on a per-entry 404, carrying the missed entry's
+// prev snapshot (and its dynamic channels) forward, a whole-batch rate-limit
+// tripping the breaker (primary window + the shorter secondary floor), a
+// whole-batch transient staying quiet, the cross/multi-repo recovery command,
+// and the empty-watch early-return.
 //
 // Block 3 — readEntry directly, with an injected clock: warn threshold, read
 // throttle, clean-probe recovery, the 401 reason path, rate-limit passthrough,
@@ -23,13 +25,13 @@ import { GitHubNewPrsPlugin, type NewPrsPluginState } from '../new-prs-plugin.js
 import { GitHubNewIssuesPlugin, type NewIssuesPluginState } from '../new-issues-plugin.js'
 import { GitHubPrsPlugin } from '../prs-plugin.js'
 import { GitHubIssuesPlugin } from '../issues-plugin.js'
-import { GhClient, GhError, type GhRepoPr } from '../github-api.js'
-import { GhScraper } from '../scraper.js'
+import { GhClient, GhError, type GhRepoPr, type BatchOutcome, type GhPrNode, type GhIssueNode } from '../github-api.js'
 import { GhPluginBase, type ReadEntryResult } from '../base.js'
 import { RateLimitBreaker, READ_FAILURE_THRESHOLD } from '../backoff.js'
 import { WARN_COOLDOWN_MS } from '../../_rate-limit.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { PluginTickResult } from '../../../plugin.js'
+import type { OrchestratorEvent } from '../diff.js'
 import type { PrSnap, IssueSnap, PrPluginState, IssuePluginState } from '../types.js'
 import { stubRateLimit } from './gh-test-helpers.js'
 
@@ -204,18 +206,48 @@ function linearStub(byId: Record<string, string[]>): QueryFn {
   }
 }
 
+// The per-N plugins read via one batched GraphQL call (GhClient.fetchPrsBatch/
+// fetchIssuesBatch) returning a per-entry outcome Map, then map each ok node →
+// snapshot through the snapshotPr/snapshotIssue seam. These helpers stub the
+// batch (per-entry ok node vs alias miss) and the seam (controlled snap+events
+// for the clean siblings), so the isolation tests drive one dead alias against a
+// healthy sibling without standing up gh or the diff.
+const PrSeam = GitHubPrsPlugin.prototype as unknown as {
+  snapshotPr(repo: string, number: number, node: GhPrNode, prev: PrSnap | null | undefined, agents: Set<string>): { snap: PrSnap; events: OrchestratorEvent[] }
+}
+const IssueSeam = GitHubIssuesPlugin.prototype as unknown as {
+  snapshotIssue(repo: string, number: number, node: GhIssueNode, prev: IssueSnap | null | undefined, agents: Set<string>): { snap: IssueSnap; events: OrchestratorEvent[] }
+}
+// A per-alias miss — what fetchPrsBatch returns for one dead entry (deleted PR /
+// renamed repo). The reason mirrors describeGraphqlAliasError(NOT_FOUND).
+function miss(reason = 'deleted/renamed (not found)'): { ok: false; reason: string; logDetail: string } {
+  return { ok: false, reason, logDetail: reason }
+}
+function stubPrsBatch(fn: (n: number) => BatchOutcome<GhPrNode>): { mockRestore(): void } {
+  return spyOn(GhClient.prototype, 'fetchPrsBatch').mockImplementation(async (entries) => {
+    const m = new Map<string, BatchOutcome<GhPrNode>>()
+    for (const e of entries) m.set(`${e.repo}#${e.number}`, fn(e.number))
+    return m
+  })
+}
+function stubIssuesBatch(fn: (n: number) => BatchOutcome<GhIssueNode>): { mockRestore(): void } {
+  return spyOn(GhClient.prototype, 'fetchIssuesBatch').mockImplementation(async (entries) => {
+    const m = new Map<string, BatchOutcome<GhIssueNode>>()
+    for (const e of entries) m.set(`${e.repo}#${e.number}`, fn(e.number))
+    return m
+  })
+}
+
 describe('gh-call resilience — per-N skip path (issues/prs)', () => {
   stubRateLimit()
   beforeEach(() => { GhPluginBase.resetBreakerForTest() })
   afterEach(() => { GhPluginBase.resetBreakerForTest() })
 
-  it('prs transient skip: carries the flapped PR forward and re-adds its dynamic channels', async () => {
+  it('per-alias miss carries the flapped PR forward and re-adds its dynamic channels', async () => {
     const prevPr1 = prSnap({ number: 1, url: 'https://github.com/org/repo/pull/1', linked_issues: [{ repo: 'org/repo', number: 42 }] })
     const prevPr2 = prSnap({ number: 2, url: 'https://github.com/org/repo/pull/2' })
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockImplementation(async (_repo: string, number: number) => {
-      if (number === 1) throw ghErr('gh: Not Found (HTTP 404)')
-      return { snap: prSnap({ number: 2, url: 'https://github.com/org/repo/pull/2' }), events: [] }
-    })
+    const batch = stubPrsBatch(n => n === 1 ? miss() : { ok: true, node: {} as GhPrNode })
+    const seam = spyOn(PrSeam, 'snapshotPr').mockReturnValue({ snap: prSnap({ number: 2, url: 'https://github.com/org/repo/pull/2' }), events: [] })
     try {
       const config: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
@@ -230,13 +262,13 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const results = await runTicks(plugin, config, prev, READ_FAILURE_THRESHOLD)
       const result = results[results.length - 1]!
 
-      // The flapped entry warns once past the threshold; the healthy sibling is untouched.
+      // The dead entry warns once past the threshold; the healthy sibling is untouched.
       expect(result.taggedEvents).toHaveLength(1)
       const text = oneline(result.taggedEvents[0]!)
-      expect(text).toContain('github-prs: org/repo#1 read failing: deleted/renamed (HTTP 404)')
+      expect(text).toContain('github-prs: org/repo#1 read failing: deleted/renamed (not found)')
       expect(text).toContain('recover: unwatch pr 1')  // single-repo → bare number, no repo suffix
 
-      // prevPr1 carried forward verbatim on every tick — a flap doesn't drop the snapshot.
+      // prevPr1 carried forward verbatim on every tick — a miss doesn't drop the snapshot.
       const state = result.state as PrPluginState
       expect(state.prs['org/repo#1']).toEqual(prevPr1)
       expect(state.prs['org/repo#2']).toBeDefined()
@@ -247,17 +279,15 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       // desiredChannels seeds watched Linear channels too, so this asserts
       // membership rather than isolating the re-add).
       expect(result.channels).toContain('#proj-issue-team-7')
-    } finally { spy.mockRestore() }
+    } finally { seam.mockRestore(); batch.mockRestore() }
   })
 
-  it('a single 401 isolates to its entry: the sibling is processed and the tick never throws', async () => {
-    // Pre-fix, scrapePr throwing 401 propagated out of readEntry → runOneTick's
-    // Promise.all rejected → the whole tick (every plugin) was lost. Now the 401
-    // entry skips and the healthy sibling still produces state.
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockImplementation(async (_repo: string, number: number) => {
-      if (number === 1) throw ghErr('gh: Bad credentials (HTTP 401)')
-      return { snap: prSnap({ number: 2, title: 'P2-fresh' }), events: [] }
-    })
+  it('a per-alias miss isolates to its entry: the sibling is processed, the tick never throws, and the breaker does NOT escalate (Q2)', async () => {
+    // One dead alias (deleted PR) must not sink its siblings and must not trip
+    // the shared rate-limit breaker — a per-entry 404 is not a rate-limit.
+    const batch = stubPrsBatch(n => n === 1 ? miss() : { ok: true, node: {} as GhPrNode })
+    const seam = spyOn(PrSeam, 'snapshotPr').mockReturnValue({ snap: prSnap({ number: 2, title: 'P2-fresh' }), events: [] })
+    const tripSpy = spyOn(RateLimitBreaker.prototype, 'trip')
     try {
       const config: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
@@ -266,20 +296,19 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const prevPr1 = prSnap({ number: 1 })
       const prev: PrPluginState = { prs: { 'org/repo#1': prevPr1, 'org/repo#2': prSnap({ number: 2, title: 'P2-stale' }) } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, prev)
-      // First 401 tick is silent (below threshold) but did NOT throw.
+      // First miss tick is silent (below threshold) but did NOT throw.
       expect(result.taggedEvents).toHaveLength(0)
       const state = result.state as PrPluginState
-      expect(state.prs['org/repo#1']).toEqual(prevPr1)            // failed entry carried forward
-      expect(state.prs['org/repo#2']!.title).toBe('P2-fresh')    // sibling freshly processed
-    } finally { spy.mockRestore() }
+      expect(state.prs['org/repo#1']).toEqual(prevPr1)            // dead entry carried forward
+      expect(state.prs['org/repo#2']!.title).toBe('P2-fresh')     // sibling freshly processed
+      expect(tripSpy).not.toHaveBeenCalled()                      // per-entry 404 never trips the breaker
+    } finally { tripSpy.mockRestore(); seam.mockRestore(); batch.mockRestore() }
   })
 
-  it('issues transient skip: carries the flapped issue forward, warns after the threshold', async () => {
+  it('issues per-alias miss: carries the flapped issue forward, warns after the threshold', async () => {
     const prevIssue1 = issueSnap({ number: 1 })
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockImplementation(async (_repo: string, number: number) => {
-      if (number === 1) throw ghErr('gh: Not Found (HTTP 404)')
-      return { snap: issueSnap({ number: 2 }), events: [] }
-    })
+    const batch = stubIssuesBatch(n => n === 1 ? miss() : { ok: true, node: {} as GhIssueNode })
+    const seam = spyOn(IssueSeam, 'snapshotIssue').mockReturnValue({ snap: issueSnap({ number: 2 }), events: [] })
     try {
       const config: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
@@ -291,33 +320,68 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
 
       expect(result.taggedEvents).toHaveLength(1)
       const text = oneline(result.taggedEvents[0]!)
-      expect(text).toContain('github-issues: org/repo#1 read failing: deleted/renamed (HTTP 404)')
+      expect(text).toContain('github-issues: org/repo#1 read failing: deleted/renamed (not found)')
       expect(text).toContain('recover: unwatch 1')
       expect((result.state as IssuePluginState).issues['org/repo#1']).toEqual(prevIssue1)
-    } finally { spy.mockRestore() }
+    } finally { seam.mockRestore(); batch.mockRestore() }
   })
 
   it('cross/multi-repo skip note qualifies the recovery command with the repo', async () => {
     // Multi-repo (no config.repo): bare `unwatch pr <N>` / `unwatch <N>` would hit
     // bareError, so the note must carry the repo (mirrors formatEntryLabel).
-    const prsSpy = spyOn(GhScraper.prototype, 'scrapePr').mockRejectedValue(ghErr('gh: Not Found (HTTP 404)'))
+    const prsBatch = stubPrsBatch(() => miss())
     try {
       const config: OrchestratorConfig = {
         project: 'proj', plugins: { 'github-prs': { watched: [{ number: 5, repo: 'org/other' }] } },
       }
       const results = await runTicks(new GitHubPrsPlugin('#proj-leads'), config, { prs: {} }, READ_FAILURE_THRESHOLD)
       expect(oneline(results[results.length - 1]!.taggedEvents[0]!)).toContain('recover: unwatch pr 5 org/other')
-    } finally { prsSpy.mockRestore() }
+    } finally { prsBatch.mockRestore() }
 
     GhPluginBase.resetBreakerForTest()
-    const issuesSpy = spyOn(GhScraper.prototype, 'scrapeIssue').mockRejectedValue(ghErr('gh: Not Found (HTTP 404)'))
+    const issuesBatch = stubIssuesBatch(() => miss())
     try {
       const config: OrchestratorConfig = {
         project: 'proj', plugins: { 'github-issues': { watched: [{ number: 8, repo: 'org/other' }] } },
       }
       const results = await runTicks(new GitHubIssuesPlugin('#proj-leads'), config, { issues: {} }, READ_FAILURE_THRESHOLD)
       expect(oneline(results[results.length - 1]!.taggedEvents[0]!)).toContain('recover: unwatch 8 org/other')
-    } finally { issuesSpy.mockRestore() }
+    } finally { issuesBatch.mockRestore() }
+  })
+
+  it('a whole-batch rate-limit trips the breaker and emits the backoff notice (per-N path)', async () => {
+    const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockRejectedValue(ghErr('gh: HTTP 429: Too Many Requests'))
+    try {
+      const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
+      const prev: PrPluginState = { prs: { 'org/repo#1': prSnap({ number: 1 }) } }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, prev)
+      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
+      expect((result.state as PrPluginState).prs['org/repo#1']).toBeDefined()  // prev preserved
+    } finally { batch.mockRestore() }
+  })
+
+  it('a whole-batch secondary rate-limit gets the shorter secondary floor (#616)', async () => {
+    const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockRejectedValue(ghErr('gh: HTTP 403: You have exceeded a secondary rate limit'))
+    try {
+      const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
+      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 1m')
+    } finally { batch.mockRestore() }
+  })
+
+  it('a whole-batch transient failure preserves prev and stays quiet — no per-entry warn, no breaker trip', async () => {
+    const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockRejectedValue(ghErr('gh: HTTP 500: Internal Server Error'))
+    const tripSpy = spyOn(RateLimitBreaker.prototype, 'trip')
+    try {
+      const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }, { number: 2 }] } } }
+      const prev: PrPluginState = { prs: { 'org/repo#1': prSnap({ number: 1 }), 'org/repo#2': prSnap({ number: 2 }) } }
+      // A whole-batch error is not a per-entry condition, so it never spikes the
+      // per-entry failure counters — silent across every tick, prev intact.
+      const results = await runTicks(new GitHubPrsPlugin('#proj-leads'), config, prev, READ_FAILURE_THRESHOLD + 1)
+      for (const r of results) expect(r.taggedEvents).toHaveLength(0)
+      expect((results[results.length - 1]!.state as PrPluginState).prs['org/repo#1']).toBeDefined()
+      expect(tripSpy).not.toHaveBeenCalled()  // a 500 is transient, not rate-limit
+    } finally { tripSpy.mockRestore(); batch.mockRestore() }
   })
 
   it('empty watch list returns before the breaker block — an idle plugin never resets the breaker', async () => {
@@ -339,12 +403,13 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
 
       // Positive control: a non-empty clean tick *does* reset, proving the spy
       // works and that the empty-watch early-return is what suppresses it.
-      const okSpy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({ snap: prSnap({ number: 1 }), events: [] })
+      const okBatch = stubPrsBatch(() => ({ ok: true, node: {} as GhPrNode }))
+      const okSeam = spyOn(PrSeam, 'snapshotPr').mockReturnValue({ snap: prSnap({ number: 1 }), events: [] })
       try {
         const cfg: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
         await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: { 'org/repo#1': prSnap({ number: 1 }) } })
         expect(resetSpy).toHaveBeenCalled()
-      } finally { okSpy.mockRestore() }
+      } finally { okSeam.mockRestore(); okBatch.mockRestore() }
     } finally { resetSpy.mockRestore() }
   })
 })
@@ -425,9 +490,15 @@ describe('readEntry failure-threshold state machine (direct, injected clock)', (
 
   it('rate-limit returns the breaker signal and does not advance the failure count', async () => {
     const p = probe()
-    expect(await p.call('k', failBody('gh: HTTP 429: Too Many Requests'), T0)).toEqual({ ok: false, rateLimited: true })
+    expect(await p.call('k', failBody('gh: HTTP 429: Too Many Requests'), T0)).toEqual({ ok: false, rateLimited: true, kind: 'primary' })
     // The 429 didn't count — a following transient failure is consecutive #1, silent.
     expect(isSilentSkip(await p.call('k', failBody('gh: HTTP 503'), T0 + 1))).toBe(true)
+  })
+
+  it('classifies a secondary rate-limit as kind=secondary (feeds the shorter backoff floor)', async () => {
+    const p = probe()
+    expect(await p.call('k', failBody('gh: HTTP 403: You have exceeded a secondary rate limit'), T0))
+      .toEqual({ ok: false, rateLimited: true, kind: 'secondary' })
   })
 
   it('a non-GhError (real infra/code bug) is rethrown — it must crash the tick', async () => {

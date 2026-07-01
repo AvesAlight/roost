@@ -197,7 +197,7 @@ export class GitHubCommitsPlugin extends GhPluginBase {
         now,
       )
       // Rate-limit discards this tick's partial work and preserves prev state.
-      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { commits: {} }, projectChannel, config)
+      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { commits: {} }, projectChannel, config, r.kind)
       if (!r.ok) {
         taggedEvents.push(...r.events)
         continue

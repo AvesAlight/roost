@@ -8,7 +8,7 @@ import { RATE_LIMIT_WINDOW_MS } from '../../_rate-limit.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { Command } from '../../../dispatcher-dm-handler.js'
 import type { PrSnap, IssueSnap } from '../types.js'
-import { GhScraper } from '../scraper.js'
+import { GhClient, type BatchOutcome, type GhPrNode, type GhIssueNode } from '../github-api.js'
 import type { OrchestratorEvent } from '../diff.js'
 import { stubRateLimit } from './gh-test-helpers.js'
 
@@ -45,6 +45,39 @@ function fakeIssueSnap(overrides: Partial<IssueSnap> = {}): IssueSnap {
   }
 }
 
+// The plugins read via one batched GraphQL call, then map each ok node → snapshot
+// through the snapshotPr/snapshotIssue seam. These routing tests inject a
+// controlled (snap, events) pair at that seam and stub fetchPrsBatch/
+// fetchIssuesBatch to return an ok node per watched entry, so every entry reaches
+// the seam. The node→snapshot mapping itself has direct coverage in the
+// scraper/graphql tests. stubPr/stubIssue return a handle whose mockRestore()
+// tears down both spies — matching the single-spy shape the call sites use.
+type PrResult = { snap: PrSnap; events: OrchestratorEvent[] }
+type IssueResult = { snap: IssueSnap; events: OrchestratorEvent[] }
+const PrSeam = GitHubPrsPlugin.prototype as unknown as {
+  snapshotPr(repo: string, number: number, node: GhPrNode, prev: PrSnap | null | undefined, agents: Set<string>): PrResult
+}
+const IssueSeam = GitHubIssuesPlugin.prototype as unknown as {
+  snapshotIssue(repo: string, number: number, node: GhIssueNode, prev: IssueSnap | null | undefined, agents: Set<string>): IssueResult
+}
+function okBatch<T>(entries: ReadonlyArray<{ repo: string; number: number }>, node: T): Map<string, BatchOutcome<T>> {
+  const m = new Map<string, BatchOutcome<T>>()
+  for (const e of entries) m.set(`${e.repo}#${e.number}`, { ok: true, node })
+  return m
+}
+function stubPr(result: PrResult | ((repo: string, num: number) => PrResult)): { mockRestore(): void } {
+  const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockImplementation(async (entries) => okBatch(entries, {} as GhPrNode))
+  const impl = typeof result === 'function' ? (repo: string, number: number) => result(repo, number) : () => result
+  const snap = spyOn(PrSeam, 'snapshotPr').mockImplementation(impl)
+  return { mockRestore() { snap.mockRestore(); batch.mockRestore() } }
+}
+function stubIssue(result: IssueResult | ((repo: string, num: number) => IssueResult)): { mockRestore(): void } {
+  const batch = spyOn(GhClient.prototype, 'fetchIssuesBatch').mockImplementation(async (entries) => okBatch(entries, {} as GhIssueNode))
+  const impl = typeof result === 'function' ? (repo: string, number: number) => result(repo, number) : () => result
+  const snap = spyOn(IssueSeam, 'snapshotIssue').mockImplementation(impl)
+  return { mockRestore() { snap.mockRestore(); batch.mockRestore() } }
+}
+
 describe('GitHubPrsPlugin.runTick', () => {
   stubRateLimit()
 
@@ -57,7 +90,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       linked_issues: [{ repo: 'org/repo', number: 14 }],
     } as OrchestratorEvent
 
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 14 }] }),
       events: [commentEv],
     })
@@ -80,7 +113,7 @@ describe('GitHubPrsPlugin.runTick', () => {
   })
 
   it('persists scraped PR state under its own slice', async () => {
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }] }), events: [],
     })
     try {
@@ -104,7 +137,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_no_linked_issues',
       repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }),
       events: [warningEv],
     })
@@ -123,7 +156,7 @@ describe('GitHubPrsPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [seedEv],
     })
     try {
@@ -141,7 +174,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
       linked_issues: [{ repo: 'org/repo', number: 7 }, { repo: 'org/repo', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }, { repo: 'org/repo', number: 14 }] }), events: [seedEv],
     })
     try {
@@ -164,7 +197,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
       linked_issues: [{ repo: 'org/repo', number: 7 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }] }), events: [seedEv],
     })
     try {
@@ -191,7 +224,7 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
       repo: 'org/repo', pr: 25, url: 'u',
       from: 'PENDING', to: 'SUCCESS', head_oid: 'abc', linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [ciEv],
     })
     try {
@@ -212,7 +245,7 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
       review_id: 1, review_url: 'ru', author: 'alice', state: 'APPROVED',
       body: '', body_preview: '', is_worker_reply: false, linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [reviewEv],
     })
     try {
@@ -232,7 +265,7 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
       repo: 'org/repo', pr: 25, url: 'u',
       from: 'PENDING', to: 'FAILURE', head_oid: 'abc', linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [ciEv],
     })
     try {
@@ -255,7 +288,7 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
       kind: 'pr_no_linked_issues',
       repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
     })
     try {
@@ -278,7 +311,7 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
       kind: 'pr_no_linked_issues',
       repo: 'org/repo', pr: 25, url: 'u', title: 'P',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
     })
     try {
@@ -301,7 +334,7 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
       kind: 'pr_no_linked_issues',
       repo: 'org/repo', pr: 25, url: 'u', title: 'P',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }), events: [noLinkedEv],
     })
     try {
@@ -358,7 +391,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     // snap.repo is mixed-case; the Linear attachment URL is lowercase.
     // Routing must still resolve because the prKey normalization lowercases
     // both sides.
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'AvesAlight/Roost', number: 9 }),
       events: [ev],
     })
@@ -385,7 +418,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [] }),
       events: [commentEv],
     })
@@ -414,7 +447,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [commentEv],
     })
     try {
@@ -439,7 +472,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [commentEv],
     })
     try {
@@ -471,7 +504,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockImplementation(async (_repo: string, num: number) => ({
+    const spy = stubPr((_repo, num) => ({
       snap: fakePrSnap({ number: num }),
       events: [{ ...ev, pr: num } as OrchestratorEvent],
     }))
@@ -501,7 +534,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [ev],
     })
     try {
@@ -530,7 +563,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [ev],
     })
     try {
@@ -555,7 +588,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [seedEv],
     })
     try {
@@ -579,7 +612,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     const warnEv: OrchestratorEvent = {
       kind: 'pr_no_linked_issues', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [warnEv],
     })
     try {
@@ -602,7 +635,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
     const warnEv: OrchestratorEvent = {
       kind: 'pr_no_linked_issues', repo: 'org/repo', pr: 25, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [warnEv],
     })
     try {
@@ -644,7 +677,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       comment_id: 1, comment_url: 'https://example.com/c/1',
       linked_issues: [],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap(), events: [commentEv],
     })
     try {
@@ -668,7 +701,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+    const spy = stubIssue({
       snap: fakeIssueSnap(), events: [seedEv],
     })
     try {
@@ -690,7 +723,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+    const spy = stubIssue({
       snap: fakeIssueSnap(), events: [seedEv],
     })
     try {
@@ -715,7 +748,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
       comment_id: 2, comment_url: 'https://example.com/c/2',
     } as OrchestratorEvent
 
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+    const spy = stubIssue({
       snap: fakeIssueSnap(), events: [issueEv],
     })
     try {
@@ -801,7 +834,7 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
       comment_id: 1, comment_url: 'cu',
       linked_issues: [{ repo: 'org/foo', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/foo', number: 14 }] }),
       events: [commentEv],
     })
@@ -823,7 +856,7 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
       author: 'a', body: 'y', body_preview: 'y', is_worker_reply: false,
       comment_id: 2, comment_url: 'cu',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+    const spy = stubIssue({
       snap: fakeIssueSnap({ repo: 'org/bar' }), events: [issueEv],
     })
     try {
@@ -844,7 +877,7 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
       author: 'a', body: 'y', body_preview: 'y', is_worker_reply: false,
       comment_id: 2, comment_url: 'cu',
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapeIssue').mockResolvedValue({
+    const spy = stubIssue({
       snap: fakeIssueSnap({ repo: 'org/main' }), events: [issueEv],
     })
     try {
@@ -868,7 +901,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       comment_id: 1, comment_url: 'cu',
       linked_issues: [{ repo: 'org/bar', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }] }),
       events: [commentEv],
     })
@@ -892,7 +925,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       comment_id: 1, comment_url: 'cu',
       linked_issues: [{ repo: 'org/bar', number: 14 }, { repo: 'org/foo', number: 7 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }, { repo: 'org/foo', number: 7 }] }),
       events: [commentEv],
     })
@@ -914,7 +947,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       comment_id: 1, comment_url: 'cu',
       linked_issues: [{ repo: 'org/other', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/main', number: 25, linked_issues: [{ repo: 'org/other', number: 14 }] }),
       events: [commentEv],
     })
@@ -945,7 +978,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       comment_id: 1, comment_url: 'cu',
       linked_issues: [{ repo: 'org/main', number: 7 }, { repo: 'org/other', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/main', linked_issues: [{ repo: 'org/main', number: 7 }, { repo: 'org/other', number: 14 }] }),
       events: [commentEv],
     })
@@ -961,7 +994,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
   })
 
   it('multi-mode: snap.linked_issues populates the dispatcher channel set for cross-repo issues', async () => {
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }] }),
       events: [],
     })
@@ -980,7 +1013,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       kind: 'pr_added_to_watch', repo: 'org/main', pr: 25, url: 'u', title: 't',
       linked_issues: [{ repo: 'org/other', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/main', linked_issues: [{ repo: 'org/other', number: 14 }] }),
       events: [seedEv],
     })
@@ -1002,7 +1035,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       kind: 'pr_added_to_watch', repo: 'org/foo', pr: 25, url: 'u', title: 't',
       linked_issues: [{ repo: 'org/bar', number: 14 }],
     } as OrchestratorEvent
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/foo', linked_issues: [{ repo: 'org/bar', number: 14 }] }),
       events: [seedEv],
     })
@@ -1022,7 +1055,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
   })
 
   it('single-mode: stderr drop warning debounced by head_oid (no re-warn across same-head ticks)', async () => {
-    const spy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy = stubPr({
       snap: fakePrSnap({ repo: 'org/main', number: 25, head_oid: 'sha-A', linked_issues: [{ repo: 'org/other', number: 14 }] }),
       events: [],
     })
@@ -1052,7 +1085,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       plugins: { 'github-prs': { watched: [{ number: 25 }] } },
     }
     // Tick 1: head sha-A.
-    const spy1 = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy1 = stubPr({
       snap: fakePrSnap({ repo: 'org/main', number: 25, head_oid: 'sha-A', linked_issues: [{ repo: 'org/other', number: 14 }] }),
       events: [],
     })
@@ -1062,7 +1095,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       prevState = r1.state
     } finally { spy1.mockRestore() }
     // Tick 2: head sha-B (force-push), same dropped link.
-    const spy2 = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({
+    const spy2 = stubPr({
       snap: fakePrSnap({ repo: 'org/main', number: 25, head_oid: 'sha-B', linked_issues: [{ repo: 'org/other', number: 14 }] }),
       events: [],
     })
@@ -1563,7 +1596,7 @@ describe('assertRepoMode — GitHubNewIssuesPlugin', () => {
 describe('GhPluginBase.observeRateLimit integration', () => {
   it('merges observeRateLimit warning events into runTick taggedEvents', async () => {
     const warningEvent = { channels: ['#proj-leads'], payload: { kind: 'oneline' as const, text: 'rate limit warning' } }
-    const scrapeSpy = spyOn(GhScraper.prototype, 'scrapePr').mockResolvedValue({ snap: fakePrSnap(), events: [] })
+    const scrapeSpy = stubPr({ snap: fakePrSnap(), events: [] })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const observeSpy = spyOn(GhPluginBase.prototype as any, 'observeRateLimit').mockResolvedValue([warningEvent])
     try {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { RateLimitBreaker, BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote } from '../backoff.js'
+import { RateLimitBreaker, BACKOFF_SCHEDULE_MS, SECONDARY_BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote } from '../backoff.js'
 import { WARN_COOLDOWN_MS } from '../../_rate-limit.js'
 
 const T0 = 1_000_000_000_000
@@ -72,10 +72,41 @@ describe('RateLimitBreaker', () => {
   })
 })
 
+describe('RateLimitBreaker — secondary (burst) schedule', () => {
+  it('secondary schedule is 1/2/5/10 minutes — a shorter floor than primary', () => {
+    expect(SECONDARY_BACKOFF_SCHEDULE_MS).toEqual([1 * M, 2 * M, 5 * M, 10 * M])
+  })
+
+  it('a secondary trip opens for 1m and escalates 1 → 2 → 5 → 10, capped at 10', () => {
+    const b = new RateLimitBreaker()
+    const s = SECONDARY_BACKOFF_SCHEDULE_MS
+    expect(b.trip(T0, s)).toBe(1 * M)
+    expect(b.trip(T0 + 1 * M, s)).toBe(2 * M)
+    expect(b.trip(T0 + 3 * M, s)).toBe(5 * M)
+    expect(b.trip(T0 + 8 * M, s)).toBe(10 * M)
+    expect(b.trip(T0 + 18 * M, s)).toBe(10 * M)  // capped
+  })
+
+  it('the escalation level is shared across kinds — the window comes from the passed schedule', () => {
+    const b = new RateLimitBreaker()
+    // First trip is secondary (level 0 → window secondary[0]=1m, level → 1).
+    expect(b.trip(T0, SECONDARY_BACKOFF_SCHEDULE_MS)).toBe(1 * M)
+    // Next trip is primary at the shared level 1 → window primary[1]=10m (not 5m).
+    expect(b.trip(T0 + 1 * M, BACKOFF_SCHEDULE_MS)).toBe(10 * M)
+    expect(b.currentLevel).toBe(2)
+  })
+})
+
 describe('format helpers', () => {
   it('formatBackoffNotice renders the window in minutes', () => {
     expect(formatBackoffNotice(5 * M)).toBe('[dispatcher] GH rate-limited, backing off 5m')
     expect(formatBackoffNotice(60 * M)).toBe('[dispatcher] GH rate-limited, backing off 60m')
+  })
+
+  it('formatBackoffNotice names the kind so a burst blip reads differently from budget exhaustion', () => {
+    // Primary is the default and keeps the original wording.
+    expect(formatBackoffNotice(5 * M, 'primary')).toBe('[dispatcher] GH rate-limited, backing off 5m')
+    expect(formatBackoffNotice(1 * M, 'secondary')).toBe('[dispatcher] GH secondary rate-limited, backing off 1m')
   })
 
   it('formatReadFailureNote surfaces the failure reason and embeds the verbatim recovery command', () => {
