@@ -91,3 +91,14 @@ export function formatReadFailureNote(pluginName: string, key: string, recoveryC
   const mins = Math.round(WARN_COOLDOWN_MS / 60_000)
   return `[dispatcher] ${pluginName}: ${key} read failing: ${reason}. suppressing ${mins}m; recover: ${recoveryCmd}`
 }
+
+// Cooldown-gated note for a whole-batch read failure — a transient that took the
+// entire query down (persistent 5xx, top-level GraphQL error), not one bad alias.
+// Unlike a per-entry failure there's no single entry to recover, so it names the
+// reason and the suppression window and leaves it there; the operator's cue is
+// that the whole feed has stalled. One throttled warn beats the silent-outage
+// hole and the N-entry flood alike.
+export function formatBatchFailureNote(pluginName: string, entryCount: number, reason: string): string {
+  const mins = Math.round(WARN_COOLDOWN_MS / 60_000)
+  return `[dispatcher] ${pluginName}: batch read failing (${entryCount} entries): ${reason}. suppressing ${mins}m`
+}

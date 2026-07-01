@@ -70,8 +70,8 @@ export class GitHubIssuesPlugin extends GhBase {
     })
     const toQuery = resolved.filter(e => !this.entryThrottled(e.key, now))
 
-    // One batched GraphQL read over every non-throttled entry (the #613 fix:
-    // one request per tick regardless of watch count).
+    // One batched GraphQL read over every non-throttled entry: one request per
+    // tick regardless of watch count.
     let batch: Map<string, BatchOutcome<GhIssueNode>>
     try {
       batch = await this.client.fetchIssuesBatch(toQuery.map(e => ({ repo: e.repo, number: e.number })))
@@ -82,11 +82,13 @@ export class GitHubIssuesPlugin extends GhBase {
       // prev. `kind` picks the schedule (secondary burst gets the ~1m floor).
       if (isRateLimitError(e)) return this.breakerTripResult(now, prevState ?? { issues: {} }, projectChannel, config, rateLimitKind(e))
       // Whole-batch transient failure isn't a per-entry condition, so it doesn't
-      // spike per-entry counts. Preserve prev, replay channels, stay quiet.
-      this.log(`[github-issues] batch read failed (${toQuery.length} entries): ${e.message}\n`)
-      return { state: prevState ?? { issues: {} }, taggedEvents: [], channels: this.skipChannels(config) }
+      // spike per-entry counts. Preserve prev, replay channels, and surface one
+      // throttled batch-level warn so a sustained outage doesn't go silent.
+      const taggedEvents = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
+      return { state: prevState ?? { issues: {} }, taggedEvents, channels: this.skipChannels(config) }
     }
     this.breakerReset(now)
+    this.clearBatchFailure()
 
     const curState: IssuePluginState = { issues: {} }
     const taggedEvents: TaggedEvent[] = []

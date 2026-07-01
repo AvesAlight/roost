@@ -201,8 +201,8 @@ export class GitHubPrsPlugin extends GhBase {
     })
     const toQuery = resolved.filter(e => !this.entryThrottled(e.key, now))
 
-    // One batched GraphQL read over every non-throttled entry (the #613 fix:
-    // one request per tick regardless of watch count, vs ~6 REST calls per PR).
+    // One batched GraphQL read over every non-throttled entry: one request per
+    // tick regardless of watch count, vs ~6 REST calls per PR.
     let batch: Map<string, BatchOutcome<GhPrNode>>
     try {
       batch = await this.client.fetchPrsBatch(toQuery.map(e => ({ repo: e.repo, number: e.number })))
@@ -213,11 +213,13 @@ export class GitHubPrsPlugin extends GhBase {
       // prev. `kind` picks the schedule (secondary burst gets the ~1m floor).
       if (isRateLimitError(e)) return this.breakerTripResult(now, prevState ?? { prs: {} }, projectChannel, config, rateLimitKind(e))
       // Whole-batch transient failure isn't a per-entry condition, so it doesn't
-      // spike per-entry counts. Preserve prev, replay channels, stay quiet.
-      this.log(`[github-prs] batch read failed (${toQuery.length} entries): ${e.message}\n`)
-      return { state: prevState ?? { prs: {} }, taggedEvents: [], channels: this.skipChannels(config) }
+      // spike per-entry counts. Preserve prev, replay channels, and surface one
+      // throttled batch-level warn so a sustained outage doesn't go silent.
+      const taggedEvents = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
+      return { state: prevState ?? { prs: {} }, taggedEvents, channels: this.skipChannels(config) }
     }
     this.breakerReset(now)
+    this.clearBatchFailure()
 
     // Cross-link lookup: one batched Linear query per tick, gated on a
     // non-empty linear-issues watch set. Empty-watched is the load-bearing

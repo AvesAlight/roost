@@ -7,7 +7,7 @@ import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_share
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
 import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError, rateLimitKind } from './github-api.js'
 import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
-import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS, BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote, type RateLimitKind } from './backoff.js'
+import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS, BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote, formatBatchFailureNote, type RateLimitKind } from './backoff.js'
 
 // Per-entry read outcome. `readEntry` never throws the expected gh-error
 // classes — it returns one of these so a caller's Promise.all over entries
@@ -38,6 +38,10 @@ export abstract class GhPluginBase extends BasePlugin {
   //   warnedAt    — last time the IRC note fired (cooldown gate against spam).
   //   lastReadAt  — last time we actually attempted the read (throttle gate).
   private _readFailures = new Map<string, { consecutive: number; warnedAt: number; lastReadAt: number }>()
+
+  // Cooldown gate for the whole-batch read-failure warn (per instance) — last
+  // time the batch-level note fired; 0 = never / cleared by a clean batch.
+  private _batchWarnedAt = 0
 
   // Last channel set this plugin returned from a clean tick — replayed while the
   // breaker is open so a multi-minute backoff doesn't PART the watched channels.
@@ -200,6 +204,30 @@ export abstract class GhPluginBase extends BasePlugin {
     fail.warnedAt = now
     const noteText = formatReadFailureNote(this.name, key, recoveryCmd, reason)
     return [{ channels: [...noteChannels], payload: { kind: 'oneline', text: noteText } }]
+  }
+
+  // ---- whole-batch failure warn (batched PR/issue plugins) ------------------
+  //
+  // A whole-batch read failure took the entire query down (a persistent 5xx or a
+  // top-level GraphQL error), not one bad alias — so it isn't a per-entry
+  // condition and never touches the per-entry counters. Surface a single
+  // throttled project-channel warn so a sustained batch-wide outage doesn't leave
+  // the feed dark, without the N-entry flood a per-entry path would produce: the
+  // note repeats at most once per cooldown, and a clean batch clears the gate
+  // (clearBatchFailure) so the next outage warns immediately.
+  protected recordBatchFailure(projectChannel: string, entryCount: number, err: GhError, now: number): TaggedEvent[] {
+    this.log(`[${this.name}] batch read failed (${entryCount} entries): ${err.message}\n`)
+    const warnedRecently = this._batchWarnedAt !== 0 && now - this._batchWarnedAt < WARN_COOLDOWN_MS
+    if (warnedRecently) return []
+    this._batchWarnedAt = now
+    const noteText = formatBatchFailureNote(this.name, entryCount, describeReadFailure(err.stderr))
+    return [{ channels: [projectChannel], payload: { kind: 'oneline', text: noteText } }]
+  }
+
+  // A clean batch → the outage cleared; reset the warn gate so the next one warns
+  // on its first tick rather than waiting out a stale cooldown.
+  protected clearBatchFailure(): void {
+    this._batchWarnedAt = 0
   }
 
   // End-of-tick: log current GH rate budget and emit an IRC warning to the

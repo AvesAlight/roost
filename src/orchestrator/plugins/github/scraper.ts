@@ -95,8 +95,10 @@ export function buildPrSnapshot(repo: string, number: number, node: GhPrNode): P
     head_oid: node.headRefOid ?? null,
     is_draft: Boolean(node.isDraft),
     merged: Boolean(node.merged),
-    // GraphQL PR state is already OPEN/CLOSED/MERGED (uppercase), matching the
-    // legacy REST-uppercased value the diff compares against.
+    // Kept uppercase to preserve the REST-shaped value diff.ts keys on: it tests
+    // `state === 'CLOSED'` gated by the `merged` boolean (never 'MERGED') and
+    // nothing renders state to a channel, so GraphQL's extra MERGED — which REST
+    // never emitted — changes nothing.
     state: node.state ?? null,
     labels: labelNames(node.labels?.nodes),
     ci_state: rollupToCiState(rollup),
@@ -122,8 +124,8 @@ export function buildIssueSnapshot(repo: string, number: number, node: GhIssueNo
     number,
     title: node.title ?? null,
     url: node.url ?? null,
-    // Lower-cased to match the legacy REST value ('open'/'closed') the diff and
-    // shouldPush (to === 'closed') compare against.
+    // Lower-cased to the REST-shaped 'open'/'closed' the diff and shouldPush
+    // (to === 'closed') compare against.
     state: node.state ? node.state.toLowerCase() : null,
     labels: labelNames(node.labels?.nodes),
     seen_comment_ids: sortedIds(comments),

@@ -70,7 +70,7 @@ function isRateLimitStderr(stderr: string): boolean {
 }
 
 export function isRateLimitError(e: unknown): boolean {
-  return e instanceof GhError && isRateLimitStderr(e.stderr)
+  return e instanceof GhError && (e.rateLimited || isRateLimitStderr(e.stderr))
 }
 
 // Secondary (burst/abuse) vs primary (budget) rate limit. The two get different
@@ -104,11 +104,16 @@ export function rollupToCiState(state: string | null | undefined): string | null
 export class GhError extends Error {
   readonly stderr: string
   readonly attempts: number
-  constructor(msg: string, stderr = '', attempts = 1) {
+  // Set when the error is a known rate-limit that carries no 403/429 in stderr to
+  // classify off — the GraphQL RATE_LIMITED case (HTTP 200 with an error node).
+  // Lets isRateLimitError recognize it without a fabricated status string.
+  readonly rateLimited: boolean
+  constructor(msg: string, stderr = '', attempts = 1, rateLimited = false) {
     super(msg)
     this.name = 'GhError'
     this.stderr = stderr
     this.attempts = attempts
+    this.rateLimited = rateLimited
   }
 }
 
@@ -425,9 +430,9 @@ function describeGraphqlAliasError(type: string | undefined, message: string | u
   }
 }
 
-// Per-alias envelope → outcomes. The load-bearing isolation step (the #602
-// invariant): one dead alias (deleted PR, renamed repo, forbidden) is a per-entry
-// miss, never a thrown error that sinks its siblings. `pick` pulls the typed node
+// Per-alias envelope → outcomes. The load-bearing isolation step: one dead alias
+// (deleted PR, renamed repo, forbidden) is a per-entry miss, never a thrown error
+// that sinks its siblings. `pick` pulls the typed node
 // out of an alias's data block (`.pullRequest` / `.issue`); a null/absent node
 // with no matching error is a plain not-found. Pure and exported so the isolation
 // can be tested against a crafted envelope without spawning gh.
@@ -513,10 +518,11 @@ export class GhClient {
     const raw = await spawnGh(args, { log: this.log, exec: runGhGraphqlBatchOnce })
     const env = (raw ?? {}) as GqlEnvelope
     if ((env.errors ?? []).some(e => e.type === 'RATE_LIMITED')) {
-      throw new GhError(
-        'gh graphql: API rate limit exceeded (RATE_LIMITED)',
-        'API rate limit exceeded (GraphQL RATE_LIMITED, HTTP 403)',
-      )
+      // RATE_LIMITED comes back HTTP 200 with an error node, so there's no
+      // 403/429 in stderr to classify off. Flag it explicitly rather than
+      // fabricate a status string — a fake "HTTP 403" reads like a mistake a
+      // cleanup could drop, silently killing breaker-on-primary-GraphQL-limit.
+      throw new GhError('gh graphql: API rate limit exceeded (RATE_LIMITED)', '', 1, true)
     }
     return env
   }

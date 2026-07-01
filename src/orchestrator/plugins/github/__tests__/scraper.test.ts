@@ -167,7 +167,7 @@ describe('buildPrSnapshot — GraphQL node → internal snapshot', () => {
     expect(snap.number).toBe(10)
     expect(snap.is_draft).toBe(true)
     expect(snap.merged).toBe(false)
-    expect(snap.state).toBe('OPEN')  // GraphQL PR state stays uppercase, like the legacy REST value
+    expect(snap.state).toBe('OPEN')  // GraphQL PR state stays uppercase — the REST-shaped value diff.ts keys on
     expect(snap.head_ref).toBe('feat/x')
     expect(snap.head_oid).toBe('sha1')
     expect(snap.labels).toEqual(['area/api', 'bug'])  // sorted

@@ -237,6 +237,15 @@ function stubIssuesBatch(fn: (n: number) => BatchOutcome<GhIssueNode>): { mockRe
     return m
   })
 }
+// Fake a `gh` subprocess so the exec-level tests drive gh's real exit-code + body
+// contract. Bun.spawn is the seam runGhGraphqlBatchOnce shells out through, so
+// mocking it exercises the actual per-alias-isolation and RATE_LIMITED paths
+// end-to-end — the mechanism the stubPrsBatch mock above short-circuits.
+function stubGhSpawn(stdout: string, exitCode: number): { mockRestore(): void } {
+  return spyOn(Bun, 'spawn').mockReturnValue({
+    stdout, stderr: '', exited: Promise.resolve(exitCode),
+  } as unknown as ReturnType<typeof Bun.spawn>)
+}
 
 describe('gh-call resilience — per-N skip path (issues/prs)', () => {
   stubRateLimit()
@@ -282,7 +291,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     } finally { seam.mockRestore(); batch.mockRestore() }
   })
 
-  it('a per-alias miss isolates to its entry: the sibling is processed, the tick never throws, and the breaker does NOT escalate (Q2)', async () => {
+  it('a per-alias miss isolates to its entry: the sibling is processed, the tick never throws, and the breaker does NOT escalate', async () => {
     // One dead alias (deleted PR) must not sink its siblings and must not trip
     // the shared rate-limit breaker — a per-entry 404 is not a rate-limit.
     const batch = stubPrsBatch(n => n === 1 ? miss() : { ok: true, node: {} as GhPrNode })
@@ -360,7 +369,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     } finally { batch.mockRestore() }
   })
 
-  it('a whole-batch secondary rate-limit gets the shorter secondary floor (#616)', async () => {
+  it('a whole-batch secondary rate-limit gets the shorter secondary floor', async () => {
     const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockRejectedValue(ghErr('gh: HTTP 403: You have exceeded a secondary rate limit'))
     try {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
@@ -369,19 +378,57 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     } finally { batch.mockRestore() }
   })
 
-  it('a whole-batch transient failure preserves prev and stays quiet — no per-entry warn, no breaker trip', async () => {
+  it('a whole-batch transient failure emits one throttled batch-warn (not a per-entry flood) and never trips the breaker', async () => {
     const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockRejectedValue(ghErr('gh: HTTP 500: Internal Server Error'))
     const tripSpy = spyOn(RateLimitBreaker.prototype, 'trip')
     try {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }, { number: 2 }] } } }
       const prev: PrPluginState = { prs: { 'org/repo#1': prSnap({ number: 1 }), 'org/repo#2': prSnap({ number: 2 }) } }
       // A whole-batch error is not a per-entry condition, so it never spikes the
-      // per-entry failure counters — silent across every tick, prev intact.
+      // per-entry counters (no N-entry flood). It surfaces exactly one throttled
+      // batch-level warn — the first tick — then stays quiet inside the cooldown,
+      // prev intact and the breaker untouched (a 500 is transient, not rate-limit).
       const results = await runTicks(new GitHubPrsPlugin('#proj-leads'), config, prev, READ_FAILURE_THRESHOLD + 1)
-      for (const r of results) expect(r.taggedEvents).toHaveLength(0)
+      expect(oneline(results[0]!.taggedEvents[0]!)).toContain('batch read failing (2 entries)')
+      for (const r of results.slice(1)) expect(r.taggedEvents).toHaveLength(0)
       expect((results[results.length - 1]!.state as PrPluginState).prs['org/repo#1']).toBeDefined()
-      expect(tripSpy).not.toHaveBeenCalled()  // a 500 is transient, not rate-limit
+      expect(tripSpy).not.toHaveBeenCalled()
     } finally { tripSpy.mockRestore(); batch.mockRestore() }
+  })
+
+  // The exec-level seam: the two tests above mock fetchPrsBatch, so the actual
+  // resilience mechanism — gh's non-zero-exit-keeps-body contract and the
+  // RATE_LIMITED classification — only runs against a real spawn. These mock
+  // Bun.spawn (what runGhGraphqlBatchOnce shells out through) to pin both.
+  it('gh exit 1 with a partial {data,errors} body isolates the dead alias end-to-end (real exec seam)', async () => {
+    // gh exits non-zero when any alias errors but still writes the full body;
+    // runGhGraphqlBatchOnce keeps it (exit≠0 + parseable {data}) so mapBatchOutcomes
+    // isolates the miss instead of the whole tick throwing.
+    const body = JSON.stringify({
+      data: { e0: { pullRequest: { number: 1, state: 'OPEN' } }, e1: { pullRequest: null } },
+      errors: [{ type: 'NOT_FOUND', path: ['e1', 'pullRequest'], message: 'Could not resolve to a PullRequest' }],
+    })
+    const spawn = stubGhSpawn(body, 1)
+    try {
+      const out = await new GhClient(() => {}).fetchPrsBatch([
+        { repo: 'org/repo', number: 1 }, { repo: 'org/repo', number: 2 },
+      ])
+      expect(out.get('org/repo#1')).toEqual({ ok: true, node: { number: 1, state: 'OPEN' } })
+      expect(out.get('org/repo#2')!.ok).toBe(false)  // dead alias isolated, not thrown
+    } finally { spawn.mockRestore() }
+  })
+
+  it('a RATE_LIMITED GraphQL body (HTTP 200) trips the breaker through the plugin (real exec seam)', async () => {
+    // RATE_LIMITED comes back exit 0 / HTTP 200 with an error node — no 403/429 in
+    // stderr. runBatchQuery flags the GhError explicitly (not a fake status), and
+    // the plugin catch must still classify it as rate-limit and trip the breaker.
+    const body = JSON.stringify({ data: { e0: { pullRequest: null } }, errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded' }] })
+    const spawn = stubGhSpawn(body, 0)
+    try {
+      const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
+      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
+    } finally { spawn.mockRestore() }
   })
 
   it('empty watch list returns before the breaker block — an idle plugin never resets the breaker', async () => {
