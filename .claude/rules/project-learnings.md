@@ -47,3 +47,7 @@ Patching only the enumerated sites leaves the defect adjacent — the reviewer n
 ## 2026-05-23: §#422 corollary: blocker for literal-verbatim drift; pragmatic for substitution-target drift (from #553)
 
 The key question: is the spelling literally what the operator or reader sees, or is it a template field they replace before use? Substitution targets (`<your-nick>`, `<project>`, `<I>`) substitute away — drift is real but not blocking, a followup is enough. Literal-verbatim surfaces (flag names like `--ask-irc`, channel pattern shape like `#<project>-leads`, CLI structure the operator copies directly) → strict corollary, promote to blocker. Concrete: `<answerer>` vs `<your-nick>` drift in #553 is substitution-target → followup (#557). A drift in `--ask-irc` spelling across surfaces would be literal-verbatim → blocker.
+
+## 2026-07-01: Permbot/permission changes require live parity testing against the native TUI (from #598)
+
+Any change to classifyBash or the permission-prompt relay needs an empirical pass against the native TUI before merge — spawn a bare agent with no --perm-irc, and confirm via tool_use→tool_result gap which commands actually hold. We require absolute parity with default TUI holds, no more and no less. The #598 fix (a regex narrowing) initially cited a control command as a "hold" that turned out to be a different over-fire (cd-compound), not a real hold — only checking against the bare TUI caught it. Cross-ref §#449 (verify external-system behavior empirically) / §#591 (a recovery probe must start from the actual failure state).
