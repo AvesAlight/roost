@@ -958,6 +958,8 @@ cmd_spawn() {
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators
   # never set this — the success path prints "data dir: ..." after tmux comes up.
+  # This does not stop the spawn: on the success path, tmux and claude still
+  # start for real — tests must tear those sessions down themselves.
   if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
     echo "  data dir (preflight): ${ROOST_DATA_DIR}"
   else
