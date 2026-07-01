@@ -1123,13 +1123,50 @@ cmd_spawn() {
   echo "  shutdown with: roost shutdown ${nick}"
 }
 
-# Read the single-line `description:` from an agent file's YAML frontmatter.
-# Prints nothing if there's no frontmatter description.
+# Read the `description:` from an agent file's YAML frontmatter and fold it
+# to one line for roster display. Handles both plain scalars
+# (`description: text`) and YAML block scalars (`description: >` folded or
+# `description: |` literal, with optional chomp/indent indicators) — a block
+# scalar's continuation lines are joined with spaces rather than printing the
+# bare `>`/`|`. Prints nothing if there's no frontmatter description.
 _agent_description() {
   awk '
-    /^---[[:space:]]*$/ { fence++; next }
-    fence == 1 && /^description:[[:space:]]*/ { sub(/^description:[[:space:]]*/, ""); print; exit }
-    fence >= 2 { exit }
+    {
+      if (in_block) {
+        if ($0 ~ /^---[[:space:]]*$/) { exit }
+        if (block_indent < 0) {
+          if ($0 ~ /^[[:space:]]*$/) { next }
+          line = $0
+          sub(/^[[:space:]]*/, "", line)
+          block_indent = length($0) - length(line)
+        }
+        indent = 0
+        while (substr($0, indent + 1, 1) == " ") indent++
+        if (indent < block_indent) { exit }
+        content = substr($0, block_indent + 1)
+        result = (result == "" ? content : result " " content)
+        next
+      }
+      if ($0 ~ /^---[[:space:]]*$/) {
+        fence++
+        if (fence >= 2) exit
+        next
+      }
+      if (fence == 1 && $0 ~ /^description:[[:space:]]*/) {
+        val = $0
+        sub(/^description:[[:space:]]*/, "", val)
+        if (val ~ /^[>|][0-9]*[+-]?[[:space:]]*$/) {
+          in_block = 1
+          block_indent = -1
+          result = ""
+          next
+        }
+        print val
+        exit
+      }
+      if (fence >= 2) exit
+    }
+    END { if (in_block && result != "") print result }
   ' "$1"
 }
 
