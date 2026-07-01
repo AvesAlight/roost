@@ -811,6 +811,24 @@ describe('token-usage', () => {
       expect(rep.out).not.toContain('~')
     })
 
+    it('marks a mixed measured+estimated nick with ~ on the combined figure', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // One measured session (1m turn_duration) and one estimated session
+      // (no turn_duration, 3m44s assistant span). The combined figure sums to
+      // 4m44s and — because any estimated file taints the total — carries `~`.
+      await writeSessionFile(d, 'measured.jsonl', 'roost-mix', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 60_000 },
+      ])
+      await writeSessionFile(d, 'estimated.jsonl', 'roost-mix', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_1' },
+        { ts: '2026-05-16T11:03:44Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_2' },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '394', 'roost-mix']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('~4m44s api')
+    })
+
     it('per-model line shows cache_w_5m and cache_w_1h as separate columns', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })

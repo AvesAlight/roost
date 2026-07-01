@@ -258,9 +258,12 @@ interface ScanResult {
 // turn_duration rows and the summed api time is a misleading 0s. When a file
 // has no turn_duration rows at all, we estimate its api time from the span of
 // its assistant-usage timestamps instead, and flag it (`apiDurationEstimated`)
-// so the report marks the figure with a leading `~`. The span is the same
-// quantity turn_duration measures — busy wall-time across the turn, tool exec
-// included — because a single-turn agent never idles. Presence of even one
+// so the report marks the figure with a leading `~`. The span measures the
+// same thing turn_duration does — busy wall-time across the turn, tool exec
+// included, not per-token latency — because a single-turn agent never idles.
+// It runs slightly low: the span starts at the first response, so it omits
+// that response's own prompt→first-token latency. Fine for a `~` figure.
+// Presence of even one
 // turn_duration row (in-window) suppresses the estimate, so a forked/resumed
 // transcript whose turn_durations dedup away against another file does not
 // double-count: its rows are still "seen," just billed to the file that got
