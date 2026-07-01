@@ -120,8 +120,9 @@ roost status
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
 `--mcp-config`, `-p|--prompt-file`, `--cwd`, and `--` (everything
 after forwards to claude verbatim). Default channel is `#roost`;
-default model is `opus` (Opus 4.7 — required for `--permission-mode
-auto`, which the wrapper always passes).
+default model is `opus` (Opus 4.8). Opus and sonnet default to
+`--permission-mode auto`; everything else (haiku, or any unrecognized
+model) defaults to `acceptEdits`.
 
 `spawn` also injects `--append-system-prompt-file` naming the joined
 channels as legitimate user-instruction sources, so the auto-mode
@@ -181,18 +182,19 @@ process. The module holds a second IRC connection on a stable nick
 `no` / `allow` / `deny`; anything else or a 30s timeout falls through
 to the terminal prompt.
 
-Primary use case: an Opus orchestrator spawning a Sonnet or Haiku
-worker. Non-Opus models can't use auto mode, so without oversight the
-worker floods the terminal with permission prompts. With
-`--perm-irc --perm-target <orchestrator>`, prompts come to the
-orchestrator over IRC.
+Primary use case: an Opus orchestrator spawning a worker that isn't
+running auto mode — haiku or an unrecognized model (acceptEdits by
+default), or any model held in acceptEdits via `--permission-mode` for
+oversight. Without oversight, that worker floods the terminal with
+permission prompts. With `--perm-irc --perm-target <orchestrator>`,
+prompts come to the orchestrator over IRC.
 
 ```bash
-# Opus orchestrator gates a sonnet worker's tool calls:
-roost spawn worker-123-A -c '#pr-123' -m sonnet \
+# Opus orchestrator gates a sonnet worker held in acceptEdits for oversight:
+roost spawn worker-123-A -c '#pr-123' -m sonnet --permission-mode acceptEdits \
   --perm-irc --perm-target orchestrator
 
-# Human operator gates a haiku worker:
+# Human operator gates a haiku worker (acceptEdits by default):
 roost spawn scratch-h -c '#sandbox' -m haiku \
   --perm-irc --perm-target mynick
 ```

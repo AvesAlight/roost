@@ -160,15 +160,27 @@ else
 fi
 teardown
 
-# -- Test 9: --model sonnet (no agent) → acceptEdits -------------------------
-# Non-opus models get acceptEdits via the model-derived default.
+# -- Test 9: --model sonnet (no agent) → auto --------------------------------
+# Sonnet gets auto via the model-derived default, same as opus.
 
 setup
 out="$("${ROOST_BIN}" spawn testnick --model sonnet --cwd "$TDIR" 2>&1 || true)"
-if echo "$out" | grep -q "permission-mode: acceptEdits"; then
-  ok "--model sonnet → permission-mode: acceptEdits"
+if echo "$out" | grep -q "permission-mode: auto"; then
+  ok "--model sonnet → permission-mode: auto"
 else
-  fail "--model sonnet → permission-mode: acceptEdits" "out=$out"
+  fail "--model sonnet → permission-mode: auto" "out=$out"
+fi
+teardown
+
+# -- Test 9a: --model haiku (no agent) → acceptEdits --------------------------
+# Haiku (and anything unrecognized) is the tier that still gets acceptEdits.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --model haiku --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: acceptEdits"; then
+  ok "--model haiku → permission-mode: acceptEdits"
+else
+  fail "--model haiku → permission-mode: acceptEdits" "out=$out"
 fi
 teardown
 

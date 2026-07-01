@@ -50,8 +50,8 @@ Defaults:
 - permission mode: with `--agent`, the wrapper passes nothing and claude
   code reads `permissionMode:` natively from the agent frontmatter; with
   `--model` (or the default opus), the wrapper defaults to `auto` for opus
-  and `acceptEdits` for everything else. Explicit `--permission-mode` wins
-  in both paths.
+  and sonnet, `acceptEdits` for everything else (haiku, or any unrecognized
+  model). Explicit `--permission-mode` wins in both paths.
 - cache-ttl: no wrapper default — if unset, neither env var is
   injected and claude-code's native cache behavior applies. Caller
   picks per session. Translated to claude-code's env knobs in the
@@ -71,7 +71,8 @@ The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:roost-irc` flag, the
 `--permission-mode` flag (with `--agent`, defers to the agent's native
 `permissionMode:` frontmatter; with `--model`, smart-defaulted: `auto` for
-opus, `acceptEdits` otherwise; explicit `--permission-mode` wins either
+opus and sonnet, `acceptEdits` for everything else (haiku, or any
+unrecognized model); explicit `--permission-mode` wins either
 way), and the dev-channels confirmation prompt that appears on first
 launch.
 
@@ -100,19 +101,20 @@ else falls through to the regular terminal prompt as a safety net.
 Permbot lifecycle is the MCP's lifecycle — `roost shutdown` reaps it
 along with the worker.
 
-Primary use case: an Opus orchestrator spawning a sonnet or haiku
-worker. Non-Opus workers default to `acceptEdits` (edits auto-approved;
-Bash and MCP still gate). With `--perm-irc --perm-target <orchestrator>`,
-those remaining prompts come to the orchestrator over IRC instead of
-blocking the terminal. Same pattern works for a human at any roost-attached
-IRC client.
+Primary use case: an Opus orchestrator spawning a worker that isn't
+running auto mode — haiku or an unrecognized model default to
+`acceptEdits` (edits auto-approved; Bash and MCP still gate), or any
+model can be held in `acceptEdits` via `--permission-mode` for oversight.
+With `--perm-irc --perm-target <orchestrator>`, those remaining prompts
+come to the orchestrator over IRC instead of blocking the terminal. Same
+pattern works for a human at any roost-attached IRC client.
 
 ```bash
-# Opus orchestrator gates a sonnet worker's tool calls:
-roost spawn worker-123-A -c '#pr-123' -m sonnet \
+# Opus orchestrator gates a sonnet worker held in acceptEdits for oversight:
+roost spawn worker-123-A -c '#pr-123' -m sonnet --permission-mode acceptEdits \
   --perm-irc --perm-target orchestrator
 
-# Human operator gates a haiku worker:
+# Human operator gates a haiku worker (acceptEdits by default):
 roost spawn scratch-h -c '#sandbox' -m haiku \
   --perm-irc --perm-target mynick
 ```
