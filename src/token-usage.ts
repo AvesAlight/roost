@@ -6,6 +6,9 @@
 //     opus-4-7:    7.4k in / 63.4k out / 17.5M cache_r / 644.6k cache_w  ($14.38, miss: 128.3k ($1.42) [tools_changed 16.2k ($0.18) · system_changed 112.1k ($1.24)])
 //     sonnet-4-6:  1.2k in /  2.4k out /  300k cache_r /   8.5k cache_w  ($0.42)
 //
+// A leading `~` on the api figure (e.g. `~3m44s api`) marks an estimate —
+// see scanFile's api-time note for when and why we fall back to one.
+//
 // Sessions are matched by the MCP banner produced by src/mcp-banner.ts —
 // every roost-spawned session writes `You are connected to IRC as nick
 // "<nick>"` into its MCP instructions payload, which lands verbatim (with
@@ -21,9 +24,11 @@
 //
 //   report <stateDir> <issue> <nick>...
 //     For each nick: walk all matching session transcripts, sum per-model
-//     token usage + API duration (from `system/turn_duration` rows), pull
-//     wall duration from the first/last in-scope turn timestamps, and
-//     price each model via src/pricing.ts. If a snapshot exists for
+//     token usage + API duration (from `system/turn_duration` rows, or —
+//     when a transcript has none — an estimate from its assistant-row
+//     timestamp span, rendered with a leading `~`), pull wall duration from
+//     the first/last in-scope turn timestamps, and price each model via
+//     src/pricing.ts. If a snapshot exists for
 //     <issue>+<nick>, only turns with `timestamp > snapshot_at` count;
 //     otherwise the full cumulative is reported (which matches per-issue
 //     for ephemeral nicks like workers/reviewers that live one issue).
@@ -60,6 +65,10 @@ interface NickReport {
   // Value: miss token counts split by creation tier (from the same row's cache_creation block).
   missByModel: Map<string, Map<string, MissCounts>>
   apiDurationMs: number
+  // True when any contributing transcript lacked `turn_duration` rows and we
+  // estimated its api time from the assistant-row timestamp span instead.
+  // Renders the nick's api figure with a leading `~`.
+  apiDurationEstimated: boolean
   wallFirst?: string
   wallLast?: string
   // Number of contributing JSONL transcript files (parent + each subagent file
@@ -82,6 +91,7 @@ function emptyReport(): NickReport {
     byModel: new Map(),
     missByModel: new Map(),
     apiDurationMs: 0,
+    apiDurationEstimated: false,
     transcripts: 0,
     unknownModels: new Set(),
     files: [],
@@ -213,6 +223,9 @@ interface ScanResult {
   byModel: Map<string, UsageCounts>
   missByModel: Map<string, Map<string, MissCounts>>
   apiDurationMs: number
+  // True when this file had no `turn_duration` rows and apiDurationMs was
+  // estimated from the assistant-row timestamp span (see scanFile's api-time note).
+  apiDurationEstimated: boolean
   wallFirst?: string
   wallLast?: string
   unknownModels: Set<string>
@@ -237,10 +250,35 @@ interface ScanResult {
 // compaction. It carries preTokens/postTokens + durationMs but no per-
 // field usage block — the summary API call itself isn't logged. We
 // aggregate the markers so the gap is visible, without pricing it.
+//
+// API-time note: Claude Code writes a `turn_duration` row only when a turn
+// completes and control returns to the prompt. An agent that runs a single
+// turn and exits at the end of it (a reviewer: spawn → review → exit)
+// terminates before that row is flushed, so its transcript carries zero
+// turn_duration rows and the summed api time is a misleading 0s. When a file
+// has no turn_duration rows at all, we estimate its api time from the span of
+// its assistant-usage timestamps instead, and flag it (`apiDurationEstimated`)
+// so the report marks the figure with a leading `~`. The span measures the
+// same thing turn_duration does — busy wall-time across the turn, tool exec
+// included, not per-token latency — because a single-turn agent never idles.
+// It runs slightly low: the span starts at the first response, so it omits
+// that response's own prompt→first-token latency. Fine for a `~` figure.
+// Presence of even one
+// turn_duration row (in-window) suppresses the estimate, so a forked/resumed
+// transcript whose turn_durations dedup away against another file does not
+// double-count: its rows are still "seen," just billed to the file that got
+// there first.
 function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<string>, seenCompactUuids: Set<string>, sinceTs?: string, countSidechain = false): ScanResult {
   const byModel = new Map<string, UsageCounts>()
   const missByModel = new Map<string, Map<string, MissCounts>>()
-  let apiDurationMs = 0
+  let measuredApiMs = 0
+  // Whether any in-window turn_duration row was present (counted or deduped).
+  // Its presence — not its contribution — is what suppresses the span estimate.
+  let sawTurnDuration = false
+  // First/last timestamps of contributing assistant-usage rows, for the
+  // span estimate used when the file has no turn_duration rows.
+  let assistantFirst: string | undefined
+  let assistantLast: string | undefined
   let wallFirst: string | undefined
   let wallLast: string | undefined
   const unknownModels = new Set<string>()
@@ -302,7 +340,11 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
         if (costFor(row.message.model, tokens) === null) {
           unknownModels.add(row.message.model)
         }
-        if (ts) trackLocal(ts)
+        if (ts) {
+          trackLocal(ts)
+          if (!assistantFirst || ts < assistantFirst) assistantFirst = ts
+          if (!assistantLast || ts > assistantLast) assistantLast = ts
+        }
         contributed = true
       }
 
@@ -340,11 +382,15 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
     // Dedup by uuid so forked/resumed transcripts don't re-add the same
     // turn; within a single file these uuids are already unique.
     if (row.type === 'system' && row.subtype === 'turn_duration' && typeof row.durationMs === 'number') {
+      // Set before the dedup check: a turn_duration row that dedups away
+      // still proves this session's turns were recorded, so it must suppress
+      // the span estimate here (the file that counted it owns the time).
+      sawTurnDuration = true
       if (row.uuid) {
         if (seenTurnUuids.has(row.uuid)) continue
         seenTurnUuids.add(row.uuid)
       }
-      apiDurationMs += row.durationMs
+      measuredApiMs += row.durationMs
       if (ts) trackLocal(ts)
       contributed = true
       continue
@@ -368,7 +414,18 @@ function scanFile(text: string, seenRequestIds: Set<string>, seenTurnUuids: Set<
       continue
     }
   }
-  return { byModel, missByModel, apiDurationMs, wallFirst, wallLast, unknownModels, contributed, compactions }
+  // No turn_duration rows but real assistant work → estimate api time from
+  // the assistant-usage span (see this function's api-time note). Otherwise
+  // trust the measured sum.
+  let apiDurationMs = measuredApiMs
+  let apiDurationEstimated = false
+  if (!sawTurnDuration && assistantFirst && assistantLast) {
+    const span = Date.parse(assistantLast) - Date.parse(assistantFirst)
+    apiDurationMs = span > 0 ? span : 0
+    apiDurationEstimated = true
+  }
+
+  return { byModel, missByModel, apiDurationMs, apiDurationEstimated, wallFirst, wallLast, unknownModels, contributed, compactions }
 }
 
 export async function collectForNick(
@@ -401,6 +458,7 @@ export async function collectForNick(
     for (const [m, u] of result.byModel) addToUsageMap(report.byModel, m, u)
     addToMissMap(report.missByModel, result.missByModel)
     report.apiDurationMs += result.apiDurationMs
+    if (result.apiDurationEstimated) report.apiDurationEstimated = true
     if (result.wallFirst) trackTs(report, result.wallFirst)
     if (result.wallLast) trackTs(report, result.wallLast)
     for (const m of result.unknownModels) report.unknownModels.add(m)
@@ -423,6 +481,7 @@ export async function collectForNick(
       for (const [m, u] of subResult.byModel) addToUsageMap(report.byModel, m, u)
       addToMissMap(report.missByModel, subResult.missByModel)
       report.apiDurationMs += subResult.apiDurationMs
+      if (subResult.apiDurationEstimated) report.apiDurationEstimated = true
       if (subResult.wallFirst) trackTs(report, subResult.wallFirst)
       if (subResult.wallLast) trackTs(report, subResult.wallLast)
       for (const m of subResult.unknownModels) report.unknownModels.add(m)
@@ -533,7 +592,9 @@ function formatNick(nick: string, r: NickReport): string {
   const missPart = totalMissCost === null || totalMissCost > 0
     ? ` (${fmtDollars(totalMissCost)} miss)`
     : ''
-  const head = `${nick}: ${fmtDollars(totalCost)}${missPart} · ${fmtDuration(r.apiDurationMs)} api / ${fmtDuration(wallMs)} wall`
+  // Leading `~` marks an estimated api figure — see scanFile's api-time note.
+  const apiStr = `${r.apiDurationEstimated ? '~' : ''}${fmtDuration(r.apiDurationMs)}`
+  const head = `${nick}: ${fmtDollars(totalCost)}${missPart} · ${apiStr} api / ${fmtDuration(wallMs)} wall`
   // Compaction is its own line — surface what the JSONL gives us (pre/post
   // context size, total wall) and explicitly call out that the API call's
   // input/output isn't captured. See scanFile's "Known gaps" comment.

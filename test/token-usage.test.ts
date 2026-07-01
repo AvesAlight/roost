@@ -384,6 +384,92 @@ describe('token-usage', () => {
       expect(r.apiDurationMs).toBe(4000)
     })
 
+    it('estimates api time from the assistant-row span when a file has no turn_duration rows', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Reviewer shape: real assistant usage, no turn_duration companions
+      // (the session exits at the end of its single turn before the row flushes).
+      await writeSessionFile(d, 's.jsonl', 'roost-reviewer-1', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_1' },
+        { ts: '2026-05-16T10:01:30Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_2' },
+        { ts: '2026-05-16T10:03:44Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_3' },
+      ])
+      const r = await collectForNick('roost-reviewer-1', projects)
+      // span 10:00:00 → 10:03:44 = 3m44s = 224_000 ms.
+      expect(r.apiDurationMs).toBe(224_000)
+      expect(r.apiDurationEstimated).toBe(true)
+    })
+
+    it('keeps the measured sum (no estimate) when turn_duration rows are present', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Two 5-minute-apart turns, each with a short turn_duration. The measured
+      // sum (5s) is nothing like the 5m assistant span — proves we take the sum.
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 4000 },
+        { ts: '2026-05-16T10:05:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 1000 },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.apiDurationMs).toBe(5000)
+      expect(r.apiDurationEstimated).toBe(false)
+    })
+
+    it('estimates a forked no-turn_duration transcript once, not per file', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Realistic reviewer fork: both files carry the same turns (shared
+      // requestIds). The second file's assistant rows dedup away, so only the
+      // first file's span is estimated — no double-count.
+      const turns = [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_1' },
+        { ts: '2026-05-16T10:03:44Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_2' },
+      ]
+      await writeSessionFile(d, 'fork-a.jsonl', 'roost-x', turns)
+      await writeSessionFile(d, 'fork-b.jsonl', 'roost-x', turns)
+      const r = await collectForNick('roost-x', projects)
+      expect(r.apiDurationMs).toBe(224_000)
+      expect(r.apiDurationEstimated).toBe(true)
+    })
+
+    it('a re-logged turn_duration suppresses a file\'s span estimate (defensive, no double-count)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Pathological shape: both files re-log the same turn_duration (shared
+      // uuid) but carry distinct fresh assistant spans. The deduped
+      // turn_duration must still suppress the second file's span estimate, so
+      // a measured 4s never gets a 10m guess stacked on top — regardless of
+      // scan order (both files hold the marker, both spans are equal).
+      await writeSessionFile(d, 'fork-a.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_a1', apiDurationMs: 4000, turnUuid: 'turn_shared' },
+        { ts: '2026-05-16T10:10:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_a2' },
+      ])
+      await writeSessionFile(d, 'fork-b.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_b1', apiDurationMs: 4000, turnUuid: 'turn_shared' },
+        { ts: '2026-05-16T10:10:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_b2' },
+      ])
+      const r = await collectForNick('roost-x', projects)
+      expect(r.apiDurationMs).toBe(4000)
+      expect(r.apiDurationEstimated).toBe(false)
+    })
+
+    it('estimates a subagent file with no turn_duration and marks the parent nick estimated', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // Parent has a measured turn; subagent runs turns but emits no
+      // turn_duration → its span is estimated and the nick figure is marked.
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-worker-99', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 2000 },
+      ])
+      await writeSubagentFile(parent, 'aaa7777777777777a', [
+        { ts: '2026-05-16T10:01:00Z', model: 'claude-haiku-4-5-20251001', input: 200, output: 75, requestId: 'req_s1' },
+        { ts: '2026-05-16T10:02:00Z', model: 'claude-haiku-4-5-20251001', input: 50, output: 25, requestId: 'req_s2' },
+      ])
+      const r = await collectForNick('roost-worker-99', projects)
+      // Parent measured 2s + subagent span 1m (10:01 → 10:02) = 62_000 ms.
+      expect(r.apiDurationMs).toBe(62_000)
+      expect(r.apiDurationEstimated).toBe(true)
+    })
+
     it('bills subagent transcripts under a matched parent to the parent nick', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
@@ -698,6 +784,49 @@ describe('token-usage', () => {
       expect(rep.out).toContain('($2.25)')
       // Wall: 10:00 → 10:30 = 30m. API: 60+30 = 90s = 1m30s.
       expect(rep.out).toContain('1m30s api / 30m00s wall')
+    })
+
+    it('marks an estimated api figure with a leading ~', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // No turn_duration rows → api estimated from the 3m44s assistant span.
+      await writeSessionFile(d, 's.jsonl', 'roost-reviewer-7', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_1' },
+        { ts: '2026-05-16T10:03:44Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_2' },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '394', 'roost-reviewer-7']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('~3m44s api / 3m44s wall')
+    })
+
+    it('leaves a measured api figure unmarked (no ~)', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-worker-7', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 90_000 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '394', 'roost-worker-7']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('1m30s api')
+      expect(rep.out).not.toContain('~')
+    })
+
+    it('marks a mixed measured+estimated nick with ~ on the combined figure', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      // One measured session (1m turn_duration) and one estimated session
+      // (no turn_duration, 3m44s assistant span). The combined figure sums to
+      // 4m44s and — because any estimated file taints the total — carries `~`.
+      await writeSessionFile(d, 'measured.jsonl', 'roost-mix', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5, apiDurationMs: 60_000 },
+      ])
+      await writeSessionFile(d, 'estimated.jsonl', 'roost-mix', [
+        { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_1' },
+        { ts: '2026-05-16T11:03:44Z', model: 'claude-opus-4-7', input: 10, output: 100, requestId: 'req_2' },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '394', 'roost-mix']))
+      expect(rep.result).toBe(0)
+      expect(rep.out).toContain('~4m44s api')
     })
 
     it('per-model line shows cache_w_5m and cache_w_1h as separate columns', async () => {
