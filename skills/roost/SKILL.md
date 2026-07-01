@@ -69,7 +69,7 @@ Defaults:
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels` flag (`server:plugin:roost:roost-irc`
-for a plugin/brew install, `server:roost-irc` for a bare dev-checkout MCP —
+for a plugin/brew install, `server:roost-irc` for a bare dev-checkout MCP;
 see "Debugging a failed spawn" in README.md for detail), the
 `--permission-mode` flag (with `--agent`, defers to the agent's native
 `permissionMode:` frontmatter; with `--model`, smart-defaulted: `auto` for
