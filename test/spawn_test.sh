@@ -754,9 +754,11 @@ teardown
 # -- Test 38: --perm-irc + auto (skip-set) → skip diagnostic printed -----------
 # An operator who passes --perm-irc expecting bash prompts gets none on the
 # skip path with no explanation. A one-line diagnostic closes that gap.
+# Pinned to an explicit --permission-mode so this keeps exercising the skip
+# path even if the bare-spawn model/mode default ever moves off auto.
 
 setup
-out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode auto --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
 data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 if echo "$out" | grep -qF "bash permission relay: skipped — auto never blocks on bash"; then
   ok "--perm-irc + auto: skip diagnostic printed with resolved mode"
@@ -809,7 +811,7 @@ teardown
 
 # -- Test 42: duplicate basename in two subdirs of the same root resolves ------
 # deterministically to the sorted-first path ------------------------------------
-# #629: the --agent resolver moved off `find | head -1` (nondeterministic) onto
+# The --agent resolver moved off `find | head -1` (nondeterministic) onto
 # _resolvable_agents' sorted output. Two files sharing a basename in different
 # subdirs of the same scope must resolve to the same, stable winner every time.
 # Raw spawn output isn't diffable across runs (it embeds a fresh mktemp path
