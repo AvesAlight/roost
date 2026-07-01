@@ -90,8 +90,13 @@ export function classifyBash(command: string): BashMissKind | null {
 
   // CC bashMissKind: "cd-multi-positional".
   // zsh `cd OLD NEW`. Two non-flag non-operator words after cd, terminated
-  // by end-of-string or a shell operator.
-  if (new RegExp(`${CD_START}cd\\s+(?!-)[^\\s&|;<>(){}]+\\s+(?!-)[^\\s&|;<>(){}]+(?=\\s|$|[&|;<>])`).test(command)) {
+  // by end-of-string or a shell operator. Internal gaps are horizontal
+  // whitespace ([ \t], not \s): the positional char class already excludes
+  // every statement separator except newline/CR, so pinning the gaps to
+  // spaces/tabs keeps both positionals inside one statement. A multi-line
+  // script whose first line is `cd <dir>` is then not misread as a two-arg
+  // cd spanning the newline into the next command.
+  if (new RegExp(`${CD_START}cd[ \\t]+(?!-)[^\\s&|;<>(){}]+[ \\t]+(?!-)[^\\s&|;<>(){}]+(?=\\s|$|[&|;<>])`).test(command)) {
     return 'cd-multi-positional'
   }
 
