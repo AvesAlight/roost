@@ -924,6 +924,11 @@ cmd_spawn() {
   esac
   if [ "${perm_irc}" -eq 1 ] && [ "${_skip_bash_hook}" -eq 0 ]; then
     pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-pretooluse-prompt\"}]}")
+  elif [ "${perm_irc}" -eq 1 ] && [ "${_skip_bash_hook}" -eq 1 ]; then
+    # Otherwise an operator who passed --perm-irc expecting bash prompts sees
+    # none and has no way to tell "resolved mode never blocks on bash" apart
+    # from "something's broken".
+    echo "  bash permission relay: skipped — ${hook_perm_mode} never blocks on bash"
   fi
   if [ "${ask_routing}" -eq 1 ]; then
     pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-ask-question\"}]}")

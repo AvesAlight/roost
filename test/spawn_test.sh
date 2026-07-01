@@ -751,7 +751,63 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test 38: duplicate basename in two subdirs of the same root resolves ------
+# -- Test 38: --perm-irc + auto (skip-set) → skip diagnostic printed -----------
+# An operator who passes --perm-irc expecting bash prompts gets none on the
+# skip path with no explanation. A one-line diagnostic closes that gap.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if echo "$out" | grep -qF "bash permission relay: skipped — auto never blocks on bash"; then
+  ok "--perm-irc + auto: skip diagnostic printed with resolved mode"
+else
+  fail "--perm-irc + auto: skip diagnostic printed with resolved mode" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 39: --perm-irc + bypassPermissions (skip-set) → diagnostic names it --
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode bypassPermissions --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if echo "$out" | grep -qF "bash permission relay: skipped — bypassPermissions never blocks on bash"; then
+  ok "--perm-irc + bypassPermissions: skip diagnostic names the resolved mode"
+else
+  fail "--perm-irc + bypassPermissions: skip diagnostic names the resolved mode" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 40: --perm-irc + acceptEdits (relay wired) → no skip diagnostic ------
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode acceptEdits --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if ! echo "$out" | grep -q "bash permission relay: skipped"; then
+  ok "--perm-irc + acceptEdits: no skip diagnostic (relay is wired)"
+else
+  fail "--perm-irc + acceptEdits: no skip diagnostic (relay is wired)" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 41: no --perm-irc → no skip diagnostic even in skip-set mode ---------
+# Scope check: the diagnostic is scoped to --perm-irc sessions — without a
+# relay to begin with, there's nothing to explain the absence of.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$out" | grep -q "bash permission relay: skipped"; then
+  ok "no --perm-irc: no skip diagnostic even though default mode is auto"
+else
+  fail "no --perm-irc: no skip diagnostic even though default mode is auto" "out=$out"
+fi
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 42: duplicate basename in two subdirs of the same root resolves ------
 # deterministically to the sorted-first path ------------------------------------
 # #629: the --agent resolver moved off `find | head -1` (nondeterministic) onto
 # _resolvable_agents' sorted output. Two files sharing a basename in different
