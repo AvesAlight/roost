@@ -252,7 +252,7 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.mention).toBe('true')
   })
 
-  // ---- seenBy attribute (issue #626) ----------------------------------------
+  // ---- seenBy attribute -------------------------------------------------------
 
   it('peer→channel message carries seenBy with both nicks', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-in-seen1')
