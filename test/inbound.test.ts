@@ -251,4 +251,30 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
 
     expect(n.meta.mention).toBe('true')
   })
+
+  // ---- seenBy attribute (issue #626) ----------------------------------------
+
+  it('peer→channel message carries seenBy with both nicks', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-seen1')
+    const peer = await connectPeer(ergo, 'ip-in-seen1-peer')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-seen1' } })
+    await peer.joinChannel('#ip-in-seen1')
+    await mcp.waitForNotification(eventPredicate('join', { channel: '#ip-in-seen1', sender: 'ip-in-seen1-peer' }))
+
+    peer.say('#ip-in-seen1', 'seen by test')
+    const n = await mcp.waitForNotification(messagePredicate({ channel: '#ip-in-seen1', content: 'seen by test' }))
+
+    expect(n.meta.seenBy).toContain('ip-in-seen1')
+    expect(n.meta.seenBy).toContain('ip-in-seen1-peer')
+  })
+
+  it('peer→DM has no seenBy attribute', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-in-seen2')
+    const peer = await connectPeer(ergo, 'ip-in-seen2-peer')
+
+    peer.say('ip-in-seen2', 'dm no seenby')
+    const n = await mcp.waitForNotification(messagePredicate({ isDirect: true, content: 'dm no seenby' }))
+
+    expect(n.meta.seenBy).toBeUndefined()
+  })
 })

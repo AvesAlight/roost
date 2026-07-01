@@ -38,6 +38,24 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     expect(Number(n3.meta.seq)).toBeGreaterThan(Number(n2.meta.seq))
   })
 
+  // Join-history auto-replay path (issue #626) — distinct from the live-push and
+  // channel_history-tool paths tested elsewhere; confirms seenBy is populated even
+  // though the message arrives via emitAutoReplayBatch rather than the live handler.
+  it('pre-join historical replay carries seenBy with both nicks', async () => {
+    const peer = await connectPeer(ergo, 'ip-hist-seen-peer1')
+    const mcp = await startMcpInProcess(ergo, 'ip-hist-seen-mcp1')
+
+    await peer.joinChannel('#ip-hist-seenby1')
+    peer.say('#ip-hist-seenby1', 'seenby-before-join')
+    await sleep(200)
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-seenby1' } })
+
+    const n = await mcp.waitForNotification(messagePredicate({ historical: true, content: 'seenby-before-join' }))
+    expect(n.meta.seenBy).toContain('ip-hist-seen-mcp1')
+    expect(n.meta.seenBy).toContain('ip-hist-seen-peer1')
+  })
+
   it('messages sent while parted arrive as historical on rejoin', async () => {
     const peer = await connectPeer(ergo, 'ip-hist-peer2')
     const mcp = await startMcpInProcess(ergo, 'ip-hist-mcp2')

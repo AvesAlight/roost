@@ -183,6 +183,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(text).toContain('historical="true"')
     expect(text).toContain('>shape-test-msg<')
     expect(text).not.toContain('mention="true"')
+    expect(text).toContain('seenBy="ip-histshape1, ip-histshape1-peer"')
   })
 
   it('channel_history emits mention="true" for DMs', async () => {
@@ -196,6 +197,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     const text = toolText(hist)
     expect(text).toContain('isDirect="true"')
     expect(text).toContain('mention="true"')
+    expect(text).not.toContain('seenBy')
   })
 
   it('channel_history emits mention="true" for nick mention in channel', async () => {
