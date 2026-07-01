@@ -684,6 +684,27 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 37: --agent frontmatter with CRLF line endings + permissionMode:auto --
+# CRLF delimiter/value lines carry a trailing \r that a naive awk match would
+# miss entirely (silently falling through to the conservative wired default
+# instead of correctly recognizing auto). Confirms the \r-stripping in the
+# frontmatter peek makes the CRLF file parse identically to its LF equivalent.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\r\nname: crlfauto\r\ndescription: crlf agent\r\nmodel: opus\r\npermissionMode: auto\r\n---\r\nbody\r\n' > "$TDIR/.claude/agents/crlfauto.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent crlfauto --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir/roost-settings.json"; then
+  ok "--agent CRLF frontmatter permissionMode:auto + --perm-irc: bash hook skipped"
+else
+  fail "--agent CRLF frontmatter permissionMode:auto + --perm-irc: bash hook skipped" "data_dir=$data_dir settings=$(cat "$data_dir/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

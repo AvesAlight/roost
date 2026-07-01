@@ -154,9 +154,10 @@ Options:
                              Useful for non-Opus models that can't use auto
                              mode. Lifecycle = MCP lifecycle. The bash
                              PreToolUse relay is skipped when the resolved
-                             permission mode is one that never blocks on
-                             bash (auto, bypassPermissions) — nothing to
-                             relay there, so wiring it would only add noise.
+                             permission mode never blocks on bash — nothing
+                             to relay there, so wiring it would only add
+                             noise. See cmd_spawn's skip-set for which modes
+                             qualify.
   --perm-target NICK         Operator nick to DM for permission prompts.
                              Required when --perm-irc is set.
   --ask-irc CHANNEL          Routes AskUserQuestion calls to a channel
@@ -755,9 +756,16 @@ cmd_spawn() {
     # still omits --permission-mode entirely so claude reads the frontmatter
     # natively (see CLAUDE.md, "Agent frontmatter").
     agent_perm_mode="$(awk '
+      { sub(/\r$/, "") }
       NR==1 && $0=="---" { infm=1; next }
       infm && $0=="---" { exit }
-      infm && /^permissionMode:/ { sub(/^permissionMode:[[:space:]]*/, ""); print; exit }
+      infm && /^permissionMode:/ {
+        v = $0
+        sub(/^permissionMode:[[:space:]]*/, "", v)
+        sub(/[[:space:]]+$/, "", v)
+        print v
+        exit
+      }
     ' "${_agent_path}")"
   fi
   # Model-derived default for the --model path only. When --agent is set,
