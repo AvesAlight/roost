@@ -730,6 +730,19 @@ describe('token-usage', () => {
       expect(rep.err).toContain('add to src/pricing.ts')
     })
 
+    it('dated model id (Claude Code snapshot form) prices via the bare-alias fallback, not $?', async () => {
+      const d = join(projects, '-p')
+      await mkdir(d, { recursive: true })
+      await writeSessionFile(d, 's.jsonl', 'roost-x', [
+        { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-8-20260615', input: 1000, output: 500 },
+      ])
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-x']))
+      // Opus 4.8: 1000 × $5 + 500 × $25 = 5000 + 12500 = 17500 / 1M = $0.0175 → $0.02
+      expect(rep.out).toContain('roost-x: $0.02')
+      expect(rep.out).toMatch(/opus-4-8-20260615:.*\$0\.02/)
+      expect(rep.err).toBe('')
+    })
+
     it('exits non-zero when any nick matches zero session files', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
