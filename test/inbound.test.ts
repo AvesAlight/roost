@@ -264,8 +264,10 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     peer.say('#ip-in-seen1', 'seen by test')
     const n = await mcp.waitForNotification(messagePredicate({ channel: '#ip-in-seen1', content: 'seen by test' }))
 
-    expect(n.meta.seenBy).toContain('ip-in-seen1')
-    expect(n.meta.seenBy).toContain('ip-in-seen1-peer')
+    // exact match, not toContain — ip-in-seen1 is a prefix of ip-in-seen1-peer,
+    // so a substring check on the shorter nick is subsumed by the longer one
+    // and wouldn't independently catch the agent's own nick going missing.
+    expect(n.meta.seenBy).toBe('ip-in-seen1, ip-in-seen1-peer')
   })
 
   it('peer→DM has no seenBy attribute', async () => {
