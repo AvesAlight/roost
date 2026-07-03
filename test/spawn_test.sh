@@ -184,6 +184,18 @@ else
 fi
 teardown
 
+# -- Test 9b: --model fable (no agent) → auto ---------------------------------
+# Fable gets auto via the model-derived default, same as opus and sonnet.
+
+setup
+out="$("${ROOST_BIN}" spawn testnick --model fable --cwd "$TDIR" 2>&1 || true)"
+if echo "$out" | grep -q "permission-mode: auto"; then
+  ok "--model fable → permission-mode: auto"
+else
+  fail "--model fable → permission-mode: auto" "out=$out"
+fi
+teardown
+
 # -- Test 10: --model opus explicit → auto -----------------------------------
 # Explicit opus also gets auto (sanity).
 

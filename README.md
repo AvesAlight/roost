@@ -120,7 +120,7 @@ roost status
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
 `--mcp-config`, `-p|--prompt-file`, `--cwd`, and `--` (everything
 after forwards to claude verbatim). Default channel is `#roost`;
-default model is `opus` (Opus 4.8). Opus and sonnet default to
+default model is `opus` (Opus 4.8). Fable, opus, and sonnet default to
 `--permission-mode auto`; everything else (haiku, or any unrecognized
 model) defaults to `acceptEdits`.
 
