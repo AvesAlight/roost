@@ -71,10 +71,9 @@ export function isLinearNotFoundError(e: unknown): boolean {
   )
 }
 
-// Per-tick handle. Constructor takes the client so tests can inject a mock
-// (mirrors `GhScraper(client, agentLogins)`). The client argument is typed
-// against the minimal `LinearGraphqlSurface` so unit tests don't have to
-// stand up a full `LinearClient` instance.
+// Per-tick handle. Constructor takes the client so tests can inject a mock.
+// The client argument is typed against the minimal `LinearGraphqlSurface` so
+// unit tests don't have to stand up a full `LinearClient` instance.
 export class LinearScraper {
   constructor(private readonly client: LinearGraphqlSurface) {}
 

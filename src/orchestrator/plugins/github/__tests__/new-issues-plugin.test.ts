@@ -25,7 +25,7 @@ function baseConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
 }
 
 // Plugin owns its GhClient; intercept fetch at the prototype seam — same shape
-// the sibling plugin tests use for scrapeIssue/scrapePr.
+// the sibling plugin tests use for fetchPrsBatch/fetchIssuesBatch.
 function stubFetch(response: GhRepoIssue[]) {
   return spyOn(GhClient.prototype, 'fetchRepoOpenIssues').mockResolvedValue(response)
 }
