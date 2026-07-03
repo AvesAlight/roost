@@ -753,25 +753,24 @@ cmd_spawn() {
     # claude searches .claude/agents/ recursively by filename.
     # plugin-tree agents (${ROOST_DIR}/agents/) are NOT searched by claude; operators
     # must run `roost init` to copy/symlink them into <cwd>/.claude/agents/.
-    local _agent_found=0
-    local _search_root
-    for _search_root in "${cwd}/.claude/agents" "${HOME}/.claude/agents"; do
-      if [ -d "${_search_root}" ]; then
-        _agent_path="$(find -L "${_search_root}" -name "${agent}.md" -type f 2>/dev/null | head -1)"
-        if [ -n "${_agent_path}" ]; then
-          _agent_found=1
-          break
-        fi
+    # _resolvable_agents is the single search impl: this lookup, the not-found
+    # error's "available agents" list, and `roost agents` all read the same
+    # computation, so they can't disagree about what --agent accepts.
+    local _resolvable _an _as _ap
+    _resolvable="$(_resolvable_agents "${cwd}")"
+    while IFS=$'\t' read -r _an _as _ap; do
+      [ -n "${_an}" ] || continue
+      if [ "${_an}" = "${agent}" ]; then
+        _agent_path="${_ap}"
+        break
       fi
-    done
-    if [ "${_agent_found}" -eq 0 ]; then
+    done <<< "${_resolvable}"
+    if [ -z "${_agent_path}" ]; then
       echo "error: agent '${agent}' not found; searched:" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${cwd}" "${agent}" >&2
       printf '  %s/.claude/agents/**/%s.md\n' "${HOME}" "${agent}" >&2
-      # Same resolver set 'roost agents' lists, so the two never disagree about
-      # what --agent accepts.
       local _avail
-      _avail="$(_resolvable_agents "${cwd}" | cut -f1 | paste -sd' ' -)"
+      _avail="$(printf '%s' "${_resolvable}" | cut -f1 | paste -sd' ' -)"
       if [ -n "${_avail}" ]; then
         echo "available agents: ${_avail}" >&2
       else
@@ -925,6 +924,11 @@ cmd_spawn() {
   esac
   if [ "${perm_irc}" -eq 1 ] && [ "${_skip_bash_hook}" -eq 0 ]; then
     pretooluse_entries+=("{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-pretooluse-prompt\"}]}")
+  elif [ "${perm_irc}" -eq 1 ] && [ "${_skip_bash_hook}" -eq 1 ]; then
+    # Otherwise an operator who passed --perm-irc expecting bash prompts sees
+    # none and has no way to tell "resolved mode never blocks on bash" apart
+    # from "something's broken".
+    echo "  bash permission relay: skipped — ${hook_perm_mode} never blocks on bash"
   fi
   if [ "${ask_routing}" -eq 1 ]; then
     pretooluse_entries+=("{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec irc-ask-question\"}]}")
@@ -954,6 +958,8 @@ cmd_spawn() {
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators
   # never set this — the success path prints "data dir: ..." after tmux comes up.
+  # This does not stop the spawn: on the success path, tmux and claude still
+  # start for real — tests must tear those sessions down themselves.
   if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
     echo "  data dir (preflight): ${ROOST_DATA_DIR}"
   else
@@ -1124,13 +1130,50 @@ cmd_spawn() {
   echo "  shutdown with: roost shutdown ${nick}"
 }
 
-# Read the single-line `description:` from an agent file's YAML frontmatter.
-# Prints nothing if there's no frontmatter description.
+# Read the `description:` from an agent file's YAML frontmatter and fold it
+# to one line for roster display. Handles both plain scalars
+# (`description: text`) and YAML block scalars (`description: >` folded or
+# `description: |` literal, with optional chomp/indent indicators) — a block
+# scalar's continuation lines are joined with spaces rather than printing the
+# bare `>`/`|`. Prints nothing if there's no frontmatter description.
 _agent_description() {
   awk '
-    /^---[[:space:]]*$/ { fence++; next }
-    fence == 1 && /^description:[[:space:]]*/ { sub(/^description:[[:space:]]*/, ""); print; exit }
-    fence >= 2 { exit }
+    {
+      if (in_block) {
+        if ($0 ~ /^---[[:space:]]*$/) { exit }
+        if (block_indent < 0) {
+          if ($0 ~ /^[[:space:]]*$/) { next }
+          line = $0
+          sub(/^[[:space:]]*/, "", line)
+          block_indent = length($0) - length(line)
+        }
+        indent = 0
+        while (substr($0, indent + 1, 1) == " ") indent++
+        if (indent < block_indent) { exit }
+        content = substr($0, block_indent + 1)
+        result = (result == "" ? content : result " " content)
+        next
+      }
+      if ($0 ~ /^---[[:space:]]*$/) {
+        fence++
+        if (fence >= 2) exit
+        next
+      }
+      if (fence == 1 && $0 ~ /^description:[[:space:]]*/) {
+        val = $0
+        sub(/^description:[[:space:]]*/, "", val)
+        if (val ~ /^[>|][0-9]*[+-]?[[:space:]]*$/) {
+          in_block = 1
+          block_indent = -1
+          result = ""
+          next
+        }
+        print val
+        exit
+      }
+      if (fence >= 2) exit
+    }
+    END { if (in_block && result != "") print result }
   ' "$1"
 }
 
@@ -1146,10 +1189,14 @@ _shipped_agents() {
   done
 }
 
-# Emit "name<TAB>scope" for every agent `roost spawn --agent` would resolve
-# from a given working dir, mirroring the resolver in cmd_spawn: project
-# .claude/agents shadows user ~/.claude/agents, deduped by basename. This is
-# exactly the spawnable set — the not-found error lists the same computation.
+# Emit "name<TAB>scope<TAB>path" for every agent `roost spawn --agent` can
+# resolve from a given working dir: project .claude/agents shadows user
+# ~/.claude/agents, deduped by basename. This IS the resolver — cmd_spawn's
+# --agent lookup, the not-found error's "available agents" list, and `roost
+# agents` all read this one computation, so they can't drift from each other.
+# Within a root, duplicate basenames in different subdirs tie-break on sorted
+# path (deterministic); across roots, project always shadows user regardless
+# of path, via loop order below.
 _resolvable_agents() {
   local _cwd="$1"
   local _root _scope _f _name
@@ -1162,7 +1209,7 @@ _resolvable_agents() {
       _name="$(basename "${_f}" .md)"
       case "${_seen}" in *" ${_name} "*) continue ;; esac
       _seen="${_seen}${_name} "
-      printf '%s\t%s\n' "${_name}" "${_scope}"
+      printf '%s\t%s\t%s\n' "${_name}" "${_scope}" "${_f}"
     done < <(find -L "${_root}" -name '*.md' -type f 2>/dev/null | sort)
   done
 }
@@ -1210,7 +1257,7 @@ cmd_agents() {
     while IFS=$'\t' read -r _rn _; do
       [ "${#_rn}" -gt "${_rw}" ] && _rw="${#_rn}"
     done <<< "${resolvable}"
-    while IFS=$'\t' read -r _rn _rs; do
+    while IFS=$'\t' read -r _rn _rs _; do
       printf '  %-*s  (%s)\n' "${_rw}" "${_rn}" "${_rs}"
     done <<< "${resolvable}"
   elif [ "${show_all}" -eq 1 ]; then
