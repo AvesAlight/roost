@@ -11,6 +11,14 @@
 // print `$?` for that nick and stderr-warn the unknown ID rather than
 // silently defaulting to a rate that could mislead in either direction.
 //
+// Claude Code often records a dated snapshot id (e.g.
+// `claude-opus-4-8-20260115`) rather than the bare alias. costFor/missCostFor
+// look up the exact id first, then fall back to the id with its trailing
+// `-YYYYMMDD` stamp stripped — so a new dated snapshot of an already-priced
+// model resolves without a manual table entry. A literal entry still wins
+// over the fallback, so a one-off pinned rate for a specific snapshot stays
+// possible.
+//
 // Cache-write tier: Anthropic bills 5-minute cache writes at 1.25x the base
 // input rate and 1-hour cache writes at 2x. The JSONL `usage.cache_creation`
 // nested object breaks these out (`ephemeral_5m_input_tokens` and
@@ -27,25 +35,22 @@ export interface ModelPricing {
 }
 
 export const PRICING: Readonly<Record<string, ModelPricing>> = {
-  // Opus 4.x current generation — $5 base input (with date-stamped variant Claude Code records). Opus 4.1 and earlier use the $15 tier.
-  'claude-opus-4-8':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 }, // exact-match: dated variants (claude-opus-4-8-YYYYMMDD) each need an explicit entry
+  // Opus 4.x current generation — $5 base input. Opus 4.1 and earlier use the $15 tier.
+  'claude-opus-4-8':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-7':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-6':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-5':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
-  'claude-opus-4-5-20251101':   { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-1':            { input: 15, output: 75, cache_creation_5m: 18.75, cache_creation_1h: 30,  cache_read: 1.50 },
   // Sonnet 5 — separate pricing tier from Sonnet 4.x below. Introductory pricing
   // through 2026-08-31 (this row). Standard pricing from 2026-09-01: input 3,
   // output 15, cache_creation_5m 3.75, cache_creation_1h 6, cache_read 0.30 — flip
   // this entry to those numbers then.
-  'claude-sonnet-5':                { input: 2,  output: 10, cache_creation_5m: 2.50,  cache_creation_1h: 4,   cache_read: 0.20 }, // exact-match: dated variants (claude-sonnet-5-YYYYMMDD) each need an explicit entry
-  // Sonnet 4.x (with date-stamped variant Claude Code records).
+  'claude-sonnet-5':                { input: 2,  output: 10, cache_creation_5m: 2.50,  cache_creation_1h: 4,   cache_read: 0.20 },
+  // Sonnet 4.x.
   'claude-sonnet-4-6':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   'claude-sonnet-4-5':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
-  'claude-sonnet-4-5-20250929':     { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
-  // Haiku 4.5 (with date-stamped variant Claude Code records).
+  // Haiku 4.5.
   'claude-haiku-4-5':          { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
-  'claude-haiku-4-5-20251001': { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
 }
 
 // IDs that appear in transcripts but don't represent real API spend —
@@ -60,11 +65,22 @@ export interface UsageCounts {
   cache_read: number
 }
 
+// Strips a trailing `-YYYYMMDD` snapshot date stamp, e.g.
+// `claude-opus-4-8-20260115` -> `claude-opus-4-8`. Ids without a trailing
+// 8-digit group pass through unchanged.
+export function normalizeModelId(model: string): string {
+  return model.replace(/-\d{8}$/, '')
+}
+
+function lookupPricing(model: string): ModelPricing | undefined {
+  return PRICING[model] ?? PRICING[normalizeModelId(model)]
+}
+
 // Returns the USD cost for the given counts at the given model's rates, or
 // `null` if the model is unknown (caller surfaces `$?` and warns).
 export function costFor(model: string, u: UsageCounts): number | null {
   if (SKIPPED_MODELS.has(model)) return 0
-  const p = PRICING[model]
+  const p = lookupPricing(model)
   if (!p) return null
   return (
     p.input * u.input
@@ -81,7 +97,7 @@ export function costFor(model: string, u: UsageCounts): number | null {
 // premium is computed at the correct rate per tier). Returns `null` for unknown models.
 export function missCostFor(model: string, tokens5m: number, tokens1h: number): number | null {
   if (SKIPPED_MODELS.has(model)) return 0
-  const p = PRICING[model]
+  const p = lookupPricing(model)
   if (!p) return null
   return (
     (p.cache_creation_5m - p.cache_read) * tokens5m

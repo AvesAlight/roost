@@ -24,6 +24,7 @@ export interface WireMessageMeta {
   chunkCount?: string
   historical?: 'true'
   mention?: 'true'
+  seenBy?: string
 }
 
 export interface WireReminderMeta {

@@ -751,6 +751,98 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 38: --perm-irc + auto (skip-set) → skip diagnostic printed -----------
+# An operator who passes --perm-irc expecting bash prompts gets none on the
+# skip path with no explanation. A one-line diagnostic closes that gap.
+# Pinned to an explicit --permission-mode so this keeps exercising the skip
+# path even if the bare-spawn model/mode default ever moves off auto.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode auto --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if echo "$out" | grep -qF "bash permission relay: skipped — auto never blocks on bash"; then
+  ok "--perm-irc + auto: skip diagnostic printed with resolved mode"
+else
+  fail "--perm-irc + auto: skip diagnostic printed with resolved mode" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 39: --perm-irc + bypassPermissions (skip-set) → diagnostic names it --
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode bypassPermissions --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if echo "$out" | grep -qF "bash permission relay: skipped — bypassPermissions never blocks on bash"; then
+  ok "--perm-irc + bypassPermissions: skip diagnostic names the resolved mode"
+else
+  fail "--perm-irc + bypassPermissions: skip diagnostic names the resolved mode" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 40: --perm-irc + acceptEdits (relay wired) → no skip diagnostic ------
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --permission-mode acceptEdits --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if ! echo "$out" | grep -q "bash permission relay: skipped"; then
+  ok "--perm-irc + acceptEdits: no skip diagnostic (relay is wired)"
+else
+  fail "--perm-irc + acceptEdits: no skip diagnostic (relay is wired)" "out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 41: no --perm-irc → no skip diagnostic even in skip-set mode ---------
+# Scope check: the diagnostic is scoped to --perm-irc sessions — without a
+# relay to begin with, there's nothing to explain the absence of.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if ! echo "$out" | grep -q "bash permission relay: skipped"; then
+  ok "no --perm-irc: no skip diagnostic even though default mode is auto"
+else
+  fail "no --perm-irc: no skip diagnostic even though default mode is auto" "out=$out"
+fi
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 42: duplicate basename in two subdirs of the same root resolves ------
+# deterministically to the sorted-first path ------------------------------------
+# The --agent resolver moved off `find | head -1` (nondeterministic) onto
+# _resolvable_agents' sorted output. Two files sharing a basename in different
+# subdirs of the same scope must resolve to the same, stable winner every time.
+# Raw spawn output isn't diffable across runs (it embeds a fresh mktemp path
+# each time), so the signal is which file's frontmatter got read: give the
+# sorted-first file (a/dupe.md) permissionMode:auto and the sorted-last file
+# (z/dupe.md) permissionMode:acceptEdits, then check the --perm-irc bash-hook
+# skip decision — driven by whichever file the resolver actually opened —
+# agrees across two independent invocations.
+
+setup
+mkdir -p "$TDIR/.claude/agents/a" "$TDIR/.claude/agents/z"
+printf -- '---\ndescription: winner (a sorts first)\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/a/dupe.md"
+printf -- '---\ndescription: loser (z sorts last)\npermissionMode: acceptEdits\n---\nbody\n' > "$TDIR/.claude/agents/z/dupe.md"
+out1="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent dupe --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir1="$(echo "$out1" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+tmux kill-session -t "roost-testnick" 2>/dev/null || true
+out2="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent dupe --perm-irc --perm-target opnick --cwd "$TDIR" 2>&1 || true)"
+data_dir2="$(echo "$out2" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ -n "$data_dir1" ] && [ -f "$data_dir1/roost-settings.json" ] \
+    && [ -n "$data_dir2" ] && [ -f "$data_dir2/roost-settings.json" ] \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir1/roost-settings.json" \
+    && ! grep -qF '"matcher":"Bash"' "$data_dir2/roost-settings.json"; then
+  ok "duplicate basename in same scope: resolves deterministically (sorted-first file's frontmatter wins) across repeated calls"
+else
+  fail "duplicate basename in same scope: resolves deterministically (sorted-first file's frontmatter wins) across repeated calls" \
+    "data_dir1=$data_dir1 settings1=$(cat "$data_dir1/roost-settings.json" 2>/dev/null) data_dir2=$data_dir2 settings2=$(cat "$data_dir2/roost-settings.json" 2>/dev/null)"
+fi
+[ -n "$data_dir1" ] && rm -rf "$data_dir1"
+[ -n "$data_dir2" ] && rm -rf "$data_dir2"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
