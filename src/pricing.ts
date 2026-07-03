@@ -3,7 +3,7 @@
 // to estimate cost from token counts.
 //
 // Source: https://platform.claude.com/docs/en/about-claude/pricing
-// Retrieved: 2026-06-30
+// Retrieved: 2026-07-03
 //
 // All rates are USD per 1M tokens. When Anthropic publishes new rates or a
 // model ID we don't yet recognize appears in transcripts, bump this table
@@ -35,6 +35,8 @@ export interface ModelPricing {
 }
 
 export const PRICING: Readonly<Record<string, ModelPricing>> = {
+  // Fable 5 — higher-powered tier above Opus, priced accordingly.
+  'claude-fable-5':             { input: 10, output: 50, cache_creation_5m: 12.50, cache_creation_1h: 20,  cache_read: 1.00 },
   // Opus 4.x current generation — $5 base input. Opus 4.1 and earlier use the $15 tier.
   'claude-opus-4-8':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-7':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },

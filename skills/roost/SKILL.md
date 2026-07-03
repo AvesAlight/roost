@@ -49,9 +49,9 @@ Defaults:
 - model: `opus`
 - permission mode: with `--agent`, the wrapper passes nothing and claude
   code reads `permissionMode:` natively from the agent frontmatter; with
-  `--model` (or the default opus), the wrapper defaults to `auto` for opus
-  and sonnet, `acceptEdits` for everything else (haiku, or any unrecognized
-  model). Explicit `--permission-mode` wins in both paths.
+  `--model` (or the default opus), the wrapper defaults to `auto` for fable,
+  opus, and sonnet, `acceptEdits` for everything else (haiku, or any
+  unrecognized model). Explicit `--permission-mode` wins in both paths.
 - cache-ttl: no wrapper default — if unset, neither env var is
   injected and claude-code's native cache behavior applies. Caller
   picks per session. Translated to claude-code's env knobs in the
@@ -71,7 +71,7 @@ The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:plugin:roost:roost-irc` flag, the
 `--permission-mode` flag (with `--agent`, defers to the agent's native
 `permissionMode:` frontmatter; with `--model`, smart-defaulted: `auto` for
-opus and sonnet, `acceptEdits` for everything else (haiku, or any
+fable, opus, and sonnet, `acceptEdits` for everything else (haiku, or any
 unrecognized model); explicit `--permission-mode` wins either
 way), and the dev-channels confirmation prompt that appears on first
 launch.

@@ -16,7 +16,7 @@ The commands, skills, and agents this plugin ships (`prompts/`, `agents/`, `skil
 
 ## Agent frontmatter
 
-Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatter — `auto` for opus and sonnet agents, `acceptEdits` (or `default`) for everything else (haiku, or any unrecognized model). Claude Code reads `permissionMode:` natively on project- and user-scope agents, so the wrapper deliberately does not *pass* it — the `--agent` path of `bin/roost spawn` omits `--permission-mode` entirely and relies on the frontmatter. If a new shipped agent needs a different mode, declare it in the file — don't add a special case to the wrapper.
+Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatter — `auto` for fable, opus, and sonnet agents, `acceptEdits` (or `default`) for everything else (haiku, or any unrecognized model). Claude Code reads `permissionMode:` natively on project- and user-scope agents, so the wrapper deliberately does not *pass* it — the `--agent` path of `bin/roost spawn` omits `--permission-mode` entirely and relies on the frontmatter. If a new shipped agent needs a different mode, declare it in the file — don't add a special case to the wrapper.
 
 `bin/roost spawn` does locally peek at the frontmatter's `permissionMode:` value for one narrow reason: deciding whether to wire the `--perm-irc` bash PreToolUse relay, which is pointless noise under permission modes that never block on bash. That peek never reaches claude and doesn't change what's passed on the `--agent` path — it's a separate, read-only decision from the "don't parse it" rule above.
 

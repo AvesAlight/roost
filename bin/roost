@@ -126,8 +126,8 @@ the user's login shell (from \$SHELL) so .bash_profile / .zprofile / ~/.config/f
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
 from the agent's frontmatter. With --model (or the default opus) the
-wrapper defaults to auto for opus and sonnet, acceptEdits for everything
-else (haiku, or any unrecognized model).
+wrapper defaults to auto for fable, opus, and sonnet, acceptEdits for
+everything else (haiku, or any unrecognized model).
 Explicit --permission-mode always wins. --perm-irc's bash relay reads this
 same resolved mode (peeking at agent frontmatter locally when needed) to
 skip wiring itself for modes that never block on bash — see --perm-irc below.
@@ -176,8 +176,8 @@ Options:
                              wrapper passes nothing (claude code reads
                              \`permissionMode:\` natively from the agent
                              frontmatter); with --model the wrapper defaults
-                             to auto for opus and sonnet, acceptEdits for
-                             everything else (haiku, or any unrecognized
+                             to auto for fable, opus, and sonnet, acceptEdits
+                             for everything else (haiku, or any unrecognized
                              model). Explicit --permission-mode always wins.
   --cache-ttl TTL            Prompt-cache TTL: \`5m\` or \`1h\`. Translated
                              to claude-code's env-var knobs in the spawned
@@ -800,7 +800,7 @@ cmd_spawn() {
   # code read `permissionMode:` natively from the agent's frontmatter.
   if [ -z "${permission_mode}" ] && [ -z "${agent}" ]; then
     case "${model}" in
-      *opus*|*sonnet*) permission_mode="auto" ;;
+      *fable*|*opus*|*sonnet*) permission_mode="auto" ;;
       *) permission_mode="acceptEdits" ;;
     esac
   fi
