@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure } from '../github-api.js'
+import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure, rollupToCiState, rateLimitKind, mapBatchOutcomes } from '../github-api.js'
 import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
 
 function mkErr(stderr: string): GhError {
@@ -322,6 +322,77 @@ describe('describeReadFailure', () => {
   it('falls back to the first stderr line for an unrecognized error', () => {
     expect(describeReadFailure('gh: some brand new failure mode\nmore detail')).toBe('gh error: gh: some brand new failure mode')
     expect(describeReadFailure('')).toBe('gh read failed')
+  })
+})
+
+describe('rateLimitKind', () => {
+  it('classifies secondary (burst/abuse) vs primary (budget) from stderr', () => {
+    expect(rateLimitKind(mkErr('gh: HTTP 403: You have exceeded a secondary rate limit'))).toBe('secondary')
+    expect(rateLimitKind(mkErr('gh: HTTP 403: abuse detection mechanism triggered'))).toBe('secondary')
+    // Primary budget exhaustion and a bare 429 are not tagged secondary.
+    expect(rateLimitKind(mkErr('gh: HTTP 403: API rate limit exceeded for user ID 1'))).toBe('primary')
+    expect(rateLimitKind(mkErr('gh: HTTP 429: Too Many Requests'))).toBe('primary')
+  })
+})
+
+describe('rollupToCiState', () => {
+  it('maps the statusCheckRollup enum onto the ci_state vocabulary', () => {
+    expect(rollupToCiState('SUCCESS')).toBe('SUCCESS')
+    expect(rollupToCiState('FAILURE')).toBe('FAILURE')
+    expect(rollupToCiState('ERROR')).toBe('FAILURE')     // commit-status error folds into FAILURE
+    expect(rollupToCiState('PENDING')).toBe('PENDING')
+    expect(rollupToCiState('EXPECTED')).toBe('PENDING')  // required-but-unreported folds into PENDING
+    expect(rollupToCiState(null)).toBeNull()             // a commit with no checks
+    expect(rollupToCiState(undefined)).toBeNull()
+    // An unknown future enum maps to null (no terminal signal), never a false SUCCESS/FAILURE.
+    expect(rollupToCiState('SOME_NEW_STATE')).toBeNull()
+  })
+})
+
+describe('mapBatchOutcomes (per-alias isolation)', () => {
+  const entries = [
+    { repo: 'org/repo', number: 1 },
+    { repo: 'org/repo', number: 2 },
+    { repo: 'org/repo', number: 3 },
+  ]
+  const pickPr = (d: Record<string, unknown> | null | undefined) => (d as { pullRequest?: unknown } | null | undefined)?.pullRequest
+
+  it('isolates a dead alias — siblings resolve, only the dead one is a miss', () => {
+    // gh returns a partial body: e1 failed (NOT_FOUND) but e0/e2 resolved.
+    const env = {
+      data: {
+        e0: { pullRequest: { number: 1, title: 'A' } },
+        e1: { pullRequest: null },
+        e2: { pullRequest: { number: 3, title: 'C' } },
+      },
+      errors: [{ type: 'NOT_FOUND', message: 'Could not resolve to a PullRequest with the number of 2.', path: ['e1', 'pullRequest'] }],
+    }
+    const out = mapBatchOutcomes(env, entries, pickPr)
+    expect(out.get('org/repo#1')).toEqual({ ok: true, node: { number: 1, title: 'A' } })
+    expect(out.get('org/repo#3')).toEqual({ ok: true, node: { number: 3, title: 'C' } })
+    const dead = out.get('org/repo#2')!
+    expect(dead.ok).toBe(false)
+    if (!dead.ok) expect(dead.reason).toBe('deleted/renamed (not found)')
+  })
+
+  it('a null alias with no matching error is a plain not-found miss', () => {
+    const env = { data: { e0: { pullRequest: null } }, errors: [] }
+    const dead = mapBatchOutcomes(env, [{ repo: 'org/repo', number: 1 }], pickPr).get('org/repo#1')!
+    expect(dead.ok).toBe(false)
+    if (!dead.ok) {
+      expect(dead.reason).toBe('not found (null result)')
+      expect(dead.logDetail).toBe('null result (not found)')
+    }
+  })
+
+  it('a FORBIDDEN alias surfaces the permission-denied reason', () => {
+    const env = {
+      data: { e0: { pullRequest: null } },
+      errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible', path: ['e0'] }],
+    }
+    const dead = mapBatchOutcomes(env, [{ repo: 'org/repo', number: 1 }], pickPr).get('org/repo#1')!
+    expect(dead.ok).toBe(false)
+    if (!dead.ok) expect(dead.reason).toBe('permission denied (forbidden), check token scopes')
   })
 })
 

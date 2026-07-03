@@ -8,7 +8,16 @@
 import { WARN_COOLDOWN_MS } from '../_rate-limit.js'
 
 // Escalating backoff windows, capped at the last. One step per open window.
+// Two schedules keyed on rate-limit kind (see rateLimitKind):
+//   primary   — core-budget exhaustion; the reset is minutes-to-an-hour away,
+//               so back off long.
+//   secondary — the burst/abuse limiter fired with budget still remaining; GH
+//               clears these in ~a minute, so a 5m floor over-quiets the feed.
+//               Start at 1m and escalate only if we keep tripping it.
 export const BACKOFF_SCHEDULE_MS: ReadonlyArray<number> = [5, 10, 30, 60].map(m => m * 60_000)
+export const SECONDARY_BACKOFF_SCHEDULE_MS: ReadonlyArray<number> = [1, 2, 5, 10].map(m => m * 60_000)
+
+export type RateLimitKind = 'primary' | 'secondary'
 
 // Consecutive failed ticks on one watched entry before readEntry treats it as
 // likely-dead rather than flapping. Gates two behaviors off the same count:
@@ -30,12 +39,15 @@ export class RateLimitBreaker {
   // Open (or escalate) the breaker. Advances at most once per window: all GH
   // plugins rate-limit together within a tick, so the first trip sets `until`
   // in the future and concurrent trips this tick see now < until and no-op.
-  // Returns the new window (ms) when it actually advanced, else null.
-  trip(now: number): number | null {
+  // `schedule` selects the window length by rate-limit kind (primary vs
+  // secondary); the escalation level is shared across kinds — repeated trips of
+  // any kind back off further. Returns the new window (ms) when it actually
+  // advanced, else null.
+  trip(now: number, schedule: ReadonlyArray<number> = BACKOFF_SCHEDULE_MS): number | null {
     if (this.level > 0 && now < this.until) return null
-    const idx = Math.min(this.level, BACKOFF_SCHEDULE_MS.length - 1)
-    const window = BACKOFF_SCHEDULE_MS[idx]
-    this.level = Math.min(this.level + 1, BACKOFF_SCHEDULE_MS.length)
+    const idx = Math.min(this.level, schedule.length - 1)
+    const window = schedule[idx]
+    this.level = Math.min(this.level + 1, schedule.length)
     this.until = now + window
     return window
   }
@@ -61,9 +73,12 @@ export class RateLimitBreaker {
   get openUntil(): number { return this.until }
 }
 
-// One-line notice posted when the breaker opens or escalates.
-export function formatBackoffNotice(windowMs: number): string {
-  return `[dispatcher] GH rate-limited, backing off ${Math.round(windowMs / 60_000)}m`
+// One-line notice posted when the breaker opens or escalates. Names the kind so
+// an operator can tell a burst-limit blip (secondary) from budget exhaustion
+// (primary) without digging the log.
+export function formatBackoffNotice(windowMs: number, kind: RateLimitKind = 'primary'): string {
+  const label = kind === 'secondary' ? 'secondary rate-limited' : 'rate-limited'
+  return `[dispatcher] GH ${label}, backing off ${Math.round(windowMs / 60_000)}m`
 }
 
 // Cooldown-gated note for an entry whose read keeps failing past the
@@ -75,4 +90,15 @@ export function formatBackoffNotice(windowMs: number): string {
 export function formatReadFailureNote(pluginName: string, key: string, recoveryCmd: string, reason: string): string {
   const mins = Math.round(WARN_COOLDOWN_MS / 60_000)
   return `[dispatcher] ${pluginName}: ${key} read failing: ${reason}. suppressing ${mins}m; recover: ${recoveryCmd}`
+}
+
+// Cooldown-gated note for a whole-batch read failure — a transient that took the
+// entire query down (persistent 5xx, top-level GraphQL error), not one bad alias.
+// Unlike a per-entry failure there's no single entry to recover, so it names the
+// reason and the suppression window and leaves it there; the operator's cue is
+// that the whole feed has stalled. One throttled warn beats the silent-outage
+// hole and the N-entry flood alike.
+export function formatBatchFailureNote(pluginName: string, entryCount: number, reason: string): string {
+  const mins = Math.round(WARN_COOLDOWN_MS / 60_000)
+  return `[dispatcher] ${pluginName}: batch read failing (${entryCount} entries): ${reason}. suppressing ${mins}m`
 }

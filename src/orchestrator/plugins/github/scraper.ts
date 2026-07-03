@@ -1,14 +1,16 @@
-// Scraper — fetch a PR/issue snapshot and diff against the previous one.
-// Public surface: `GhScraper` (per-tick handle), `computePrEvents` /
-// `computeIssueEvents` (tested directly), `*Internal` snapshot types (diff.ts).
+// Scraper — build a PR/issue snapshot from a batched GraphQL node and diff it
+// against the previous one. Public surface: `snapshotPrFromNode` /
+// `snapshotIssueFromNode` (node → snapshot + events, called by the plugins),
+// `computePrEvents` / `computeIssueEvents` (tested directly), `*Internal`
+// snapshot types (diff.ts).
 //
 // prevSnap meanings:
 //   undefined → seeding (global --seed or no prior state); emit nothing
 //   null      → new to watch list; emit seed/backlog events
 //   PrSnap    → normal tick; diff and emit change events
 import type { PrSnap, IssueSnap } from './types.js'
-import type { GhClient, GhComment, GhReview } from './github-api.js'
-import { labelNames } from './github-api.js'
+import type { GhComment, GhReview, GhPrNode, GhIssueNode } from './github-api.js'
+import { labelNames, rollupToCiState } from './github-api.js'
 import { diffPr, diffIssue, type OrchestratorEvent } from './diff.js'
 
 // ---- Snapshot types & helpers ---------------------------------------------
@@ -45,37 +47,61 @@ function indexById<T extends { id?: number }>(items: T[]): Record<number, T> {
   return out
 }
 
-async function snapshotPr(
-  client: GhClient,
-  repo: string,
-  number: number,
-  prevSnap?: PrSnap | null
-): Promise<PrSnapInternal> {
-  const view = await client.fetchPr(repo, number)
-  const [reviewComments, convComments, reviews] = await Promise.all([
-    client.fetchPrReviewComments(repo, number),
-    client.fetchPrConversationComments(repo, number),
-    client.fetchPrReviews(repo, number),
-  ])
+// ---- GraphQL node → snapshot (pure) ---------------------------------------
+//
+// The batched GraphQL read (GhClient.fetchPrsBatch/fetchIssuesBatch) returns raw
+// nodes; these rebuild the REST-shaped internal snapshots the diff consumes.
+// GraphQL databaseId maps to the numeric ids the diff keys on, so PrSnap/
+// IssueSnap and diff.ts stay unchanged (no state migration).
 
-  const curHead = view.head_oid
-  // Re-fetch linked issues only on head_oid change — saves a graphql call per tick.
-  const linkedIssues = prevSnap && prevSnap.head_oid === curHead
-    ? prevSnap.linked_issues ?? []
-    : await client.fetchPrLinkedIssues(repo, number)
-
+export function buildPrSnapshot(repo: string, number: number, node: GhPrNode): PrSnapInternal {
+  const reviewComments: GhComment[] = (node.reviewThreads?.nodes ?? [])
+    .flatMap(t => t.comments?.nodes ?? [])
+    .map(c => ({
+      id: c.databaseId,
+      html_url: c.url,
+      user: { login: c.author?.login },
+      body: c.body,
+      path: c.path ?? undefined,
+      line: c.line ?? undefined,
+      original_line: c.originalLine ?? undefined,
+    }))
+  const convComments: GhComment[] = (node.comments?.nodes ?? []).map(c => ({
+    id: c.databaseId,
+    html_url: c.url,
+    user: { login: c.author?.login },
+    body: c.body,
+  }))
+  const reviews: GhReview[] = (node.reviews?.nodes ?? []).map(r => ({
+    id: r.databaseId,
+    html_url: r.url,
+    user: { login: r.author?.login },
+    body: r.body,
+    state: r.state,
+  }))
+  // closingIssuesReferences can cross repos; sort by (repo, number) for a stable
+  // routing order (the diff and channel fan-out key on it).
+  const linkedIssues = (node.closingIssuesReferences?.nodes ?? [])
+    .filter(n => n.number != null && n.repository?.nameWithOwner)
+    .map(n => ({ repo: n.repository!.nameWithOwner as string, number: n.number as number }))
+    .sort((a, b) => a.repo === b.repo ? a.number - b.number : a.repo.localeCompare(b.repo))
+  const rollup = node.statusRollup?.nodes?.[0]?.commit?.statusCheckRollup?.state
   return {
     repo,
     number,
-    title: view.title,
-    url: view.url,
-    head_ref: view.head_ref,
-    head_oid: curHead,
-    is_draft: view.is_draft,
-    merged: view.merged_at != null,
-    state: view.state,
-    labels: labelNames(view.labels),
-    ci_state: view.ci_state,
+    title: node.title ?? null,
+    url: node.url ?? null,
+    head_ref: node.headRefName ?? null,
+    head_oid: node.headRefOid ?? null,
+    is_draft: Boolean(node.isDraft),
+    merged: Boolean(node.merged),
+    // Kept uppercase to preserve the REST-shaped value diff.ts keys on: it tests
+    // `state === 'CLOSED'` gated by the `merged` boolean (never 'MERGED') and
+    // nothing renders state to a channel, so GraphQL's extra MERGED — which REST
+    // never emitted — changes nothing.
+    state: node.state ?? null,
+    labels: labelNames(node.labels?.nodes),
+    ci_state: rollupToCiState(rollup),
     linked_issues: linkedIssues,
     seen_review_comment_ids: sortedIds(reviewComments),
     seen_conversation_comment_ids: sortedIds(convComments),
@@ -86,18 +112,22 @@ async function snapshotPr(
   }
 }
 
-async function snapshotIssue(client: GhClient, repo: string, number: number): Promise<IssueSnapInternal> {
-  const [issue, comments] = await Promise.all([
-    client.fetchIssue(repo, number),
-    client.fetchIssueComments(repo, number),
-  ])
+export function buildIssueSnapshot(repo: string, number: number, node: GhIssueNode): IssueSnapInternal {
+  const comments: GhComment[] = (node.comments?.nodes ?? []).map(c => ({
+    id: c.databaseId,
+    html_url: c.url,
+    user: { login: c.author?.login },
+    body: c.body,
+  }))
   return {
     repo,
     number,
-    title: issue.title ?? null,
-    url: issue.html_url ?? null,
-    state: issue.state ?? null,
-    labels: labelNames(issue.labels),
+    title: node.title ?? null,
+    url: node.url ?? null,
+    // Lower-cased to the REST-shaped 'open'/'closed' the diff and shouldPush
+    // (to === 'closed') compare against.
+    state: node.state ? node.state.toLowerCase() : null,
+    labels: labelNames(node.labels?.nodes),
     seen_comment_ids: sortedIds(comments),
     _comments_by_id: indexById(comments),
   }
@@ -152,35 +182,34 @@ export function computeIssueEvents(
   return events
 }
 
-// ---- GhScraper ------------------------------------------------------------
+// ---- Node → snapshot + events (pure) --------------------------------------
 //
-// Per-tick handle bundling client + agentLogins. agentLogins can drift between
-// ticks (operator config edit), so plugins build a fresh one per runTick.
+// The batched read hands each entry's raw node here. agentLogins can drift
+// between ticks (operator config edit), so the plugin passes a fresh set per
+// runTick. prevSnap meaning matches computePrEvents: undefined = seed,
+// null = new watch entry, snapshot = normal diff.
 
-export class GhScraper {
-  constructor(
-    private readonly client: GhClient,
-    private readonly agentLogins: Set<string>,
-  ) {}
+export function snapshotPrFromNode(
+  repo: string,
+  number: number,
+  node: GhPrNode,
+  prevSnap: PrSnap | null | undefined,
+  agentLogins: Set<string>,
+): ScrapeResult<PrSnap> {
+  const snap = buildPrSnapshot(repo, number, node)
+  const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, agentLogins)
+  const stripped = stripInternals(snap)
+  stripped.warned_no_linked = nextWarnedNoLinked
+  return { snap: stripped, events }
+}
 
-  async scrapePr(
-    repo: string,
-    number: number,
-    prevSnap: PrSnap | null | undefined,
-  ): Promise<ScrapeResult<PrSnap>> {
-    const snap = await snapshotPr(this.client, repo, number, prevSnap ?? undefined)
-    const { events, nextWarnedNoLinked } = computePrEvents(snap, prevSnap, this.agentLogins)
-    const stripped = stripInternals(snap)
-    stripped.warned_no_linked = nextWarnedNoLinked
-    return { snap: stripped, events }
-  }
-
-  async scrapeIssue(
-    repo: string,
-    number: number,
-    prevIssue: IssueSnap | null | undefined,
-  ): Promise<ScrapeResult<IssueSnap>> {
-    const snap = await snapshotIssue(this.client, repo, number)
-    return { snap: stripInternals(snap), events: computeIssueEvents(snap, prevIssue, this.agentLogins) }
-  }
+export function snapshotIssueFromNode(
+  repo: string,
+  number: number,
+  node: GhIssueNode,
+  prevIssue: IssueSnap | null | undefined,
+  agentLogins: Set<string>,
+): ScrapeResult<IssueSnap> {
+  const snap = buildIssueSnapshot(repo, number, node)
+  return { snap: stripInternals(snap), events: computeIssueEvents(snap, prevIssue, agentLogins) }
 }
