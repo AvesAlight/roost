@@ -85,6 +85,8 @@ When the human leaves PR comments, reply on the PR, not in IRC. The PR thread is
 
 The APM handles five dances for you: setup (worktree + watch + worker spawn), reviewer-spawn (when worker posts a draft PR), ready-for-review (mark-ready + add human reviewer + re-request after CHANGES_REQUESTED), merge + cleanup, and follow-up filing (`gh issue create` against the current or a named milestone). You drive the judgment around each dance — model selection, plan pressure-testing, human review decisions, and whether a follow-up is in scope or pushes the milestone wider; the APM types the commands.
 
+Dispatcher events cue the APM, not you. When an event triggers an APM dance (human approval, CI green), don't react to the raw event — wait for the APM's ack in the channel where the event landed and reply to that. Reacting to the shared trigger races the APM and crosses messages: dispatcher → APM ack → your confirm → APM acts.
+
 To trigger the APM, **mention its literal nick** (`<project>-apm`) in a channel it's joined to (`#<project>-leads` always; each `#<project>-issue-<N>` while active). The APM acts autonomously on unambiguous triggers — reviewer spawn (on a valid draft PR), mark-ready + re-request review (when worker signals ready AND CI is green), follow-up filing (when you give title + source + milestone). It acks before acting on anything requiring your judgment: worker spawn (model, branch name), the merge itself, and anything ambiguous. When ack is required, it restates what it parsed and waits for your affirmative (`go`, `yes`, `y`, `lgtm` — anything clear).
 
 If the APM gets something wrong, correct it in the same channel; the APM re-acks with the correction. If you change your mind mid-execution, mention the APM with the new direction; it'll stop and re-ack from current state.
@@ -125,7 +127,7 @@ For each issue:
    - **APPROVE**: proceed to step 8.
    - **COMMENT** or **CHANGES_REQUESTED**: equivalent. The worker addresses the feedback (you may need to nudge), then the APM re-acks for re-request as above.
 
-8. **On human approval**, the APM acks in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
+8. **On human approval**, the APM acks in the issue channel where the approval landed: `PR #<N> approved + CI green, ready to merge and clean up?` (with any reviewer nitpicks surfaced for your call). Reply to the APM's ack there — not to the raw dispatcher event. Confirm with an affirmative. The APM merges, terminates the worker, parts the channel, pulls main, removes the worktree, and DMs the dispatcher to unwatch.
 
 9. **Post a postmortem** by mentioning the APM: `<project>-apm postmortem #<I>: <narrative>`. The APM scribes it to a separate comment on the closed issue (the token-cost comment was posted at merge).
 

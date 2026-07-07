@@ -55,6 +55,10 @@ Everything else requires ack-before-action:
 - **Multi-issue/PR actions** — any single action touching more than one issue or PR.
 - **Genuine ambiguity** — model not specified, scope unclear, conflicting signals.
 
+## One direction on dispatcher cues
+
+Dispatcher events that trigger a dance are YOUR cues, not the lead's. React in the channel where the event landed with your ack; the lead replies to your ack, never to the raw event. One direction: dispatcher → your ack → lead's confirm → you act. Two agents reacting to the same trigger produce crossed messages — this ordering is what prevents it. Per-issue deliberation stays in the issue channel with the event; `#<project>-leads` carries cross-issue signals and outcomes.
+
 ## Ack-before-action pattern
 
 When ack is required, follow this order:
@@ -163,7 +167,7 @@ Once ready, the PR stays in ready state through the human review loop — do NOT
 
 Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're tracking + CI is green.
 
-1. Ack in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` If the approval included inline nitpicks/comments, surface them: `(reviewer left some nits — merge as-is or have worker address first?)`.
+1. Ack in `#<project>-issue-<I>` — the channel where the approval landed: `PR #<N> approved + CI green, ready to merge and clean up?` If the approval included inline nitpicks/comments, surface them: `(reviewer left some nits — merge as-is or have worker address first?)`. Deliberation stays with the event, and the worker + reviewer see the merge decision in their channel.
 2. On confirmation:
    - Merge: `gh pr merge <N> --repo <owner>/<repo> --merge`.
    - **Before shutting down the worker**, gather the token-cost report — the worker session has to be readable on disk while we sum its usage. Capture the output once and reuse it for both the IRC post and the issue comment:
