@@ -103,6 +103,9 @@ export class GitHubPrsPlugin extends GhBase {
   // when both are absent so resolveChannels falls back to entryChannels or
   // defaultChannel. pr_no_linked_issues is handled inline in runTick and
   // never reaches this function.
+  //
+  // Per-linked-issue try/catch: one closed issue whose repo's slug fails to
+  // derive must not drop routing for every other linked issue on the same PR.
   private static prEventChannels(
     config: OrchestratorConfig,
     project: string,
@@ -111,17 +114,41 @@ export class GitHubPrsPlugin extends GhBase {
     prRepo: string,
     routable: LinkedIssue[],
     linearChannels: string[],
+    log: PluginLogger,
   ): string[] {
     if (event.pr == null) return []
     if (routable.length) {
-      return [
-        ...routable.map(li => issueChannel(project, li.number, channelSlug(config, li.repo))),
-        ...linearChannels,
-      ]
+      const linkedChannels: string[] = []
+      for (const li of routable) {
+        try {
+          linkedChannels.push(issueChannel(project, li.number, channelSlug(config, li.repo)))
+        } catch (e) {
+          log(`[github-prs] skipping linked-issue channel for ${li.repo}#${li.number}: ${e}\n`)
+        }
+      }
+      return [...linkedChannels, ...linearChannels]
     }
     // No GitHub linked issues: route to Linear channels when present; otherwise
     // return [] so resolveChannels falls back to entryChannels or defaultChannel.
     return linearChannels
+  }
+
+  // Per-linked-issue try/catch, same reasoning as prEventChannels above —
+  // one bad repo among several linked issues must not drop the rest.
+  private static addRoutableChannels(
+    channels: Set<string>,
+    config: OrchestratorConfig,
+    project: string,
+    routable: LinkedIssue[],
+    log: PluginLogger,
+  ): void {
+    for (const li of routable) {
+      try {
+        channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
+      } catch (e) {
+        log(`[github-prs] skipping linked-issue channel for ${li.repo}#${li.number}: ${e}\n`)
+      }
+    }
   }
 
   // Stderr-only — operator-visible in daemon.log without IRC noise.
@@ -249,7 +276,7 @@ export class GitHubPrsPlugin extends GhBase {
         if (prevPr) {
           curState.prs[key] = prevPr
           const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
-          for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
+          GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
           for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) channels.add(linearIssueChannel(project, ident))
         }
         continue
@@ -259,7 +286,7 @@ export class GitHubPrsPlugin extends GhBase {
       const { snap, events } = this.snapshotPr(repo, number, outcome.node, prevPr, agentLogins)
       curState.prs[key] = snap
       const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
-      for (const li of routable) channels.add(issueChannel(project, li.number, channelSlug(config, li.repo)))
+      GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
       // Linear cross-link channels for this PR. A PR can be attached to
       // multiple Linear issues — all matched identifiers route. Key
       // normalization (via prKey) guards against casing drift between
@@ -296,7 +323,7 @@ export class GitHubPrsPlugin extends GhBase {
           // A Linear-only match is a real routing target and earns a heads-up.
           if (linked.length || linearChannels.length) {
             const routingChannels = this.resolveChannels(
-              GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels),
+              GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels, this.log),
               entryChannels
             ).filter(ch => ch !== projectChannel)
             const routingStr = routingChannels.length ? routingChannels.join(', ') : projectChannel
@@ -309,7 +336,7 @@ export class GitHubPrsPlugin extends GhBase {
         }
         if (!shouldPush(event)) continue
         taggedEvents.push({
-          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels), entryChannels),
+          channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels, this.log), entryChannels),
           payload: formatPayload(event),
         })
       }

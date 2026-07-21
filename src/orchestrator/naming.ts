@@ -17,6 +17,16 @@ export function validateProject(project: string): void {
   }
 }
 
+// Lowercases a repo basename and normalizes underscores to dashes — real repo
+// basenames commonly use underscores, and a dash is a legal slug/project char
+// where an underscore isn't. Shared by defaultProject's repo fallback and
+// repoSlug so the two derivations agree on what basename is bootable. Widens
+// the existing cross-org-overlap footgun: `Org/foo_bar` and `Org/foo-bar` now
+// collide on the same normalized basename.
+function normalizeBasename(base: string): string {
+  return base.toLowerCase().replaceAll('_', '-')
+}
+
 // Falls back to the basename of `repo` if `project` is unset. Multi-mode
 // (no `config.repo`) requires `config.project` set — no inherit target.
 export function defaultProject(config: OrchestratorConfig): string {
@@ -25,7 +35,7 @@ export function defaultProject(config: OrchestratorConfig): string {
     return config.project
   }
   if (config.repo) {
-    const base = config.repo.split('/').pop()?.toLowerCase() ?? ''
+    const base = normalizeBasename(config.repo.split('/').pop() ?? '')
     if (PROJECT_PATTERN.test(base)) return base
   }
   throw new Error('no project: multi-repo mode (no `config.repo`) requires `config.project` set in config.json')
@@ -35,11 +45,12 @@ export function isMultiRepo(config: OrchestratorConfig): boolean {
   return !config.repo
 }
 
-// Lowercased basename of `Owner/Repo` — interpolated into nicks/channels, so
-// must match the project pattern. Cross-org overlap (`Org1/foo` + `Org2/foo`)
-// is a known footgun.
+// Lowercased, underscore-normalized basename of `Owner/Repo` — interpolated
+// into nicks/channels, so must match the project pattern. Cross-org overlap
+// (`Org1/foo` + `Org2/foo`) is a known footgun; see normalizeBasename for the
+// underscore/dash collision one.
 export function repoSlug(repo: string): string {
-  const base = repo.split('/').pop()?.toLowerCase() ?? ''
+  const base = normalizeBasename(repo.split('/').pop() ?? '')
   if (!PROJECT_PATTERN.test(base)) {
     throw new Error(
       `cannot derive slug from repo "${repo}": basename "${base}" must match ${PROJECT_PATTERN}`

@@ -107,8 +107,21 @@ export class GitHubIssuesPlugin extends GhBase {
       // Clean read → clear any prior failure state and build the snapshot.
       this.clearEntryFailure(key)
       const { snap, events } = this.snapshotIssue(repo, number, outcome.node, prevIssue, agentLogins)
+      // A slug-derivation failure on this entry's own repo must not sink the
+      // rest of the batch — log and skip event routing for just this entry.
+      // Store prevIssue (not snap) on skip, matching the per-alias-failure
+      // path above: if we advanced to snap the diff baseline would move on
+      // and this tick's events would be silently dropped forever, not
+      // retried, once the repo alias is fixed.
+      let slug: string | undefined
+      try {
+        slug = channelSlug(config, snap.repo)
+      } catch (e) {
+        this.log(`[${this.name}] skipping event routing for ${key}: ${e}\n`)
+        if (prevIssue) curState.issues[key] = prevIssue
+        continue
+      }
       curState.issues[key] = snap
-      const slug = channelSlug(config, snap.repo)
       for (const event of events) {
         if (event.kind === 'issue_added_to_watch') {
           const routingChannels = this.resolveChannels(

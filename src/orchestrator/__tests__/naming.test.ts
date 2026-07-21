@@ -33,6 +33,10 @@ describe('defaultProject', () => {
     expect(defaultProject({ repo: 'AvesAlight/Roost' })).toBe('roost')
   })
 
+  it('normalizes underscores in the repo basename fallback', () => {
+    expect(defaultProject({ repo: 'GoCarrot/debian13_root' })).toBe('debian13-root')
+  })
+
   it('throws when project invalid', () => {
     expect(() => defaultProject({ project: 'BAD NAME' })).toThrow(/invalid project/)
   })
@@ -63,6 +67,11 @@ describe('repoSlug', () => {
   it('throws when the slug would not match the project pattern', () => {
     expect(() => repoSlug('Org/bad name')).toThrow(/cannot derive slug/)
     expect(() => repoSlug('Org/-leading-dash')).toThrow(/cannot derive slug/)
+  })
+
+  it('normalizes underscores to dashes instead of throwing', () => {
+    expect(repoSlug('GoCarrot/debian13_root')).toBe('debian13-root')
+    expect(repoSlug('Org/foo_bar_baz')).toBe('foo-bar-baz')
   })
 })
 

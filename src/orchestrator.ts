@@ -49,10 +49,20 @@ async function loadConfigWithPlugins(
   return { config, plugins, projectChannel }
 }
 
-function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string): string[] {
+// Per-plugin try/catch is an outer backstop: individual plugins already
+// isolate per-entry slug-derivation failures internally, but a failure before
+// any per-entry loop runs (e.g. defaultProject) would otherwise escape here
+// uncaught — this is called unguarded from both daemon boot and the
+// tick-failure fallback path, and an uncaught throw here crashes the whole
+// daemon and drops every joined channel.
+function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChannel: string, log: PluginLogger = defaultPluginLogger): string[] {
   const chans = new Set<string>([projectChannel])
   for (const plugin of plugins) {
-    for (const c of plugin.desiredChannels(config)) chans.add(c)
+    try {
+      for (const c of plugin.desiredChannels(config)) chans.add(c)
+    } catch (e) {
+      log(`orchestrator: skipping channels for plugin ${plugin.name}: ${e}\n`)
+    }
   }
   return [...chans].sort()
 }
@@ -134,7 +144,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   let config = initialConfig
   const { nick, server, port } = requireIrcConfig(config, 'daemon mode')
   const interval = Math.max(5, (config.irc?.interval_seconds ?? 60)) * 1000
-  const initialChannels = bootChannels(plugins, config, projectChannel)
+  const initialChannels = bootChannels(plugins, config, projectChannel, log)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
   const client = newIrcClient(nick, initialChannels)
@@ -200,7 +210,7 @@ async function runDaemon(stateDir: string): Promise<void> {
       trySay(projectChannel, `[dispatcher_error] ${msg}`)
       // Fall back to the config-only channel view so a transient GH/scrape
       // blip doesn't part every #issue-N until the next success.
-      result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel) }
+      result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel, log) }
     }
 
     // Reconcile IRC membership against plugins' desired set, then snapshot.
