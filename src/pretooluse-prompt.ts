@@ -84,6 +84,13 @@ const ARITH_WITH_VARS = /\$\(\([^)]*[a-zA-Z_][^)]*\)\)/ // CC: "too-complex"
 // write vectors) are rejected structurally in isSimpleReadOnly. (`file -C`,
 // `tree -o`, `sort -o` are why those aren't here — the scan is by write
 // capability, not by whether the command "feels" read-only.)
+//
+// This is a best-effort hand-scan, NOT a flag-exhaustive safety boundary. If an
+// obscure write flag on a listed command slips through, the failure mode is
+// bounded: the fast-path returns null (defer), CC-default still gates the write
+// at its own prompt, and — since the prompt is unanswerable in a worker — the
+// worker hangs. Recoverable and operator-visible, not silent destruction. That
+// bound is what makes the name-level scan acceptable over a full safeFlags port.
 const READ_ONLY = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
   'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
