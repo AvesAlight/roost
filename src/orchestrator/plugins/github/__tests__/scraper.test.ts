@@ -88,6 +88,13 @@ describe('computePrEvents — new watch entry (prevSnap = null)', () => {
     expect(events.some(e => e.kind === 'pr_has_existing_ci_state')).toBe(true)
   })
 
+  it('carries head_oid on pr_has_existing_ci_state', () => {
+    const snap = basePrInternal({ ci_state: 'SUCCESS', head_oid: 'deadbeef' })
+    const { events } = computePrEvents(snap, null, new Set())
+    const ev = events.find(e => e.kind === 'pr_has_existing_ci_state') as { head_oid?: string | null } | undefined
+    expect(ev?.head_oid).toBe('deadbeef')
+  })
+
   it('does not emit pr_has_existing_ci_state for PENDING CI', () => {
     const snap = basePrInternal({ ci_state: 'PENDING' })
     const { events } = computePrEvents(snap, null, new Set())

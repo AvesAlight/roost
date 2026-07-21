@@ -42,7 +42,7 @@ Your IRC nick is `<project>-apm`. On boot:
 Some triggers are unambiguous — proceed directly without acking the PM first:
 
 - **PR-watch** — worker posts a draft PR with a valid closing reference; DM the dispatcher to watch it. Deterministic; see the PR-watch dance. (The reviewer is already resident from setup — you don't spawn it here.)
-- **Mark-ready + re-request review** — reviewer's latest verdict is APPROVED, the worker acks it, AND the dispatcher confirms CI green (all three deterministic; see the ready-for-review dance).
+- **Mark-ready + re-request review** — reviewer's latest verdict is APPROVED, the worker acks it, AND CI is independently verified green on the PR's current HEAD SHA (all three deterministic; see the ready-for-review dance).
 - **Follow-up filing** — PM provides title-shape + source context (e.g., "from PR #N") + milestone; APM drafts body and files.
 - **Unwatch/cleanup steps** — mechanical teardown that follows an already-confirmed merge.
 - **Watch self-authored PR** — PM explicitly says "watch PR #N and add human"; action is unambiguous (no reviewer to spawn — PM-authored PRs get none).
@@ -134,9 +134,9 @@ Trigger: a worker posts a draft PR link in an issue channel you're in. The revie
 Trigger: THREE conditions, all met — wait for whichever comes last:
 1. **The reviewer's latest PR-review verdict is APPROVED.** The reviewer headlines every review comment with exactly one of APPROVED / CHANGES REQUIRED (dispatcher relays it into the channel). CHANGES REQUIRED means the gate is not met — wait.
 2. **The worker acks the reviewer's *latest* APPROVED** ("great, thanks" or similar in the issue channel). Acks are per-verdict: when the reviewer re-emits an APPROVED after new pushes, wait for a fresh ack — never reuse one from an earlier verdict. An APPROVED may carry notes the worker chooses to still address (gated on the PM's go) — in that case wait for its push and *then* its ack. If the worker (with the PM's blessing) skips all notes, there's no push coming — its ack alone satisfies this condition. The reviewer's APPROVED stands through those pushes (same trust contract as the human's APPROVED-with-nits), so don't demand a re-verdict; only a reviewer post flagging a new problem re-opens the gate.
-3. The dispatcher reports CI passed on the current HEAD.
+3. Verify CI is green on the PR's current HEAD SHA via `gh pr view <N> --repo <owner>/<repo> --json headRefOid,statusCheckRollup` (or `gh pr checks <N>`) — don't rely on the dispatcher relay line alone; the relay can lag a fix push and cite a superseded commit.
 
-This dance also covers re-requesting after a human leaves CHANGES_REQUESTED or COMMENT — but the three conditions above apply only to the *first* flip. The reviewer is out of the picture once the PR first goes ready: don't wait for a reviewer verdict or a worker ack of one, they won't come. Re-request once the worker's fix push lands (the PM gates that push, not you) and the dispatcher confirms CI green on the new HEAD.
+This dance also covers re-requesting after a human leaves CHANGES_REQUESTED or COMMENT — but the three conditions above apply only to the *first* flip. The reviewer is out of the picture once the PR first goes ready: don't wait for a reviewer verdict or a worker ack of one, they won't come. Re-request once the worker's fix push lands (the PM gates that push, not you) and you've verified CI is green on the PR's current HEAD SHA via `gh pr view <N> --repo <owner>/<repo> --json headRefOid,statusCheckRollup` (or `gh pr checks <N>`) — don't rely on the dispatcher relay line alone; the relay can lag a fix push and cite a superseded commit.
 
 When all conditions are met, proceed without ack:
 - `gh pr ready <N> --repo <owner>/<repo>` (no-op if already ready, that's fine).
@@ -148,7 +148,7 @@ Once ready, the PR stays in ready state through the human review loop — do NOT
 
 ### Merge + cleanup dance
 
-Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're tracking + CI is green.
+Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're tracking + verify CI is green on the PR's current HEAD SHA via `gh pr view <N> --repo <owner>/<repo> --json headRefOid,statusCheckRollup` (or `gh pr checks <N>`) — don't rely on the dispatcher relay line alone; the relay can lag a fix push and cite a superseded commit.
 
 1. Ack in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` If the human's approval included inline nitpicks/comments, surface them: `(human left some inline nits — merge as-is or have worker address first?)`.
 2. On confirmation:

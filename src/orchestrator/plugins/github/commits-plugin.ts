@@ -17,7 +17,7 @@ import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
-import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
+import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal, shortSha } from '../_shared.js'
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
 import type { GhCommit } from './github-api.js'
 import { GhPluginBase } from './base.js'
@@ -67,7 +67,7 @@ function formatCommit(entry: CommitWatchEntry, commit: GhCommit, sha: string): s
   const subject = (commit.commit?.message ?? '(no message)').split('\n')[0]?.trim() ?? ''
   const pathSuffix = entry.path ? ` [${entry.path}]` : ''
   const url = commit.html_url ?? ''
-  return `commit ${entry.repo}@${branch}${pathSuffix} ${sha.slice(0, 7)}: ${subject} — ${url}`
+  return `commit ${entry.repo}@${branch}${pathSuffix} ${shortSha(sha)}: ${subject} — ${url}`
 }
 
 export class GitHubCommitsPlugin extends GhPluginBase {

@@ -1,5 +1,11 @@
 // Cross-plugin reply phrasing — one rename of `config.json` flips here only.
 
+// Short commit SHA for relay lines. Null-safe: callers relay CI/commit
+// events where the SHA may be unavailable (e.g. pre-first-push snapshots).
+export function shortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, 7) : '?'
+}
+
 // Refusal line when a DM tries to mutate a tracked entry — only the gitignored
 // overlay is dispatcher-writable.
 export function trackedRefusal(labelStr: string, action: string): string {

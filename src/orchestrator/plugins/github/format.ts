@@ -1,5 +1,6 @@
 import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent, StateChangeEvent, SeedEvent } from './diff.js'
 import type { TaggedEventPayload } from '../../plugin.js'
+import { shortSha } from '../_shared.js'
 
 const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
   'pr_review_comment',
@@ -77,7 +78,7 @@ export function formatEvent(event: OrchestratorEvent): string {
 
   if (kind === 'ci_transitioned') {
     const ev = event as CiEvent
-    return `PR ${tag} CI: ${ev.from} → ${ev.to}`
+    return `PR ${tag} CI: ${ev.from} → ${ev.to} (${shortSha(ev.head_oid)})`
   }
 
   if (kind === 'labels_changed') {
@@ -100,7 +101,7 @@ export function formatEvent(event: OrchestratorEvent): string {
 
   if (kind === 'pr_has_existing_ci_state') {
     const ev = event as SeedEvent
-    return `PR ${tag} CI already terminal at watch time: ${ev.ci_state} — ${event.url ?? ''}`
+    return `PR ${tag} CI already terminal at watch time: ${ev.ci_state} (${shortSha(ev.head_oid)}) — ${event.url ?? ''}`
   }
 
   if (kind === 'issue_has_existing_comments') {
