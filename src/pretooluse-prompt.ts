@@ -66,24 +66,31 @@ const TOP_CMD_GROUP   = /(?:^|[\s;&|`])\{\s/            // CC: "shell-operators"
 const ARITH_WITH_VARS = /\$\(\([^)]*[a-zA-Z_][^)]*\)\)/ // CC: "too-complex"
 
 // Command words the read-only fast-path treats as candidates. Membership rule:
-// a command is listed only if it has *no mutating form under any flag or
-// argument* — because the fast-path bites in default/acceptEdits mode (auto
-// never blocks bash), where CC's own analyzer gates a mutating command with an
-// input-wait TUI prompt that a --perm-irc worker can't answer. A name-level
-// list can't gate on flags, so any command with a write form (`find -delete`,
-// `sort -o`, `date -s`, `hostname NAME`) is left out entirely rather than
-// half-covered — otherwise the fast-path would drop the relay CC-default needs,
-// and the worker would hang on the prompt. Empirically confirmed against a live
-// 2.1.217 default-mode TUI: read-only shapes here grant silently; the excluded
-// mutating forms raise "…executes commands or modifies files… Do you want to
-// proceed?" and wait. `git` is gated further to read-only subcommands below.
+// a command is listed only if it writes *nothing to the filesystem under any
+// flag or positional argument* (stdout / exit status only). This matters
+// because the fast-path bites in default/acceptEdits mode (auto never blocks
+// bash), where CC's own analyzer gates a filesystem-mutating command with an
+// input-wait TUI prompt a --perm-irc worker can't answer — so accepting one
+// would drop the relay CC-default needs and hang the worker. Empirically
+// confirmed against a live 2.1.217 default-mode TUI: read-only shapes here
+// grant silently; a mutating form raises "…executes commands or modifies
+// files… Do you want to proceed?" and waits.
+//
+// A name-level list can't gate on flags, so every command below was scanned for
+// a write form and the ones that have one are left out entirely rather than
+// half-covered: `find -delete`/`-exec`, `sort -o`, `date -s`, `hostname NAME`,
+// `uniq IN OUT`, `xxd IN OUT`, `tree -o FILE`. `git` is gated further to
+// read-only subcommands below. Command substitution and redirection (other
+// write vectors) are rejected structurally in isSimpleReadOnly. (`file -C`,
+// `tree -o`, `sort -o` are why those aren't here — the scan is by write
+// capability, not by whether the command "feels" read-only.)
 const READ_ONLY = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
   'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
-  'file', 'stat', 'tree', 'basename', 'dirname', 'realpath', 'readlink',
+  'stat', 'basename', 'dirname', 'realpath', 'readlink',
   'whoami', 'id', 'groups', 'uname', 'tty', 'locale',
-  'true', 'false', 'test', 'uniq', 'cut', 'tr', 'comm', 'cmp',
-  'diff', 'column', 'tac', 'nl', 'od', 'xxd', 'seq', 'du', 'df', 'ps',
+  'true', 'false', 'test', 'cut', 'tr', 'comm', 'cmp',
+  'diff', 'column', 'tac', 'nl', 'od', 'seq', 'du', 'df', 'ps',
   'printenv', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum', 'git',
 ])
 
