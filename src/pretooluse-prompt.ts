@@ -65,19 +65,24 @@ const TOP_SUBSHELL    = /(?:^|[\s;&|`])\((?!\s*\))/     // CC: "shell-operators"
 const TOP_CMD_GROUP   = /(?:^|[\s;&|`])\{\s/            // CC: "shell-operators" (command group)
 const ARITH_WITH_VARS = /\$\(\([^)]*[a-zA-Z_][^)]*\)\)/ // CC: "too-complex"
 
-// Command words the read-only fast-path treats as candidates. This is NOT a
-// safety allowlist — a name-level list can't prove non-mutation (`find
-// /tmp -delete`, `find . -exec rm {} +` are in here). What makes passing them
-// safe is the monotonic invariant, not the list: isSimpleReadOnly only ever
-// returns null (drops a relay), and CC auto-grants these shapes anyway, so an
-// accept can never diverge from parity. The list just scopes *which*
-// would-be-relayed shapes get dropped — its floor is O2 (`cd <dir>; <cmd>`).
+// Command words the read-only fast-path treats as candidates. Membership rule:
+// a command is listed only if it has *no mutating form under any flag or
+// argument* — because the fast-path bites in default/acceptEdits mode (auto
+// never blocks bash), where CC's own analyzer gates a mutating command with an
+// input-wait TUI prompt that a --perm-irc worker can't answer. A name-level
+// list can't gate on flags, so any command with a write form (`find -delete`,
+// `sort -o`, `date -s`, `hostname NAME`) is left out entirely rather than
+// half-covered — otherwise the fast-path would drop the relay CC-default needs,
+// and the worker would hang on the prompt. Empirically confirmed against a live
+// 2.1.217 default-mode TUI: read-only shapes here grant silently; the excluded
+// mutating forms raise "…executes commands or modifies files… Do you want to
+// proceed?" and wait. `git` is gated further to read-only subcommands below.
 const READ_ONLY = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
-  'find', 'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
+  'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
   'file', 'stat', 'tree', 'basename', 'dirname', 'realpath', 'readlink',
-  'date', 'whoami', 'id', 'groups', 'uname', 'hostname', 'tty', 'locale',
-  'true', 'false', 'test', 'sort', 'uniq', 'cut', 'tr', 'comm', 'cmp',
+  'whoami', 'id', 'groups', 'uname', 'tty', 'locale',
+  'true', 'false', 'test', 'uniq', 'cut', 'tr', 'comm', 'cmp',
   'diff', 'column', 'tac', 'nl', 'od', 'xxd', 'seq', 'du', 'df', 'ps',
   'printenv', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum', 'git',
 ])
@@ -95,13 +100,15 @@ const GIT_READONLY = new Set([
 
 /**
  * True if the command matches Claude Code's read-only fast-path — every
- * statement a read-only command, with no subshell, background `&`, redirection,
- * process substitution, variable arithmetic, second cd, multi-positional cd, or
- * cd-into-git. Safe to return null on a true not because the allowlist proves
- * non-mutation (it doesn't — see READ_ONLY) but because the fast-path is
- * monotonic: it only drops relays, and CC auto-grants these shapes regardless.
- * A false means "can't prove the fast-path shape", and the command falls
- * through to the bashMissKind checks unchanged.
+ * statement a read-only command (see READ_ONLY / GIT_READONLY), with no
+ * subshell, background `&`, redirection, process substitution, variable
+ * arithmetic, second cd, multi-positional cd, or cd-into-git. A true is safe to
+ * return null on because the accept set is a strict subset of what CC-default
+ * grants (allowlist restricted to commands with no mutating form; the
+ * structural gates below reject every shape CC-default would prompt on), so a
+ * dropped relay can never leave a worker hanging on a prompt CC would raise. A
+ * false means "can't prove the fast-path shape", and the command falls through
+ * to the bashMissKind checks unchanged.
  */
 function isSimpleReadOnly(command: string): boolean {
   // Structural disqualifiers. Any of these means CC's fast-path declines, so
@@ -114,6 +121,11 @@ function isSimpleReadOnly(command: string): boolean {
   if (TOP_CMD_GROUP.test(command)) return false
   if (/(?<!&)&(?!&)/.test(command)) return false     // background &
   if (ARITH_WITH_VARS.test(command)) return false
+  // Command substitution runs an inner command the allowlist never sees
+  // (`echo $(rm -rf x)`, `` echo `rm -rf x` ``). The word-level check would
+  // pass on the outer `echo` and miss it, so decline outright — `$((` arith is
+  // caught above, everything else with `$(` or a backtick can't be vetted.
+  if (/\$\(/.test(command) || command.includes('`')) return false
 
   const statements = command.split(/&&|\|\||[;|\n\r]/)
   let cdCount = 0

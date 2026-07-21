@@ -173,10 +173,13 @@ describe('classifyBash', () => {
 
 // ---- read-only fast-path (#641) --------------------------------------------
 //
-// CC auto-grants a "simple read-only command", so classifyBash must not relay
-// it. The fast-path is monotonic: it only ever turns a would-be relay into
-// null, never the reverse. The one observable flip vs. the prior classifier is
-// O2 — `cd <dir>; <read-only>` going cd-compound → null.
+// CC-default grants a "simple read-only command" silently, so classifyBash must
+// not relay it. The fast-path is monotonic: it only ever turns a would-be relay
+// into null, never the reverse. The one observable flip vs. the prior
+// classifier is O2 — `cd <dir>; <read-only>` going cd-compound → null. The
+// allowlist holds only commands with no mutating form: a command CC-default
+// gates (e.g. `find -delete`, `sort -o`) must NOT be accepted, or the dropped
+// relay would leave a worker hanging on the TUI prompt CC raises.
 
 describe('classifyBash read-only fast-path', () => {
   // The O2 over-fire: a read-only tail after cd. Was flagged cd-compound.
@@ -225,6 +228,36 @@ describe('classifyBash read-only fast-path', () => {
   // the read-only-tail over-fire, not every cd-compound.
   it('cd + non-read-only tail still flags cd-compound', () => {
     expect(classifyBash('cd /tmp; rm -rf x')).toBe('cd-compound')
+  })
+
+  // Mutating-flag commands are left out of the allowlist wholesale (a
+  // name-level list can't gate on flags). CC-default raises an input-wait
+  // prompt on these, so the fast-path must decline and leave the relay in
+  // place. Confirmed live against a 2.1.217 default-mode TUI.
+  it('cd + find -delete stays cd-compound (find not allowlisted)', () => {
+    expect(classifyBash('cd /tmp && find . -delete')).toBe('cd-compound')
+  })
+  it('cd + sort -o stays cd-compound (sort not allowlisted)', () => {
+    expect(classifyBash('cd /tmp && sort -o out in')).toBe('cd-compound')
+  })
+  // Cost of the wholesale exclusion: a read-only `find` after cd no longer
+  // fast-paths — it falls back to the pre-existing benign cd-compound relay.
+  it('cd + read-only find falls back to cd-compound (accepted cost)', () => {
+    expect(classifyBash('cd repo && find . -name x')).toBe('cd-compound')
+  })
+
+  // Command substitution runs an inner command the word-level allowlist never
+  // inspects, so it can't be fast-pathed. A cd-prefixed one keeps its relay.
+  it('cd + $() command substitution stays cd-compound', () => {
+    expect(classifyBash('cd /tmp; echo $(rm -rf y)')).toBe('cd-compound')
+  })
+  it('cd + backtick command substitution stays cd-compound', () => {
+    expect(classifyBash('cd repo && echo `rm x`')).toBe('cd-compound')
+  })
+  // A bare read-only command substitution is null anyway (no bashMissKind),
+  // via fall-through rather than the fast-path.
+  it('bare $() stays null via fall-through', () => {
+    expect(classifyBash('echo $(date)')).toBeNull()
   })
 })
 
