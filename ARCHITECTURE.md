@@ -12,7 +12,7 @@ from `irssi` and see everything.
                                │
    ┌─────────────┬──────────────┬─────────────┬──────────┐
    │             │              │             │          │
- lead-pm     dispatcher     worker-N      reviewer-N   alex
+ PM          dispatcher     worker-N      reviewer-N   alex
  + APM       (per           (#<project>-  (#<project>- (irssi /
  (#<project>- project,       issue-N,      issue-N,    weechat)
   leads +     event-pub)     ephemeral)    ephemeral)
@@ -32,24 +32,24 @@ per-PR doesn't).
 
 | Channel                | Purpose |
 |------------------------|---------|
-| `#<project>-leads`     | Per-project leadership channel. lead-pm + APM live here continuously; dispatcher posts cross-issue events (new PRs/issues for the watched repo, milestone-level signals). |
-| `#<project>-issue-<N>` | One per active issue. Dispatcher publishes per-issue events. Worker and reviewer both join at setup and stay resident through merge. lead-pm + APM join while the issue is active. Stable across PR restarts (old PR closes, new PR opens = same `#<project>-issue-<N>`). |
+| `#<project>-leads`     | Per-project leadership channel. PM + APM live here continuously; dispatcher posts cross-issue events (new PRs/issues for the watched repo, milestone-level signals). |
+| `#<project>-issue-<N>` | One per active issue. Dispatcher publishes per-issue events. Worker and reviewer both join at setup and stay resident through merge. PM + APM join while the issue is active. Stable across PR restarts (old PR closes, new PR opens = same `#<project>-issue-<N>`). |
 
 ## Identities
 
-- **lead-pm** — `<project>-lead-pm`. Owns a project end-to-end:
+- **PM** — `<project>-pm`. Owns a project end-to-end:
   picks issues off the milestone DAG, runs the go/no-go gates,
   coordinates with the human. Lives in
   `#<project>-leads` continuously and joins each
   `#<project>-issue-<N>` while it's active. Long-running; opts into
   `--steer-compact` so the in-process compactor preserves role and
   channels.
-- **APM** — `<project>-apm`. Operational support for lead-pm: runs
+- **APM** — `<project>-apm`. Operational support for the PM: runs
   the mechanical dances — worktree + watch + worker-and-reviewer
   spawn setup, PR-watch on draft-PR-open, flip PRs draft → ready +
   tag the human + re-request review, merge + cleanup, follow-up
   filing, release-bump mechanics. Lives in the same channels as
-  lead-pm.
+  the PM.
 - **Workers** — ephemeral (`<project>-worker-<N>`, or
   `<project>-<slug>-worker-<N>` in multi-repo mode). Join
   `#<project>-issue-<N>` on assignment, leave on completion.
@@ -70,21 +70,21 @@ present receives the message identically via its roost-irc MCP.
 
 - **Per-issue events** (CI transitions, PR comments, review
   submissions): dispatcher → `#<project>-issue-<N>`. Worker,
-  reviewer, lead-pm, and APM are all in the channel and read the
+  reviewer, PM, and APM are all in the channel and read the
   event off the same notification.
 - **Cross-issue events** (new PRs / issues for the watched repo,
   milestone-level signals): dispatcher → `#<project>-leads`.
-  lead-pm and APM read these and route to per-issue work.
+  PM and APM read these and route to per-issue work.
 - **Ambiguous human directives**: land in channel as ordinary
   messages. Workers claim what's unambiguous to them ("I've got
-  this"); anything left unclaimed is lead-pm's to interpret.
+  this"); anything left unclaimed is the PM's to interpret.
 - **Worker ↔ reviewer**: co-located in `#<project>-issue-<N>`.
   No relay.
-- **Worker ↔ lead-pm**: co-located in `#<project>-issue-<N>` for
+- **Worker ↔ PM**: co-located in `#<project>-issue-<N>` for
   plan pressure-testing, structural updates, ready-flip signaling.
   APM picks up the operational dances (ready flip, follow-up
   filing) off the same channel without round-tripping through
-  lead-pm.
+  the PM.
 
 ### PR review flow
 
@@ -160,9 +160,9 @@ roost shutdown <project>-worker-718-A
 roost spawn <project>-worker-718-B -c '#<project>-issue-718'
 ```
 
-### Restarting a long-running lead-pm
+### Restarting a long-running PM
 
-lead-pm runs for the lifetime of a milestone, so it has to survive
+The PM runs for the lifetime of a milestone, so it has to survive
 both auto-compact and full respawn cleanly.
 
 In-process recovery is `--steer-compact` at spawn — see Rejoin
@@ -183,7 +183,7 @@ artifacts:
 Then spawn:
 
 ```bash
-roost spawn <project>-lead-pm \
+roost spawn <project>-pm \
   -c '#<project>-leads,#<project>-issue-718,#<project>-issue-721,#<project>-issue-693' \
   --steer-compact --cache-ttl 1h \
   --ask-irc '#<project>-leads' --ask-target <your-nick> \
@@ -205,7 +205,7 @@ For deeper inspection — MCP stderr, IRC connection logs — check
 
 ### When to use the skill vs raw shell
 
-When an agent needs to spawn or manage another agent (lead-pm
+When an agent needs to spawn or manage another agent (the PM
 spawning the APM at startup, APM spawning a worker or reviewer
 agent, APM kicking a stuck worker, etc.), it should invoke the
 `roost` skill rather than reach for raw shell — same command
@@ -217,7 +217,7 @@ Parking-lot enhancements (not yet built):
 
 - `--rejoin-project <name>` — auto-enumerate the project's channels
   (`#<project>-leads` + every `#<project>-issue-<N>` where the
-  project's dispatcher is active) so a lead-pm respawn doesn't have
+  project's dispatcher is active) so a PM respawn doesn't have
   to hand-list 5–10 channels.
 
 ## Conventions live as channel state
@@ -250,11 +250,11 @@ Per-issue agents (workers, reviewers) skip the flag — auto-compact
 is unlikely to fire in a single issue's lifetime and the default
 behavior is fine.
 
-For lead-pm specifically, in-process recovery via `--steer-compact`
+For the PM specifically, in-process recovery via `--steer-compact`
 covers most cases. For full respawn (process loss, hard kick), see
-"Restarting a long-running lead-pm" above — orient the new instance
+"Restarting a long-running PM" above — orient the new instance
 from runbook + recent `#<project>-leads` topic / pins + journal
-entries + dispatcher's actionable state. Trade: lead-pm gives up
+entries + dispatcher's actionable state. Trade: the PM gives up
 perfect scrollback continuity in exchange for cheap replaceability.
 Acceptable.
 
@@ -265,7 +265,7 @@ Acceptable.
   meaningfully change a reader's design framing, draft it for the
   PR thread, then post a pointer in chat.
 - **Receiver-claims-the-flag.** Workers signal what they're picking
-  up; lead-pm's queue is what's unclaimed.
+  up; the PM's queue is what's unclaimed.
 - **Channel membership = lifecycle.** Joining is committing; being
   kicked ends the assignment.
 

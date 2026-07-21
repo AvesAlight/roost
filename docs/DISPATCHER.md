@@ -159,7 +159,7 @@ SIGTERM, waits up to 30s (`STOP_TIMEOUT=<seconds>` overrides). No SIGKILL escala
 ## DM grammar
 
 The dispatcher accepts a small grammar via DM from nicks in
-`irc.command_senders` (defaults to lead-pm + APM). Plugins own their watch/
+`irc.command_senders` (defaults to PM + APM). Plugins own their watch/
 unwatch shapes — the dispatcher only parses `help`, `help plugins`, and `watch list` centrally
 and hands every other line to plugins in `grammarPriority` order. Operators
 override the priority via `config.plugin_priorities: {<name>: <number>}`

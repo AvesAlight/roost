@@ -20,11 +20,11 @@ Every agent in `agents/` should declare `permissionMode:` in its YAML frontmatte
 
 `bin/roost spawn` does locally peek at the frontmatter's `permissionMode:` value for one narrow reason: deciding whether to wire the `--perm-irc` bash PreToolUse relay, which is pointless noise under permission modes that never block on bash. That peek never reaches claude and doesn't change what's passed on the `--agent` path — it's a separate, read-only decision from the "don't parse it" rule above.
 
-The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` at spawn. When wired, it intercepts claude code's auto-compact (`trigger="auto"`), returns `{"decision":"block"}` to halt the directive-less default, then injects `/compact <directive>` into the tmux pane via backgrounded `tmux send-keys` — so the manual `/compact` re-fires PreCompact with `trigger="manual"` and `custom_instructions` populated, and the compactor runs with our directive. The directive is a single-line constant near the top of the hook script (one place to edit; covers the roost agent set generically — role, IRC nick, channels joined, in-flight issue/PR state, recent decisions, pending work). Long-running PM-class agents (lead-pm, associate-pm) pass `--steer-compact`; workers and reviewers don't (auto-compact rarely fires in their lifetime). The `docs/LEARNINGS.md` finding on auto-compact has the empirical investigation.
+The PreCompact hook (`bin/roost-compact-hook`) is opt-in via `--steer-compact` at spawn. When wired, it intercepts claude code's auto-compact (`trigger="auto"`), returns `{"decision":"block"}` to halt the directive-less default, then injects `/compact <directive>` into the tmux pane via backgrounded `tmux send-keys` — so the manual `/compact` re-fires PreCompact with `trigger="manual"` and `custom_instructions` populated, and the compactor runs with our directive. The directive is a single-line constant near the top of the hook script (one place to edit; covers the roost agent set generically — role, IRC nick, channels joined, in-flight issue/PR state, recent decisions, pending work). Long-running PM-class agents (project-manager, associate-pm) pass `--steer-compact`; workers and reviewers don't (auto-compact rarely fires in their lifetime). The `docs/LEARNINGS.md` finding on auto-compact has the empirical investigation.
 
 ## Agent class heuristic
 
-The role→flag heuristic for `--cache-ttl`, `--steer-compact`, and `--ask-irc` lives in the "Agent class guidance" block of `bin/roost`'s `spawn --help` output — that's the canonical source. Agent prompts (`agents/lead-pm.md`, `agents/associate-pm.md`), the roost skill, and `docs/LEARNINGS.md` §9 all point at it. Edit the `bin/roost` block if the trade-offs shift; the pointers don't need to move. Shipped artifacts (agent prompts, the skill) deliberately don't carry "edit here" instructions — they install into projects that aren't roost, where operators don't own the heuristic.
+The role→flag heuristic for `--cache-ttl`, `--steer-compact`, and `--ask-irc` lives in the "Agent class guidance" block of `bin/roost`'s `spawn --help` output — that's the canonical source. Agent prompts (`agents/project-manager.md`, `agents/associate-pm.md`), the roost skill, and `docs/LEARNINGS.md` §9 all point at it. Edit the `bin/roost` block if the trade-offs shift; the pointers don't need to move. Shipped artifacts (agent prompts, the skill) deliberately don't carry "edit here" instructions — they install into projects that aren't roost, where operators don't own the heuristic.
 
 ## Comments
 
@@ -91,20 +91,20 @@ Roost is a Claude Code plugin. Hook scripts live in `bin/` inside the plugin roo
 
 ## Releasing
 
-In this repo the APM owns the release mechanics. Lead-pm decides *when* to cut and *which* version; APM types the commands.
+In this repo the APM owns the release mechanics. The PM decides *when* to cut and *which* version; APM types the commands.
 
 The dance:
 
-1. Lead-pm mentions APM in `#roost-leads`: `<project>-apm cut vX.Y.Z`.
-2. APM acks: `bump <old> → vX.Y.Z, branch maint/bump-version-X.Y.Z, PR + add <human>; go?` Lead confirms.
+1. The PM mentions APM in `#roost-leads`: `<project>-apm cut vX.Y.Z`.
+2. APM acks: `bump <old> → vX.Y.Z, branch maint/bump-version-X.Y.Z, PR + add <human>; go?` The PM confirms.
 3. APM sets up the worktree, bumps `package.json`, commits, pushes the branch, opens the PR with `<gh-login>` as reviewer. The PR body should reference what's new since the previous tag (one or two bullet points is fine). Then DM `roost-dispatcher`: `watch pr <N>` so CI events relay to `#roost-leads`.
 4. Human approves the bump PR (this is the safety gate — same as any PR).
-5. APM acks: `bump approved + CI green, merge + tag vX.Y.Z + push tag?` Lead confirms.
+5. APM acks: `bump approved + CI green, merge + tag vX.Y.Z + push tag?` The PM confirms.
 6. APM merges the bump PR. DMs `roost-dispatcher`: `unwatch pr <N>` (mirrors the watch in step 3). Pulls main in the primary worktree, runs `git tag vX.Y.Z && git push origin vX.Y.Z`, then cleans up the bump worktree.
 7. The tag fires `.github/workflows/release.yml` — creates the GitHub release and pushes a formula-bump commit directly to `main` on `AvesAlight/homebrew-tap` (no PR; the action commits straight to the tap repo).
 8. The dispatcher announces the tap bump commit in `#roost-leads` when the `github-commits` plugin is configured with a watch entry for `AvesAlight/homebrew-tap` (`path: Formula/roost.rb`). When it isn't, APM falls back to polling manually: `gh api repos/AvesAlight/homebrew-tap/commits --jq '.[0].commit.message'` (or the web UI), and reports back in `#roost-leads`.
 9. APM closes the milestone: `gh api -X PATCH /repos/<owner>/<repo>/milestones/<id> -f state=closed`, then reports confirmation in `#roost-leads`.
-10. Operators on the box: `brew upgrade roost`, then restart any running dispatchers so they pick up new code (lead-pm flags this; not the APM's job).
+10. Operators on the box: `brew upgrade roost`, then restart any running dispatchers so they pick up new code (the PM flags this; not the APM's job).
 
 The version bump and the tag are separate steps — the workflow only fires on tag push, and only tags that don't contain a hyphen (so `v1.0.0-rc1` is skipped).
 

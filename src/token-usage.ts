@@ -16,7 +16,7 @@
 //     Record the current timestamp under <issue> for each <nick> in
 //     <stateDir>/token-snapshots.json. Subsequent `report` calls filter
 //     transcript turns to those with `timestamp > snapshot_at`, which is
-//     how we slice per-issue spend for long-lived agents (lead-pm, APM)
+//     how we slice per-issue spend for long-lived agents (PM, APM)
 //     out of their cumulative transcript.
 //
 //   report <stateDir> <issue> <nick>...

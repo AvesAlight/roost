@@ -26,7 +26,7 @@ export interface OrchestratorConfig {
     server?: string
     port?: number
     interval_seconds?: number
-    // Unset → `[leadPmNick(project), apmNick(project)]`. Explicit `[]` disables DMs.
+    // Unset → `[pmNick(project), apmNick(project)]`. Explicit `[]` disables DMs.
     command_senders?: string[]
   }
   plugins?: Record<string, unknown>

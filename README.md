@@ -5,7 +5,7 @@
 # roost
 
 Roost lets you run your own team of Claude Code agents on a real project. A
-lead-pm agent picks up issues from a GitHub milestone and spawns workers and
+project-manager agent picks up issues from a GitHub milestone and spawns workers and
 reviewers to drive each one through PR; the team coordinates over a local IRC
 server you can join from any client. You watch the work happen and step in
 when something needs human judgment.
@@ -26,20 +26,20 @@ on a shared host or expose port 6667 beyond localhost.
 
 ## Running a milestone
 
-Roost is built for parallel milestone work. Spawn one agent — lead-pm —
+Roost is built for parallel milestone work. Spawn one agent — project-manager —
 and hand it a GitHub milestone. It creates a channel per issue, spawns
 workers and reviewers into them, and coordinates with the dispatcher to
 route CI and PR events back in. You watch and intervene from weechat on
 the same box. Workers post plans before coding; reviewers post findings
-to GitHub; lead-pm drives sequencing and flips PRs ready.
+to GitHub; the PM drives sequencing and flips PRs ready.
 
-Bootstrap your project, then kick off lead-pm:
+Bootstrap your project, then kick off the PM:
 
 ```bash
 cd ~/Dev/myproject
 roost init --repo Owner/myproject   # writes .orchestrator/{config.json, config.local.json, .gitignore} + copies role prompts
-roost spawn myproject-lead-pm \
-  --agent lead-pm \
+roost spawn myproject-pm \
+  --agent project-manager \
   --channels '#myproject-leads' \
   --steer-compact --cache-ttl 1h \
   --ask-irc '#myproject-leads' --ask-target <your-nick> \
@@ -48,7 +48,7 @@ roost spawn myproject-lead-pm \
 
 See [`docs/ROOST-IN-PRACTICE.md`](docs/ROOST-IN-PRACTICE.md) for the end-to-end walkthrough.
 
-Roost ships more agents than lead-pm — each is a `roost spawn <nick> --agent <name>`
+Roost ships more agents than project-manager — each is a `roost spawn <nick> --agent <name>`
 target. `roost agents` lists the ones installed in your project; `roost agents
 --all` also shows what roost ships but you haven't installed yet, and how to
 pull them in.
@@ -224,7 +224,7 @@ roost init --multi-repo --project myapp
 DM the dispatcher (`<project>-dispatcher`) to manage the watch list:
 `watch <N>`, `unwatch <N>`, `watch pr <N>`, `unwatch pr <N>`,
 `watch list`, `help`. The dispatcher's allowlist defaults to
-`[<project>-lead-pm]`; set `irc.command_senders` in config to override.
+`[<project>-pm]`; set `irc.command_senders` in config to override.
 
 `project` namespaces every per-project artifact (`<project>-worker-N` nicks,
 `#<project>-issue-N` channels, etc.) so multiple projects can share one ergo.

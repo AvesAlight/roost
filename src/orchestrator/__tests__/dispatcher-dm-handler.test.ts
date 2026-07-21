@@ -203,8 +203,8 @@ describe('parseCommands', () => {
 // ---- Allowlist -------------------------------------------------------------
 
 describe('resolveAllowlist', () => {
-  it('defaults to [leadPmNick(project), apmNick(project)] when unset', () => {
-    expect(resolveAllowlist({ project: 'roost' })).toEqual(['roost-lead-pm', 'roost-apm'])
+  it('defaults to [pmNick(project), apmNick(project)] when unset', () => {
+    expect(resolveAllowlist({ project: 'roost' })).toEqual(['roost-pm', 'roost-apm'])
   })
 
   it('returns the explicit list when set (including empty)', () => {
@@ -253,11 +253,11 @@ describe('handleDm — routing', () => {
     expect((await loadConfig(dir)).plugins?.['issues']).toBeUndefined()
   })
 
-  it('allows the default lead-pm nick when command_senders is unset', async () => {
+  it('allows the default pm nick when command_senders is unset', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toBe('issues: watched 5')
     expect(issues.handled).toHaveLength(1)
@@ -278,7 +278,7 @@ describe('handleDm — routing', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
     expect(issues.handled).toHaveLength(1)
     expect(prs.handled).toHaveLength(0)
     expect(irc.dms[0].text).toBe('issues: watched 5')
@@ -289,7 +289,7 @@ describe('handleDm — routing', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch pr 10' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch pr 10' })
     expect(irc.dms[0].text).toBe('prs: watched 10')
     expect(issues.handled).toHaveLength(0)
   })
@@ -299,7 +299,7 @@ describe('handleDm — routing', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch list' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toBe('issues: list-section\n\nprs: list-section')
   })
@@ -309,7 +309,7 @@ describe('handleDm — routing', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'help' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'help' })
     expect(irc.dms[0].text).toContain('dispatcher DM grammar')
     expect(irc.dms[0].text).toContain('help plugins')
     expect(irc.dms[0].text).toContain('issues: help-section\n\nprs: help-section')
@@ -321,7 +321,7 @@ describe('handleDm — routing', () => {
     try {
       await writeConfig(dir, { project: 'roost', plugins: {} })
       const { deps, irc } = makeDeps(dir, [])
-      await handleDm(deps, { sender: 'roost-lead-pm', text: 'help plugins' })
+      await handleDm(deps, { sender: 'roost-pm', text: 'help plugins' })
       expect(irc.dms).toHaveLength(1)
       const reply = irc.dms[0].text
       expect(reply).toContain('test-help-plugins-alpha — alpha description')
@@ -339,7 +339,7 @@ describe('handleDm — routing', () => {
       const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
       await new Promise(r => setTimeout(r, 20))
       const { deps } = makeDeps(dir, [])
-      await handleDm(deps, { sender: 'roost-lead-pm', text: 'help plugins' })
+      await handleDm(deps, { sender: 'roost-pm', text: 'help plugins' })
       const { mtimeMs: after } = await Bun.file(join(dir, 'config.json')).stat()
       expect(after).toBe(before)
     } finally {
@@ -351,7 +351,7 @@ describe('handleDm — routing', () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch linear 99' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch linear 99' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toMatch(/no plugin handles `watch linear 99`/)
     expect(irc.dms[0].text).toMatch(/enabled plugins: issues/)
@@ -361,7 +361,7 @@ describe('handleDm — routing', () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5 foo; watch 6' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5 foo; watch 6' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toMatch(/error: channels must match/)
     expect(issues.handled).toHaveLength(0)
@@ -370,7 +370,7 @@ describe('handleDm — routing', () => {
   it('reports multiple parse errors in one reply', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list foo; watch 5 bar' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch list foo; watch 5 bar' })
     expect(irc.dms).toHaveLength(1)
     const reply = irc.dms[0].text
     expect(reply).toMatch(/watch list takes no arguments/)
@@ -382,7 +382,7 @@ describe('handleDm — routing', () => {
     const issues = new StubPlugin('issues', null)
     const prs = new StubPlugin('prs', 'pr')
     const { deps, irc } = makeDeps(dir, [issues, prs])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5\nwatch pr 10' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5\nwatch pr 10' })
     expect(irc.dms).toHaveLength(1)
     expect(irc.dms[0].text).toBe('issues: watched 5\n\nprs: watched 10')
     const config = await loadConfig(dir)
@@ -394,7 +394,7 @@ describe('handleDm — routing', () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const baseBefore = await loadConfigBase(dir)
     const { deps } = makeDeps(dir, [new StubPlugin('issues', null), new StubPlugin('prs', 'pr')])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5\nwatch pr 10' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5\nwatch pr 10' })
     const baseAfter = await loadConfigBase(dir)
     expect(baseAfter).toEqual(baseBefore)
     const overlay = await loadLocalOverlay(dir)
@@ -430,7 +430,7 @@ describe('handleDm — routing', () => {
       }
     }
     const { deps, irc } = makeDeps(dir, [new ListishPlugin()])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5; watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5; watch 5' })
     expect(irc.dms[0].text).toBe('watching 5\n\nalready watching 5')
     const overlay = await loadLocalOverlay(dir)
     expect((overlay.plugins?.['listish'] as { watched: number[] }).watched).toEqual([5])
@@ -440,7 +440,7 @@ describe('handleDm — routing', () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const issues = new StubPlugin('issues', null)
     const { deps, irc } = makeDeps(dir, [issues])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 7' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 7' })
     const logLine = irc.logs.find(l => l.includes('cmd=plugin'))
     expect(logLine).toBeDefined()
     expect(logLine).toContain('plugin=issues')
@@ -450,7 +450,7 @@ describe('handleDm — routing', () => {
   it('empty-body DMs are ignored silently', async () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: '   ' })
+    await handleDm(deps, { sender: 'roost-pm', text: '   ' })
     expect(irc.dms).toEqual([])
     expect(irc.errors).toEqual([])
   })
@@ -462,13 +462,13 @@ describe('handleDm — routing', () => {
     expect(irc.dms[0].text).toBe('issues: watched 7')
   })
 
-  it('explicit empty allowlist blocks everyone (including lead-pm and apm)', async () => {
+  it('explicit empty allowlist blocks everyone (including pm and apm)', async () => {
     await writeConfig(dir, { project: 'roost', irc: { command_senders: [] }, plugins: {} })
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
     await handleDm(deps, { sender: 'roost-apm', text: 'watch 5' })
     expect(irc.dms).toEqual([
-      { nick: 'roost-lead-pm', text: 'not authorized; configure irc.command_senders' },
+      { nick: 'roost-pm', text: 'not authorized; configure irc.command_senders' },
       { nick: 'roost-apm', text: 'not authorized; configure irc.command_senders' },
     ])
   })
@@ -476,7 +476,7 @@ describe('handleDm — routing', () => {
   it('config load error surfaces to project channel, no throw', async () => {
     const bogusDir = join(dir, 'does', 'not', 'exist')
     const { deps, irc } = makeDeps(bogusDir, [new StubPlugin('issues', null)])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
     expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config load'))).toBe(true)
   })
 
@@ -485,7 +485,7 @@ describe('handleDm — routing', () => {
     await chmod(dir, 0o555)
     try {
       const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
-      await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+      await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
       expect(irc.errors.some(e => e.startsWith('[dispatcher_error] config write'))).toBe(true)
       expect(irc.dms.some(d => d.text.startsWith('error: failed to update config'))).toBe(true)
     } finally {
@@ -497,7 +497,7 @@ describe('handleDm — routing', () => {
     await writeConfig(dir, { project: 'roost', plugins: {} })
     const buggy = new StubPlugin('buggy', null, () => { throw new Error('plugin bug') })
     const { deps, irc } = makeDeps(dir, [buggy])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch 5' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch 5' })
     expect(irc.errors.some(e => e.includes('handleCommand'))).toBe(true)
     expect(irc.dms.some(d => /handler crashed/.test(d.text))).toBe(true)
   })
@@ -507,7 +507,7 @@ describe('handleDm — routing', () => {
     const { mtimeMs: before } = await Bun.file(join(dir, 'config.json')).stat()
     await new Promise(r => setTimeout(r, 20))
     const { deps, irc } = makeDeps(dir, [new StubPlugin('issues', null)])
-    await handleDm(deps, { sender: 'roost-lead-pm', text: 'watch list' })
+    await handleDm(deps, { sender: 'roost-pm', text: 'watch list' })
     expect(irc.dms).toHaveLength(1)
     const { mtimeMs: after } = await Bun.file(join(dir, 'config.json')).stat()
     expect(after).toBe(before)

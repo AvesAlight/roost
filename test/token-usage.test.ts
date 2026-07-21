@@ -275,11 +275,11 @@ describe('token-usage', () => {
     it('sinceTs filter excludes pre-window turns', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 10_000 },
         { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 50, output: 25, apiDurationMs: 2_000 },
       ])
-      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      const r = await collectForNick('roost-pm', projects, '2026-05-16T10:00:00Z')
       const opus = r.byModel.get('claude-opus-4-7')!
       expect(opus.input).toBe(50)
       expect(opus.output).toBe(25)
@@ -472,7 +472,7 @@ describe('token-usage', () => {
     it('sinceTs filter applies to subagent rows the same as parent rows', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      const parent = await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      const parent = await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 10_000 },
       ])
       await writeSubagentFile(parent, 'aaa5555555555555a', [
@@ -481,7 +481,7 @@ describe('token-usage', () => {
         // Post-window subagent turn — counts.
         { ts: '2026-05-16T11:00:00Z', model: 'claude-haiku-4-5-20251001', input: 11, output: 22, apiDurationMs: 333 },
       ])
-      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      const r = await collectForNick('roost-pm', projects, '2026-05-16T10:00:00Z')
       // Parent pre-window turn excluded, only post-window subagent turn counts.
       expect(r.byModel.get('claude-opus-4-7')).toBeUndefined()
       const haiku = r.byModel.get('claude-haiku-4-5-20251001')!
@@ -604,7 +604,7 @@ describe('token-usage', () => {
     it('sinceTs excludes pre-window compact_boundary rows', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 },
       ], {
         compactBoundaries: [
@@ -612,7 +612,7 @@ describe('token-usage', () => {
           { ts: '2026-05-16T11:30:00Z', uuid: 'post', preTokens: 200_000, postTokens: 10_000, durationMs: 80_000 },
         ],
       })
-      const r = await collectForNick('roost-lead-pm', projects, '2026-05-16T10:00:00Z')
+      const r = await collectForNick('roost-pm', projects, '2026-05-16T10:00:00Z')
       expect(r.compactions.count).toBe(1)
       expect(r.compactions.preTokens).toBe(200_000)
     })
@@ -638,27 +638,27 @@ describe('token-usage', () => {
     it('snapshot records timestamp only; report after no chatter shows no in-window activity', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 5000 },
       ])
-      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm']))
+      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-pm']))
       expect(snap.result).toBe(0)
       const snapFile = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { snapshot_at: string }>>
-      expect(snapFile['319']['roost-lead-pm'].snapshot_at).toBeTruthy()
+      expect(snapFile['319']['roost-pm'].snapshot_at).toBeTruthy()
 
-      const rep = await capture(() => main(['report', stateDir, '319', 'roost-lead-pm']))
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-pm']))
       expect(rep.result).toBe(0)
-      expect(rep.out).toContain('roost-lead-pm: $0.00 · 0s api / 0s wall')
+      expect(rep.out).toContain('roost-pm: $0.00 · 0s api / 0s wall')
       expect(rep.out).toContain('(no in-window activity)')
     })
 
     it('report after new turns shows only the post-snapshot delta', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      const path = await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      const path = await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T09:00:00Z', model: 'claude-opus-4-7', input: 1_000_000, output: 100_000, apiDurationMs: 60_000 },
       ])
-      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm']))
+      const snap = await capture(() => main(['snapshot', stateDir, '319', 'roost-pm']))
       expect(snap.result).toBe(0)
 
       // Append a new post-snapshot turn. snapshot_at is `now`; using a
@@ -673,7 +673,7 @@ describe('token-usage', () => {
       })
       await writeFile(path, (await readFile(path, 'utf8')) + newTurn + '\n' + newDur + '\n')
 
-      const rep = await capture(() => main(['report', stateDir, '319', 'roost-lead-pm']))
+      const rep = await capture(() => main(['report', stateDir, '319', 'roost-pm']))
       // Pre-snapshot 1M-input turn must NOT count; only the 7/3 turn does.
       expect(rep.out).toContain('opus-4-7: 7 in / 3 out')
       expect(rep.out).toContain('1s api')
@@ -746,8 +746,8 @@ describe('token-usage', () => {
     it('exits non-zero when any nick matches zero session files', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 }])
-      const rep = await capture(() => main(['report', stateDir, '999', 'roost-lead-pm', 'roost-ghost']))
+      await writeSessionFile(d, 's.jsonl', 'roost-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 5, output: 5 }])
+      const rep = await capture(() => main(['report', stateDir, '999', 'roost-pm', 'roost-ghost']))
       expect(rep.result).toBe(1)
       expect(rep.err).toContain('roost-ghost')
     })
@@ -767,14 +767,14 @@ describe('token-usage', () => {
     it('snapshot for a second issue preserves the first entry', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 'a.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 }])
+      await writeSessionFile(d, 'a.jsonl', 'roost-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 10, output: 5 }])
       await writeSessionFile(d, 'b.jsonl', 'roost-apm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 10, output: 5 }])
-      await capture(() => main(['snapshot', stateDir, '319', 'roost-lead-pm', 'roost-apm']))
-      await capture(() => main(['snapshot', stateDir, '320', 'roost-lead-pm']))
+      await capture(() => main(['snapshot', stateDir, '319', 'roost-pm', 'roost-apm']))
+      await capture(() => main(['snapshot', stateDir, '320', 'roost-pm']))
       const snap = JSON.parse(await readFile(join(stateDir, 'token-snapshots.json'), 'utf8')) as Record<string, Record<string, { snapshot_at: string }>>
-      expect(snap['319']?.['roost-lead-pm']?.snapshot_at).toBeTruthy()
+      expect(snap['319']?.['roost-pm']?.snapshot_at).toBeTruthy()
       expect(snap['319']?.['roost-apm']?.snapshot_at).toBeTruthy()
-      expect(snap['320']?.['roost-lead-pm']?.snapshot_at).toBeTruthy()
+      expect(snap['320']?.['roost-pm']?.snapshot_at).toBeTruthy()
       expect(snap['320']?.['roost-apm']).toBeUndefined()
     })
 
@@ -783,12 +783,12 @@ describe('token-usage', () => {
       await mkdir(d, { recursive: true })
       await writeSessionFile(d, 'w.jsonl', 'roost-worker-42', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 100, output: 10, apiDurationMs: 500 }])
       await writeSessionFile(d, 'r.jsonl', 'roost-reviewer-42', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 50, output: 5, apiDurationMs: 300 }])
-      await writeSessionFile(d, 'l.jsonl', 'roost-lead-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 5000 }])
+      await writeSessionFile(d, 'l.jsonl', 'roost-pm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1000, output: 500, apiDurationMs: 5000 }])
       await writeSessionFile(d, 'a.jsonl', 'roost-apm', [{ ts: '2026-05-16T10:00:00Z', model: 'claude-sonnet-4-6', input: 200, output: 100, apiDurationMs: 1000 }])
-      await capture(() => main(['snapshot', stateDir, '42', 'roost-lead-pm', 'roost-apm']))
+      await capture(() => main(['snapshot', stateDir, '42', 'roost-pm', 'roost-apm']))
       const rep = await capture(() => main([
         'report', stateDir, '42',
-        'roost-worker-42', 'roost-reviewer-42', 'roost-lead-pm', 'roost-apm',
+        'roost-worker-42', 'roost-reviewer-42', 'roost-pm', 'roost-apm',
       ]))
       expect(rep.result).toBe(0)
       // Each nick produces a head line + at least one model sub-line.
@@ -797,7 +797,7 @@ describe('token-usage', () => {
       // a snapshot but no post-snapshot activity).
       expect(rep.out).toContain('roost-worker-42:')
       expect(rep.out).toContain('roost-reviewer-42:')
-      expect(rep.out).toContain('roost-lead-pm: $0.00')
+      expect(rep.out).toContain('roost-pm: $0.00')
       expect(rep.out).toContain('roost-apm: $0.00')
       expect(rep.out).toContain('(no in-window activity)')
     })
@@ -834,14 +834,14 @@ describe('token-usage', () => {
     it('report renders compaction line when nick has compact_boundary rows', async () => {
       const d = join(projects, '-p')
       await mkdir(d, { recursive: true })
-      await writeSessionFile(d, 's.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(d, 's.jsonl', 'roost-pm', [
         { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 100, output: 50, apiDurationMs: 5000 },
       ], {
         compactBoundaries: [
           { ts: '2026-05-16T10:30:00Z', uuid: 'c1', preTokens: 268_000, postTokens: 12_000, durationMs: 131_000 },
         ],
       })
-      const rep = await capture(() => main(['report', stateDir, '334', 'roost-lead-pm']))
+      const rep = await capture(() => main(['report', stateDir, '334', 'roost-pm']))
       expect(rep.result).toBe(0)
       expect(rep.out).toContain('compaction: 1× (pre 268k → post 12k, 2m11s; call cost not captured)')
     })
@@ -862,16 +862,16 @@ describe('token-usage', () => {
       await mkdir(a, { recursive: true })
       await mkdir(b, { recursive: true })
       // Session A: tools_changed 500k tokens → $5.75/M × 500k = $2.875
-      await writeSessionFile(a, 's1.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(a, 's1.jsonl', 'roost-pm', [
         { ts: '2026-05-16T10:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_A',
           cacheMissReason: { type: 'tools_changed', cache_missed_input_tokens: 500_000 } },
       ])
       // Session B: system_changed 200k tokens → $5.75/M × 200k = $1.15
-      await writeSessionFile(b, 's2.jsonl', 'roost-lead-pm', [
+      await writeSessionFile(b, 's2.jsonl', 'roost-pm', [
         { ts: '2026-05-16T11:00:00Z', model: 'claude-opus-4-7', input: 1, output: 1, requestId: 'req_B',
           cacheMissReason: { type: 'system_changed', cache_missed_input_tokens: 200_000 } },
       ])
-      const rep = await capture(() => main(['report', stateDir, '339', 'roost-lead-pm']))
+      const rep = await capture(() => main(['report', stateDir, '339', 'roost-pm']))
       // Total miss: 700k tokens → $5.75/M × 700k = $4.025 → $4.03 (rounding)
       expect(rep.out).toContain('$4.03 miss')
       // Both reasons appear in the per-model line, system_changed first (larger cost after sorting by tokens)

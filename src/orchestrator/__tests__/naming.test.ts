@@ -6,7 +6,7 @@ import {
   leadsChannel,
   workerNick,
   reviewerNick,
-  leadPmNick,
+  pmNick,
   apmNick,
   dispatcherNick,
   repoSlug,
@@ -87,7 +87,7 @@ describe('name helpers', () => {
     expect(leadsChannel('roost')).toBe('#roost-leads')
     expect(workerNick('roost', 196)).toBe('roost-worker-196')
     expect(reviewerNick('roost', 200)).toBe('roost-reviewer-200')
-    expect(leadPmNick('roost')).toBe('roost-lead-pm')
+    expect(pmNick('roost')).toBe('roost-pm')
     expect(apmNick('roost')).toBe('roost-apm')
     expect(dispatcherNick('roost')).toBe('roost-dispatcher')
   })
