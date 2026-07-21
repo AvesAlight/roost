@@ -338,7 +338,7 @@ const PR_NODE_FIELDS = `
     closingIssuesReferences(first:25){ nodes{ number repository{ nameWithOwner } } }
     reviews(last:${BATCH_CONNECTION_CAP}){ totalCount nodes{ databaseId url author{ login } body state } }
     comments(last:${BATCH_CONNECTION_CAP}){ totalCount nodes{ databaseId url author{ login } body } }
-    reviewThreads(last:${BATCH_CONNECTION_CAP}){ totalCount nodes{ comments(first:${BATCH_CONNECTION_CAP}){ nodes{ databaseId url author{ login } body path line originalLine } } } }
+    reviewThreads(last:${BATCH_CONNECTION_CAP}){ totalCount nodes{ comments(last:${BATCH_CONNECTION_CAP}){ nodes{ databaseId url author{ login } body path line originalLine } } } }
 `
 
 const ISSUE_NODE_FIELDS = `
