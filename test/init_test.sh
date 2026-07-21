@@ -323,8 +323,7 @@ teardown
 setup ""
 cd "$TDIR"
 if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1 \
-    && [ -f "${TDIR}/.claude/commands/worker.md" ] \
-    && [ -f "${TDIR}/.claude/commands/reviewer.md" ]; then
+    && [ -f "${TDIR}/.claude/commands/worker.md" ]; then
   ok "prompts: fresh copy to .claude/commands/"
 else
   fail "prompts: fresh copy to .claude/commands/"
@@ -338,7 +337,8 @@ setup ""
 cd "$TDIR"
 if roost_init --repo "TestOwner/myproject" >/dev/null 2>&1 \
     && [ -f "${TDIR}/.claude/agents/lead-pm.md" ] \
-    && [ -f "${TDIR}/.claude/agents/associate-pm.md" ]; then
+    && [ -f "${TDIR}/.claude/agents/associate-pm.md" ] \
+    && [ -f "${TDIR}/.claude/agents/reviewer.md" ]; then
   ok "agents: fresh copy to .claude/agents/"
 else
   fail "agents: fresh copy to .claude/agents/"

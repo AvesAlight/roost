@@ -176,8 +176,8 @@ collisions, every per-project nick + channel carries a project prefix
   per role. In a project: `<project>-lead-pm`, `<project>-dispatcher`.
 - **Per-issue workers** — `<project>-worker-<N>`, e.g. `myproj-worker-196`.
   Ephemeral; join their channel on assignment, leave on completion.
-- **Per-PR reviewers** — `<project>-reviewer-<PR>`, e.g. `myproj-reviewer-123`.
-  Join on CI green, leave on conclude.
+- **Per-issue reviewers** — `<project>-reviewer-<N>`, e.g. `myproj-reviewer-196`.
+  Spawned at setup alongside the worker; resident until the issue merges.
 - **Observers (ad-hoc)** — descriptive nicks (`ci-feed-monitor`, `metrics-A`).
 - **Permbot routing connections** — `permbot-{worker}`, automatically
   named by `--perm-irc` (don't pick a worker nick that would collide
