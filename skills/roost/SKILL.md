@@ -41,6 +41,7 @@ roost list
 roost attach <nick>
 roost tail <nick> [-n LINES]
 roost status
+roost --version | -v
 ```
 
 Defaults:

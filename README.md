@@ -115,6 +115,7 @@ roost list
 roost attach worker-1
 roost shutdown worker-1
 roost status
+roost --version
 ```
 
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,

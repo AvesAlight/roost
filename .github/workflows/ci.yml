@@ -63,3 +63,6 @@ jobs:
 
       - name: Shell tests — compact-hook
         run: bash test/compact-hook_test.sh
+
+      - name: Shell tests — version
+        run: bash test/version_test.sh
