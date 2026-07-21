@@ -308,6 +308,43 @@ const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!) {
   }
 }`
 
+// Project-scoped variant — fetches the project-existence check and the
+// filtered issue list off the same team node in one round trip, so a scoped
+// watch costs the same one API call per tick as an unscoped one.
+const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!) {
+  teams(filter: { key: { eq: $teamKey } }) {
+    nodes {
+      projects(filter: { name: { eq: $projectName } }) {
+        nodes { id }
+      }
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }) {
+        nodes { id identifier title labels { nodes { name } } url }
+      }
+    }
+  }
+}`
+
+// Result of `fetchTeamOpenIssues`. `team-not-found`/`project-not-found` are
+// distinct so callers can emit the right "renamed or deleted?" warning text —
+// a team typo and a project typo look the same to a user staring at silence.
+export type FetchTeamIssuesResult =
+  | { kind: 'team-not-found' }
+  | { kind: 'project-not-found' }
+  | { kind: 'ok'; issues: LinearIssueNode[] }
+
+function parseIssueNodes(nodes: unknown[]): LinearIssueNode[] {
+  return nodes
+    .filter((n): n is Record<string, unknown> => n != null && typeof n === 'object')
+    .map(n => ({
+      id: typeof n.id === 'string' ? n.id : '',
+      identifier: typeof n.identifier === 'string' ? n.identifier : '',
+      title: typeof n.title === 'string' ? n.title : null,
+      labels: isLabelsShape(n.labels) ? n.labels : null,
+      url: typeof n.url === 'string' ? n.url : null,
+    }))
+    .filter(n => n.id && n.identifier)
+}
+
 // ---- Probe shape ----------------------------------------------------------
 
 export interface LinearProbeResult {
@@ -371,26 +408,28 @@ export class LinearClient {
     return result.body.data
   }
 
-  // Fetch open (not completed, not canceled) issues for a team identified by key
-  // (e.g. "C", "MAR"). Returns null when the team key is not found (renamed or
-  // deleted); returns an empty array when the team exists but has no open issues.
-  async fetchTeamOpenIssues(teamKey: string): Promise<LinearIssueNode[] | null> {
+  // Fetch open (not completed, not canceled) issues for a team identified by
+  // key (e.g. "C", "MAR"), optionally scoped to a Linear project name within
+  // that team. `team-not-found` covers a renamed/deleted team key;
+  // `project-not-found` covers a renamed/deleted/typo'd project name within
+  // an otherwise-valid team; `ok` (possibly with an empty `issues` array)
+  // covers everything resolving cleanly.
+  async fetchTeamOpenIssues(teamKey: string, linearProject?: string): Promise<FetchTeamIssuesResult> {
+    if (linearProject) {
+      const data = (await this.graphql(TEAM_PROJECT_OPEN_ISSUES_QUERY, { teamKey, projectName: linearProject })) as {
+        teams?: { nodes?: Array<{ projects?: { nodes?: unknown[] }; issues?: { nodes?: unknown[] } }> }
+      } | undefined | null
+      const teamNode = data?.teams?.nodes?.[0]
+      if (!teamNode) return { kind: 'team-not-found' }
+      if ((teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
+      return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
+    }
     const data = (await this.graphql(TEAM_OPEN_ISSUES_QUERY, { teamKey })) as {
       teams?: { nodes?: Array<{ issues?: { nodes?: unknown[] } }> }
     } | undefined | null
     const teamNode = data?.teams?.nodes?.[0]
-    if (!teamNode) return null
-    const nodes = teamNode.issues?.nodes ?? []
-    return nodes
-      .filter((n): n is Record<string, unknown> => n != null && typeof n === 'object')
-      .map(n => ({
-        id: typeof n.id === 'string' ? n.id : '',
-        identifier: typeof n.identifier === 'string' ? n.identifier : '',
-        title: typeof n.title === 'string' ? n.title : null,
-        labels: isLabelsShape(n.labels) ? n.labels : null,
-        url: typeof n.url === 'string' ? n.url : null,
-      }))
-      .filter(n => n.id && n.identifier)
+    if (!teamNode) return { kind: 'team-not-found' }
+    return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
   }
 
   // Boot probe: confirms auth + identifies the workspace and teams. Throws
