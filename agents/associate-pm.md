@@ -148,7 +148,7 @@ Once ready, the PR stays in ready state through the human review loop — do NOT
 
 ### Merge + cleanup dance
 
-Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're tracking + verify CI is green on the PR's current HEAD SHA via `gh pr view <N> --repo <owner>/<repo> --json headRefOid,statusCheckRollup` (or `gh pr checks <N>`) — don't rely on the dispatcher relay line alone; the relay can lag a fix push and cite a superseded commit.
+Trigger: dispatcher posts a human-submitted APPROVED review on a PR you're tracking + CI is green on the PR's current HEAD SHA, verified via `gh pr view <N> --repo <owner>/<repo> --json headRefOid,statusCheckRollup` (or `gh pr checks <N>`) — don't rely on the dispatcher relay line alone; the relay can lag a fix push and cite a superseded commit.
 
 1. Ack in `#<project>-leads`: `PR #<N> approved + CI green, ready to merge and clean up?` If the human's approval included inline nitpicks/comments, surface them: `(human left some inline nits — merge as-is or have worker address first?)`.
 2. On confirmation:
