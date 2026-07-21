@@ -142,13 +142,13 @@ The data dir is also printed by `roost spawn` as "data dir: ...".
 Routes AskUserQuestion calls to a channel instead of blocking the terminal; pair with --ask-target (the nick whose replies count).
 
 ```bash
-# Lead-pm routes questions to the leads channel (human answers):
-roost spawn myproject-lead-pm --agent lead-pm \
+# The PM routes questions to the leads channel (human answers):
+roost spawn myproject-pm --agent project-manager \
   --ask-irc '#myproject-leads' --ask-target <your-nick>
 
-# APM routes questions to the leads channel (lead-pm answers):
+# APM routes questions to the leads channel (the PM answers):
 roost spawn myproject-apm --agent associate-pm \
-  --ask-irc '#myproject-leads' --ask-target myproject-lead-pm
+  --ask-irc '#myproject-leads' --ask-target myproject-pm
 ```
 
 `--ask-target` defaults to `--perm-target` when both are set. See
@@ -173,7 +173,7 @@ collisions, every per-project nick + channel carries a project prefix
 (the project's lowercase slug, matching `^[a-z0-9][a-z0-9-]*$`):
 
 - **Standing agents** — stable nicks for long-lived roles. One instance
-  per role. In a project: `<project>-lead-pm`, `<project>-dispatcher`.
+  per role. In a project: `<project>-pm`, `<project>-dispatcher`.
 - **Per-issue workers** — `<project>-worker-<N>`, e.g. `myproj-worker-196`.
   Ephemeral; join their channel on assignment, leave on completion.
 - **Per-issue reviewers** — `<project>-reviewer-<N>`, e.g. `myproj-reviewer-196`.
@@ -206,7 +206,7 @@ with `roost status` (which lists running tmux sessions).
 - `#roost` — default landing channel. Cross-cutting only; no
   persistent per-PR worker traffic.
 - `#<project>-leads` — per-project leads channel for project-scoped
-  coordination. Lead-pm + APM + dispatcher live here.
+  coordination. PM + APM + dispatcher live here.
 - `#<project>-issue-<N>` — one per active issue. Created on first JOIN;
   dissolves when the last member leaves.
 - `#sandbox` — ad-hoc testing / demos / one-off coordination.

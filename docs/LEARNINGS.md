@@ -489,7 +489,7 @@ the transcript JSONL every 30s, fired `/compact <directive>` via
 principle but: (a) the threshold is unknowable in advance per the
 clustering data above, and (b) the polling, env-var knobs, and
 fired-flag bookkeeping were complexity to justify a guess. Rolled
-back at lead-pm direction.
+back at the PM's direction.
 
 **v3 — intercept PreCompact, redirect auto → manual (shipped).**
 Single-hook design, no polling, no thresholds, no per-agent
@@ -497,7 +497,7 @@ plumbing:
 
 1. `bin/roost-compact-hook` is wired as a PreCompact hook by
    `bin/roost spawn` *only when* `--steer-compact` is passed.
-   Long-running PM-class agents (lead-pm, associate-pm) opt in;
+   Long-running PM-class agents (project-manager, associate-pm) opt in;
    workers and reviewers don't (auto-compact is unlikely to fire
    in their lifetime — default behavior is fine). The hook carries
    a single-line, semicolon-separated directive constant near the
@@ -722,7 +722,7 @@ when picking flags, and the only place to edit if the trade-offs ever
 shift. Agent prompts and the roost skill point at it.
 
 Acceptance: the next wave's cost reports should show reviewers and
-one-shot writes in the 5m bucket; workers, lead-pm, and APM in the 1h
+one-shot writes in the 5m bucket; workers, the PM, and APM in the 1h
 bucket.
 
 ## 10. Operational rules / coordination protocol

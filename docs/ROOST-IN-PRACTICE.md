@@ -31,8 +31,8 @@ now (nothing blocking them), which are deferred, which it wants to
 sequence carefully. You read the strategy in your IRC client, push
 back where you disagree, and bless it. From there the agent runs.
 
-That agent is **lead-pm**. Its operational playbook lives at
-`agents/lead-pm.md` — issue pickup, milestone strategy, the go/no-go
+That agent is **project-manager**. Its operational playbook lives at
+`agents/project-manager.md` — issue pickup, milestone strategy, the go/no-go
 gates, human-review coordination. It sits in
 `#<project>-leads` continuously and joins each issue channel while
 it's active. On startup it spawns an **APM** sidekick
@@ -40,14 +40,14 @@ it's active. On startup it spawns an **APM** sidekick
 worktree setup, worker-and-reviewer spawn, PR-watch, ready-flip,
 merge, cleanup, follow-up filing.
 
-For the first issue, the APM (at lead-pm's nod) opens a channel
+For the first issue, the APM (at the PM's nod) opens a channel
 called `#<project>-issue-42`, DMs the dispatcher (`watch 42`) to
 subscribe to the issue (so GitHub events for it route to that
 channel), creates an isolated git worktree, and spawns a worker and a
 reviewer into it.
 
 **worker-42** reads the issue, posts an implementation plan in
-`#<project>-issue-42`, and waits. lead-pm and **reviewer-42** read
+`#<project>-issue-42`, and waits. The PM and **reviewer-42** read
 the plan and push back — this is where rework is cheap, so a few
 rounds of pressure-testing are normal. Once the plan holds up, the
 worker implements, opens a draft PR, and posts the link in the
@@ -67,7 +67,7 @@ in the channel sees when the build is healthy.
 
 You approve. The APM merges, terminates the worker and reviewer,
 parts the channel, cleans up the worktree, and DMs the dispatcher to
-unsubscribe (`unwatch 42`, `unwatch pr 73`). Then lead-pm picks the
+unsubscribe (`unwatch 42`, `unwatch pr 73`). Then the PM picks the
 next pickable issue off the DAG and the cycle repeats.
 
 ## Parallelism is the channel structure
@@ -75,7 +75,7 @@ next pickable issue off the DAG and the cycle repeats.
 Nothing in that walkthrough requires one issue at a time. The
 second issue is also in flight in `#<project>-issue-43`, with its
 own worker, its own reviewer cycle, its own CI pipeline. So is the
-third in `#<project>-issue-44`. lead-pm is in all of them and
+third in `#<project>-issue-44`. The PM is in all of them and
 `#<project>-leads` simultaneously, picking the next pickable issue
 off the DAG when bandwidth opens. You're in `#<project>-leads`
 watching the through-line and dipping into individual issue
@@ -104,12 +104,12 @@ keeps the same `#<project>-issue-N`.
 
 You stay in the loop without being in the way. You can answer a
 worker's question in `#<project>-issue-42`, redirect a plan, or
-just lurk and let the lead-pm handle it. Because everything routes
+just lurk and let the PM handle it. Because everything routes
 through channels, your messages land in the same feed the agents
 are already reading. There's no second pathway for "human-to-agent"
 — you're just another nick on the IRC server.
 
-The agent and prompt files (`agents/lead-pm.md`,
+The agent and prompt files (`agents/project-manager.md`,
 `prompts/worker.md`, `agents/reviewer.md`) are the operational
 source of truth — they're what the agents actually run, and they're
 the right starting point for standing up your own project on Roost.

@@ -81,8 +81,8 @@ export function reviewerNick(project: string, n: number, slug?: string): string 
   return slug ? `${project}-${slug}-reviewer-${n}` : `${project}-reviewer-${n}`
 }
 
-export function leadPmNick(project: string): string {
-  return `${project}-lead-pm`
+export function pmNick(project: string): string {
+  return `${project}-pm`
 }
 
 export function apmNick(project: string): string {

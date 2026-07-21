@@ -26,15 +26,15 @@ teardown() {
 }
 
 # -- Test 1: default lists only spawnable — no roster, reconciliation, or desc --
-# The clean "agents to hire" list. lead-pm is installed; associate-pm ships but
+# The clean "agents to hire" list. project-manager is installed; associate-pm ships but
 # isn't installed — the default must NOT mention it or the shipped roster.
 
 setup
 mkdir -p "$TDIR/proj/.claude/agents"
-cp "$REPO/agents/lead-pm.md" "$TDIR/proj/.claude/agents/"
+cp "$REPO/agents/project-manager.md" "$TDIR/proj/.claude/agents/"
 out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --cwd "$TDIR/proj" 2>&1)"
 if echo "$out" | grep -q "Spawnable here" \
-    && echo "$out" | grep -qE 'lead-pm[[:space:]]+\(project\)' \
+    && echo "$out" | grep -qE 'project-manager[[:space:]]+\(project\)' \
     && ! echo "$out" | grep -q "Shipped with roost" \
     && ! echo "$out" | grep -q "Shipped but not installed" \
     && ! echo "$out" | grep -q "associate-pm" \
@@ -49,12 +49,12 @@ teardown
 
 setup
 mkdir -p "$TDIR/proj/.claude/agents"
-cp "$REPO/agents/lead-pm.md" "$TDIR/proj/.claude/agents/"
+cp "$REPO/agents/project-manager.md" "$TDIR/proj/.claude/agents/"
 out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --all --cwd "$TDIR/proj" 2>&1)"
 if echo "$out" | grep -q "Shipped with roost" \
     && echo "$out" | grep -q "associate-pm" \
-    && echo "$out" | grep -q "Lead project manager" \
-    && echo "$out" | grep -qE 'lead-pm[[:space:]]+\(project\)' \
+    && echo "$out" | grep -q "drives a milestone to completion" \
+    && echo "$out" | grep -qE 'project-manager[[:space:]]+\(project\)' \
     && echo "$out" | grep -q "Shipped but not installed here: associate-pm" \
     && echo "$out" | grep -q "roost init --force-agents"; then
   ok "--all: shipped roster with descriptions + reconciliation for the missing one"
@@ -86,7 +86,7 @@ setup
 mkdir -p "$TDIR/empty"
 out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --all --cwd "$TDIR/empty" 2>&1)"
 if echo "$out" | grep -q "Shipped with roost" \
-    && echo "$out" | grep -q "lead-pm" \
+    && echo "$out" | grep -q "project-manager" \
     && echo "$out" | grep -q "none installed" \
     && echo "$out" | grep -q "shipped agents above"; then
   ok "--all, none installed: roster shown, empty-state references the roster above"
@@ -97,18 +97,18 @@ teardown
 
 # -- Test 5: default — project shadows user; user-only agent tagged (user) ------
 # Mirrors the spawn resolver: project .claude/agents wins over ~/.claude/agents
-# by basename. lead-pm lives in both → shown once as (project); associate-pm
+# by basename. project-manager lives in both → shown once as (project); associate-pm
 # only in user scope → (user).
 
 setup
 mkdir -p "$TDIR/proj/.claude/agents" "$TDIR/fakehome/.claude/agents"
-cp "$REPO/agents/lead-pm.md" "$TDIR/proj/.claude/agents/"
-cp "$REPO/agents/lead-pm.md" "$TDIR/fakehome/.claude/agents/"
+cp "$REPO/agents/project-manager.md" "$TDIR/proj/.claude/agents/"
+cp "$REPO/agents/project-manager.md" "$TDIR/fakehome/.claude/agents/"
 cp "$REPO/agents/associate-pm.md" "$TDIR/fakehome/.claude/agents/"
 out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --cwd "$TDIR/proj" 2>&1)"
-if echo "$out" | grep -qE 'lead-pm[[:space:]]+\(project\)' \
+if echo "$out" | grep -qE 'project-manager[[:space:]]+\(project\)' \
     && echo "$out" | grep -qE 'associate-pm[[:space:]]+\(user\)' \
-    && ! echo "$out" | grep -qE 'lead-pm[[:space:]]+\(user\)'; then
+    && ! echo "$out" | grep -qE 'project-manager[[:space:]]+\(user\)'; then
   ok "default: project shadows user; user-only agent tagged (user)"
 else
   fail "default: project shadows user; user-only agent tagged (user)" "out=$out"
@@ -120,14 +120,14 @@ teardown
 
 setup
 mkdir -p "$TDIR/proj/.claude/agents"
-cp "$REPO/agents/lead-pm.md" "$TDIR/proj/.claude/agents/"
+cp "$REPO/agents/project-manager.md" "$TDIR/proj/.claude/agents/"
 cp "$REPO/agents/associate-pm.md" "$TDIR/proj/.claude/agents/"
 agents_out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --cwd "$TDIR/proj" 2>&1)"
 spawn_err="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" spawn testnick --agent nope --cwd "$TDIR/proj" 2>&1)"
 avail="$(echo "$spawn_err" | sed -n 's/^available agents: //p')"
-if echo "$avail" | grep -q "lead-pm" \
+if echo "$avail" | grep -q "project-manager" \
     && echo "$avail" | grep -q "associate-pm" \
-    && echo "$agents_out" | grep -qE 'lead-pm[[:space:]]+\(project\)' \
+    && echo "$agents_out" | grep -qE 'project-manager[[:space:]]+\(project\)' \
     && echo "$agents_out" | grep -qE 'associate-pm[[:space:]]+\(project\)'; then
   ok "consistency: not-found 'available agents' matches default spawnable set"
 else

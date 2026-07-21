@@ -8,7 +8,7 @@
 // one-line DM, plugin throws bubble up as [dispatcher_error] on the project channel.
 
 import { loadConfig, loadConfigBase, loadLocalOverlay, mergeConfigs, mutateConfig, type OrchestratorConfig } from './config.js'
-import { apmNick, defaultProject, leadPmNick } from './naming.js'
+import { apmNick, defaultProject, pmNick } from './naming.js'
 import { assertRepoModeAll, priorityOf, registeredPlugins, type Plugin } from './plugin.js'
 import { splitCommands } from './plugins/grammar.js'
 
@@ -98,14 +98,14 @@ export function parseCommands(text: string, plugins: Plugin[], config: Orchestra
 
 // ---- Allowlist -------------------------------------------------------------
 
-// Unset → `[leadPmNick(project), apmNick(project)]`. Explicit `[]` rejects all.
+// Unset → `[pmNick(project), apmNick(project)]`. Explicit `[]` rejects all.
 // Unresolvable project → `[]` + log line so a "not authorized" reply is traceable.
 export function resolveAllowlist(config: OrchestratorConfig, log?: (line: string) => void): string[] {
   const explicit = config.irc?.command_senders
   if (explicit !== undefined) return explicit
   try {
     const project = defaultProject(config)
-    return [leadPmNick(project), apmNick(project)]
+    return [pmNick(project), apmNick(project)]
   } catch (e) {
     log?.(`dispatcher-dm-handler: cannot resolve default allowlist (no project/repo in config): ${e}`)
     return []
