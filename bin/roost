@@ -38,9 +38,17 @@ IRC_HOST="${ROOST_IRC_SERVER:-127.0.0.1}"
 IRC_PORT=6667
 SESSION_PREFIX="roost-"
 
+print_version() {
+  local pkg="${ROOST_DIR}/package.json"
+  local version
+  version="$(grep -m1 '"version"' "${pkg}" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
+  echo "roost ${version}"
+}
+
 usage() {
   cat <<EOF
 Usage: roost <command> [args]
+       roost -v | --version
 
 Commands:
   init                     Bootstrap config, .gitignore, and copy prompts.
@@ -54,6 +62,7 @@ Commands:
   root                     Print the roost plugin root directory.
   send <nick> <message...> Inject text into a nick's tmux pane.
   hook-exec <name>         Exec a hook entry point — used in spawned hook configs.
+  -v, --version            Print the installed roost version.
 
 Quick start:
   roost init
@@ -1462,6 +1471,7 @@ case "${cmd}" in
   send)      cmd_send "$@" ;;
   hook-exec) cmd_hook_exec "$@" ;;
   root)      echo "${ROOST_DIR}" ;;
+  -v|--version) print_version ;;
   -h|--help|help) usage ;;
   *) echo "error: unknown command: ${cmd}" >&2; usage; exit 1 ;;
 esac
