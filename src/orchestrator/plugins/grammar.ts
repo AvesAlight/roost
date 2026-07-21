@@ -195,18 +195,38 @@ export function tryClaimPerLinearId(line: string): ParseResult<PerLinearIdComman
 export interface PerLinearTeamCommand {
   verb: Verb
   team: string
+  project: string | null
   channels: string[]
 }
+
+// Quoted project filter — `project:"<name>"`. Quotes are required (not
+// optional sugar) because Linear project names routinely contain spaces
+// (e.g. "SDK 4.3.14"), which a plain whitespace tokenizer can't otherwise
+// tell apart from channel/team tokens. Pulled out of the raw line *before*
+// tokenizing so the quoted spaces never reach `tokenizeVerbLine`'s split.
+const PROJECT_QUOTED_RE = /\bproject:"([^"]*)"/
+const PROJECT_STRAY_RE = /^project:/i
 
 // Try to claim a per-Linear-team line for `target`. Returns:
 //   - `null` if the line isn't watch/unwatch, or doesn't lead with this target.
 //   - `{kind:'ok',cmd}` on a clean claim.
 //   - `{kind:'error',msg}` when the line claimed this plugin's target but the
-//     body fails validation (bad team key, malformed channel, etc.). Unlike
-//     `tryClaimPerN`/`tryClaimPerRepo`, there is no shape-based defer — `linear-team`
-//     is an unambiguous keyword; no other plugin claims it.
+//     body fails validation (bad team key, malformed channel, unquoted/empty
+//     project filter, etc.). Unlike `tryClaimPerN`/`tryClaimPerRepo`, there is
+//     no shape-based defer — `linear-team` is an unambiguous keyword; no other
+//     plugin claims it.
+//
+// Known limitation, accepted as-is: a project name containing `,`/`;`/newline
+// can't round-trip through a DM — `splitCommands` splits the message into
+// per-line commands before this parser ever sees a line, so those characters
+// never survive to reach the quoted-project regex below.
 export function tryClaimPerLinearTeam(target: string, line: string): ParseResult<PerLinearTeamCommand> | null {
-  const parsed = tokenizeVerbLine(line)
+  // Strip the quoted project filter (if any) before tokenizing — its value may
+  // contain spaces that a whitespace split would otherwise fragment.
+  const quoted = line.match(PROJECT_QUOTED_RE)
+  const strippedLine = quoted ? line.slice(0, quoted.index) + line.slice(quoted.index! + quoted[0].length) : line
+
+  const parsed = tokenizeVerbLine(strippedLine)
   if (!parsed) return null
   const { verb, tokens } = parsed
   const targetMatch = matchTarget(target, tokens)
@@ -226,17 +246,33 @@ export function tryClaimPerLinearTeam(target: string, line: string): ParseResult
     }
   }
 
-  const channels = rest.slice(1)
+  const rest1 = rest.slice(1)
+  // An unquoted or malformed `project:` token (e.g. `project:SDK`, or a
+  // dropped closing quote) survives tokenizing as a stray token — fixit
+  // rather than let it fall through to the generic channel-shape error.
+  const stray = rest1.find(t => PROJECT_STRAY_RE.test(t))
+  if (stray) {
+    return {
+      kind: 'error',
+      message: `${verb}: project filter must be quoted — try project:"${stray.slice('project:'.length)}"`,
+    }
+  }
+  if (quoted && quoted[1] === '') {
+    return { kind: 'error', message: `${verb}: project filter must not be empty — project:"NAME"` }
+  }
+  const project = quoted ? quoted[1] : null
+
+  const channels = rest1
   if (verb === 'unwatch') {
     if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
-    return { kind: 'ok', cmd: { verb, team: specTok, channels: [] } }
+    return { kind: 'ok', cmd: { verb, team: specTok, project, channels: [] } }
   }
   for (const c of channels) {
     if (!CHANNEL_RE.test(c)) {
       return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
     }
   }
-  return { kind: 'ok', cmd: { verb, team: specTok, channels } }
+  return { kind: 'ok', cmd: { verb, team: specTok, project, channels } }
 }
 
 // Returns the index of the first non-target token in `tokens`, or null when
