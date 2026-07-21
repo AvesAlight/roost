@@ -691,11 +691,24 @@ observed first-hand.
    reload live, no restart needed. For verbs the classifier sometimes
    vetoes (the consequential / escalation-shaped ones): you *can't*
    grant them reliably via the allow-list, because the same rule
-   sometimes clears and sometimes gets vetoed. The reliable path is
-   operator approval through the permbot / `--perm-irc` relay. That is
-   not a workaround; it is the only path that clears the gate every
-   time. This is why the APM class runs with a permission relay rather
-   than a fat allow-list.
+   sometimes clears and sometimes gets vetoed. And no roost relay
+   currently clears the native veto for these under auto. roost's
+   `--perm-irc` bash relay is skipped under auto by design, and even
+   if wired, `classifyBash` matches none of a `gh issue comment`-shaped
+   command, so the PreToolUse hook passes it through to the native
+   classifier untouched. The APM does not run with `--perm-irc` at all
+   — the spawn templates dropped it, and the APM routes only
+   AskUserQuestion via `--ask-irc`. So the honest options today are:
+   run the verb out-of-band (the operator runs it), or run the agent
+   in a non-auto mode (acceptEdits / default) where the allow-list plus
+   the TUI / permbot govern and the native veto isn't in the path.
+   Whether a relay can be made to clear the native auto veto is open:
+   the `--perm-irc`-skip-under-auto logic rests on "auto never blocks
+   on bash," which this finding falsifies. Note you can't settle it by
+   spawning an auto agent with `--perm-irc` and watching one
+   `gh issue comment`: this finding's own context-dependence confounds
+   it, since a benign-context allow is indistinguishable from a relay
+   actually clearing the veto.
 
 3. *Is "per alex → reads as sandbox escape" real?* Partly, and it
    lives at a different layer. The model (not the harness classifier)
@@ -712,11 +725,16 @@ observed first-hand.
    matter. State the task plainly over the trusted path; don't argue
    authority.
 
-**A second structural block:** an auto agent cannot edit its own
-`.claude/settings.local.json` to self-grant. That path is protected
-(`.claude/` routes writes to the classifier) and the edit is vetoed.
-Self-escalation is closed by design. Grants must come from outside the
-agent (the operator editing the file, or approving via the relay).
+**Self-grant was unavailable in testing.** An auto agent's edit of its
+own `.claude/settings.local.json` was vetoed. The protected-path
+*routing* is deterministic and documented (`.claude/` writes route to
+the classifier), but the veto *verdict* is context-dependent like
+everything else here, and editing `.claude/` is itself
+escalation-shaped, so it clusters in the blocked bucket. This was
+observed n=1, in a cold context. So treat self-grant as unavailable —
+grants should come from outside the agent (the operator editing the
+file) — but don't read it as a structural guarantee the evidence
+doesn't establish.
 
 **Method note:** this took five throwaway probe spawns plus in-session
 sampling to get here. The first, under-sampled read ("external write
