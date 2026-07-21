@@ -4,7 +4,7 @@ import { GitHubNewIssuesPlugin } from '../plugins/github/new-issues-plugin.js'
 import { GitHubPrsPlugin } from '../plugins/github/prs-plugin.js'
 import type { OrchestratorConfig } from '../config.js'
 
-// github-new-issues is the config-static plugin from #665: it always returns
+// github-new-issues is a config-static plugin: it always returns
 // `channels: []` from runTick and relies entirely on desiredChannels for
 // membership. github-prs is the tick-dynamic plugin whose runTick channels
 // can legitimately drop a channel between ticks (e.g. a linked issue closes).
@@ -25,7 +25,7 @@ describe('reconcileDesiredChannels', () => {
     const cfg = config()
 
     // github-new-issues always returns channels: [] from runTick — simulate
-    // exactly that (the #665 repro: no tick-dynamic plugin naming #homelab).
+    // exactly that (no tick-dynamic plugin naming #homelab).
     const result = reconcileDesiredChannels(plugins, cfg, '#proj-leads', [])
 
     expect(result).toEqual(['#homelab', '#proj-leads'])
