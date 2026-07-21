@@ -51,8 +51,11 @@ describe('classifyBash', () => {
     expect(classifyBash('cd /tmp && ls > out')).toBe('cd-compound')
   })
 
-  it('cd-compound: cd + semicolon', () => {
-    expect(classifyBash('cd /tmp; ls')).toBe('cd-compound')
+  it('cd-compound: cd + git via semicolon', () => {
+    // Semicolon path still flags when the tail isn't read-only. A read-only
+    // tail (`cd /tmp; ls`) is the O2 over-fire and now takes the fast-path —
+    // see the read-only fast-path block below.
+    expect(classifyBash('cd /tmp; git status')).toBe('cd-compound')
   })
 
   it('cd-multi-positional: zsh `cd OLD NEW`', () => {
@@ -165,6 +168,63 @@ describe('classifyBash', () => {
 
   it('null: echo of a string mentioning cd', () => {
     expect(classifyBash('echo "I will cd to /tmp"')).toBeNull()
+  })
+})
+
+// ---- read-only fast-path (#641) --------------------------------------------
+//
+// CC auto-grants a "simple read-only command", so classifyBash must not relay
+// it. The fast-path is monotonic: it only ever turns a would-be relay into
+// null, never the reverse. The one observable flip vs. the prior classifier is
+// O2 — `cd <dir>; <read-only>` going cd-compound → null.
+
+describe('classifyBash read-only fast-path', () => {
+  // The O2 over-fire: a read-only tail after cd. Was flagged cd-compound.
+  it('O2: cd + read-only tail via semicolon → null', () => {
+    expect(classifyBash('cd /tmp; ls')).toBeNull()
+  })
+  it('O2: cd + read-only tail via && → null', () => {
+    expect(classifyBash('cd /tmp && grep -rn foo src/')).toBeNull()
+  })
+  it('read-only pipeline of allowlisted commands → null', () => {
+    expect(classifyBash('git log --oneline | head -20 | cat')).toBeNull()
+  })
+  it('read-only git subcommand → null', () => {
+    expect(classifyBash('git diff --stat')).toBeNull()
+  })
+
+  // Monotonicity: every other bashMissKind still flags. The fast-path declines
+  // (falls through) rather than swallowing these — its accept set is a strict
+  // subset of genuinely read-only commands.
+  it('does not swallow multi-cd', () => {
+    expect(classifyBash('cd /tmp && ls && cd /var')).toBe('multi-cd')
+  })
+  it('does not swallow cd-multi-positional', () => {
+    expect(classifyBash('cd OLD NEW')).toBe('cd-multi-positional')
+  })
+  it('does not swallow too-complex (arith with vars)', () => {
+    expect(classifyBash('echo $((x+1))')).toBe('too-complex')
+  })
+  it('does not swallow shell-operators (subshell of read-only cmds)', () => {
+    expect(classifyBash('(ls; pwd)')).toBe('shell-operators')
+  })
+  it('does not swallow cd + git (cd-git-compound)', () => {
+    expect(classifyBash('cd /repo && git status')).toBe('cd-compound')
+  })
+  it('does not swallow a read-only tail with a write redirect', () => {
+    expect(classifyBash('cd /tmp && ls > out')).toBe('cd-compound')
+  })
+
+  // A non-allowlisted command declines the fast-path. It's null anyway (no
+  // bashMissKind, parity-correct — CC auto-grants it) but via fall-through,
+  // not the fast-path.
+  it('declines a non-allowlisted command (null via fall-through)', () => {
+    expect(classifyBash('curl -s https://example.com')).toBeNull()
+  })
+  // cd + a non-read-only tail stays cd-compound — the fast-path only removes
+  // the read-only-tail over-fire, not every cd-compound.
+  it('cd + non-read-only tail still flags cd-compound', () => {
+    expect(classifyBash('cd /tmp; rm -rf x')).toBe('cd-compound')
   })
 })
 

@@ -54,6 +54,83 @@ export type BashMissKind =
   | 'flag-validation'       // CC: "flag-validation"
   | 'too-complex'           // CC: "too-complex"
 
+// Claude Code's "simple read-only command" fast-path: commands whose every
+// statement is a read-only command with no way to mutate state or escape
+// static validation. CC auto-grants these outright, so relaying them to the
+// operator is a parity violation (they never produce a blocking request). The
+// allowlist is a general read-only unix set plus `git` gated to its read-only
+// subcommands. Deliberately conservative — a command that isn't provably in
+// this set just falls through to the bashMissKind checks, so membership only
+// ever *drops* a relay, never adds one.
+const READ_ONLY = new Set([
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
+  'find', 'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
+  'file', 'stat', 'tree', 'basename', 'dirname', 'realpath', 'readlink',
+  'date', 'whoami', 'id', 'groups', 'uname', 'hostname', 'tty', 'locale',
+  'true', 'false', 'test', 'sort', 'uniq', 'cut', 'tr', 'comm', 'cmp',
+  'diff', 'column', 'tac', 'nl', 'od', 'xxd', 'seq', 'du', 'df', 'ps',
+  'printenv', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum', 'git',
+])
+
+// git subcommands that never mutate regardless of flags. `git` sits in
+// READ_ONLY only as a gate — the subcommand must land here or the fast-path
+// declines. Mutating-capable subcommands (branch/tag/remote/config/…) are
+// left out so a flag like `git branch -d` can't slip through.
+const GIT_READONLY = new Set([
+  'status', 'log', 'diff', 'show', 'blame', 'reflog', 'ls-files',
+  'rev-parse', 'rev-list', 'describe', 'cat-file', 'for-each-ref',
+  'shortlog', 'grep', 'whatchanged', 'ls-tree', 'ls-remote', 'show-ref',
+  'symbolic-ref', 'var', 'help', 'version',
+])
+
+/**
+ * True if the command matches Claude Code's read-only fast-path — every
+ * statement a read-only command, with no subshell, background `&`, redirection,
+ * process substitution, variable arithmetic, second cd, multi-positional cd, or
+ * cd-into-git. An `true` here is a strict subset of what CC auto-grants, so
+ * classifyBash can safely stay silent (return null); a `false` means "can't
+ * prove it", and the command falls through to the bashMissKind checks unchanged.
+ */
+function isSimpleReadOnly(command: string): boolean {
+  // Structural disqualifiers. Any of these means CC's fast-path declines, so
+  // classifyBash must not treat the command as simply read-only. These mirror
+  // the bashMissKind detectors below (newline-hash, process-substitution,
+  // shell-operators, too-complex) plus redirection and background — the shapes
+  // CC's own fast-path rejects — so the fast-path never swallows one of them.
+  if (/\n[ \t]*#/.test(command)) return false                    // newline-hash
+  if (/[<>]/.test(command)) return false                         // redirect / process-sub
+  if (/(?:^|[\s;&|`])\((?!\s*\))/.test(command)) return false    // subshell
+  if (/(?:^|[\s;&|`])\{\s/.test(command)) return false           // command group
+  if (/(?<!&)&(?!&)/.test(command)) return false                 // background &
+  if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return false // arithmetic with vars
+
+  const statements = command.split(/&&|\|\||[;|\n\r]/)
+  let cdCount = 0
+  let hasGit = false
+  for (const raw of statements) {
+    const seg = raw.trim()
+    if (!seg) continue
+    const tokens = seg.split(/[ \t]+/)
+    const cmd = tokens[0] ?? ''
+    if (cmd.includes('=')) return false // leading env assignment — decline
+    if (cmd === 'git') {
+      hasGit = true
+      if (!GIT_READONLY.has(tokens[1] ?? '')) return false
+      continue
+    }
+    if (!READ_ONLY.has(cmd)) return false
+    if (cmd === 'cd' || cmd === 'pushd' || cmd === 'popd') {
+      cdCount++
+      // Reject zsh `cd OLD NEW`: more than one non-flag argument.
+      const positionals = tokens.slice(1).filter((t) => t && !t.startsWith('-'))
+      if (positionals.length > 1) return false
+    }
+  }
+  if (cdCount > 1) return false            // multi-cd
+  if (cdCount >= 1 && hasGit) return false // cd + git (cd-git-compound: bare-repo attack)
+  return true
+}
+
 /**
  * Returns the bashMissKind a command resembles, or null if it should pass
  * through to the normal permission pipeline. Heuristic — errs toward
@@ -62,6 +139,11 @@ export type BashMissKind =
  */
 export function classifyBash(command: string): BashMissKind | null {
   if (!command) return null
+
+  // Read-only fast-path. CC auto-grants a simply-read-only command, so relaying
+  // it would diverge from parity. Runs first and is monotonic: it only ever
+  // returns null (drops a relay), never a bashMissKind (adds one).
+  if (isSimpleReadOnly(command)) return null
 
   // CC bashMissKind: "semantics" (newline-hash).
   // Literal newline followed by optional whitespace then '#'. The original
