@@ -252,9 +252,14 @@ export function tryClaimPerLinearTeam(target: string, line: string): ParseResult
   // rather than let it fall through to the generic channel-shape error.
   const stray = rest1.find(t => PROJECT_STRAY_RE.test(t))
   if (stray) {
+    // Note: an unquoted value with spaces (`project:SDK 4.3.14`) only shows up
+    // here as its first token (`project:SDK`) — the rest already got split off
+    // as separate tokens by the whitespace tokenizer, with no way to recover
+    // which of them belonged to the value. Point at the generic quoted form
+    // rather than echo back a truncated (and possibly misleading) guess.
     return {
       kind: 'error',
-      message: `${verb}: project filter must be quoted — try project:"${stray.slice('project:'.length)}"`,
+      message: `${verb}: project filter must be quoted — try project:"<NAME>"`,
     }
   }
   if (quoted && quoted[1] === '') {

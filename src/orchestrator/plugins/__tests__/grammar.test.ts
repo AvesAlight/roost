@@ -362,7 +362,14 @@ describe('tryClaimPerLinearTeam — target=linear-team', () => {
     const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:SDK')
     expect(r?.kind).toBe('error')
     expect((r as { kind: 'error'; message: string }).message).toMatch(/must be quoted/)
-    expect((r as { kind: 'error'; message: string }).message).toContain('project:"SDK"')
+    expect((r as { kind: 'error'; message: string }).message).toContain('project:"<NAME>"')
+  })
+
+  it('errors on an unquoted project filter containing a space, without echoing a truncated guess', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:SDK 4.3.14')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/must be quoted/)
+    expect((r as { kind: 'error'; message: string }).message).not.toContain('4.3.14')
   })
 
   it('errors on an empty quoted project filter', () => {
