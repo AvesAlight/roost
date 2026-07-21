@@ -11,7 +11,7 @@ FAIL=0
 ok()   { echo "PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
 
-expected_version="$(grep -m1 '"version"' "${REPO}/package.json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
+expected_version="$(node -p "require('${REPO}/package.json').version")"
 expected="roost ${expected_version}"
 
 out_long="$("${ROOST_BIN}" --version)"
