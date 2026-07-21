@@ -41,24 +41,8 @@ const cases: TemplateCase[] = [
       '$4': 'alex', '$5': 'proj-worker-foo-42', '$6': '#proj-foo-issue-42',
     },
   },
-  {
-    name: 'reviewer (single-repo)',
-    file: 'reviewer.md',
-    positionals: {
-      '$0': 'proj', '$1': '42', '$2': '40', '$3': 'feat/x',
-      '$4': 'https://example/pr/42', '$5': 'alex',
-      '$6': 'proj-reviewer-42', '$7': '#proj-issue-40',
-    },
-  },
-  {
-    name: 'reviewer (multi-repo)',
-    file: 'reviewer.md',
-    positionals: {
-      '$0': 'proj', '$1': '42', '$2': '40', '$3': 'feat/x',
-      '$4': 'https://example/pr/42', '$5': 'alex',
-      '$6': 'proj-reviewer-foo-42', '$7': '#proj-foo-issue-40',
-    },
-  },
+  // The reviewer is a `--agent` (agents/reviewer.md) with a `key=value` prompt,
+  // not a positional slash-command template, so it isn't exercised here.
 ]
 
 // Mimic claude-code's `$<digit>...` substitution: only swap `$N` when N is a

@@ -1,8 +1,6 @@
 # Project Learnings
 
-Cross-cutting patterns extracted from postmortems — entries here span 3+ roles. Auto-loaded into every Claude Code session in this repo.
-
-Role-specific learnings live in `.claude/learnings/<role>.md` and are loaded by the role's prompt at startup. See `agents/associate-pm.md` historian dance for the audience-routing rules.
+Cross-cutting rules for this repo — entries here span 3+ roles. Auto-loaded into every Claude Code session in this repo. Hand-maintained.
 
 ## 2026-05-19: Canonicalize wording verbatim when an invariant lives in 3+ surfaces (from #422)
 

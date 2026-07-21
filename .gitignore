@@ -13,7 +13,6 @@ coverage/
 .claude/*
 !.claude/commands/
 !.claude/rules/
-!.claude/learnings/
 
 # Orchestrator runtime state (config.json is tracked)
 .orchestrator/state.json

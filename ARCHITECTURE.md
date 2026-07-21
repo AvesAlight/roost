@@ -33,28 +33,30 @@ per-PR doesn't).
 | Channel                | Purpose |
 |------------------------|---------|
 | `#<project>-leads`     | Per-project leadership channel. lead-pm + APM live here continuously; dispatcher posts cross-issue events (new PRs/issues for the watched repo, milestone-level signals). |
-| `#<project>-issue-<N>` | One per active issue. Dispatcher publishes per-issue events. Worker joins on pickup, leaves on completion. Reviewer joins for the review pass, leaves on conclude. lead-pm + APM join while the issue is active. Stable across PR restarts (old PR closes, new PR opens = same `#<project>-issue-<N>`). |
+| `#<project>-issue-<N>` | One per active issue. Dispatcher publishes per-issue events. Worker and reviewer both join at setup and stay resident through merge. lead-pm + APM join while the issue is active. Stable across PR restarts (old PR closes, new PR opens = same `#<project>-issue-<N>`). |
 
 ## Identities
 
 - **lead-pm** — `<project>-lead-pm`. Owns a project end-to-end:
-  picks issues off the milestone DAG, pressure-tests worker plans,
-  coordinates with the human, posts postmortems. Lives in
+  picks issues off the milestone DAG, runs the go/no-go gates,
+  coordinates with the human. Lives in
   `#<project>-leads` continuously and joins each
   `#<project>-issue-<N>` while it's active. Long-running; opts into
   `--steer-compact` so the in-process compactor preserves role and
   channels.
 - **APM** — `<project>-apm`. Operational support for lead-pm: runs
-  the mechanical dances — worktree + watch + worker-spawn setup,
-  reviewer-agent spawn on draft-PR-open, flip PRs draft → ready +
+  the mechanical dances — worktree + watch + worker-and-reviewer
+  spawn setup, PR-watch on draft-PR-open, flip PRs draft → ready +
   tag the human + re-request review, merge + cleanup, follow-up
   filing, release-bump mechanics. Lives in the same channels as
   lead-pm.
 - **Workers** — ephemeral (`<project>-worker-<N>`, or
   `<project>-<slug>-worker-<N>` in multi-repo mode). Join
   `#<project>-issue-<N>` on assignment, leave on completion.
-- **Reviewers** — ephemeral (`<project>-reviewer-<N>`). Join
-  `#<project>-issue-<N>` for the review pass, leave on conclude.
+- **Reviewers** — per-issue (`<project>-reviewer-<N>`). Spawned at
+  setup alongside the worker; resident in `#<project>-issue-<N>`
+  from setup through merge. Pressure-test the worker's plan, then
+  review the PR. The APM shuts them down at merge cleanup.
 - **Dispatchers** — one per project (`<project>-dispatcher`). Not
   Claude sessions; a TypeScript daemon (`src/orchestrator/`).
   Publish per-issue events to `#<project>-issue-<N>` and
@@ -86,25 +88,30 @@ present receives the message identically via its roost-irc MCP.
 
 ### PR review flow
 
-Sequencing — each step bumps the next:
+The reviewer is resident in `#<project>-issue-<N>` from setup (the
+APM spawns it alongside the worker). It works in two beats:
+pressure-testing the worker's plan before any code, then reviewing
+the PR. Sequencing — each step bumps the next:
 
-1. Worker drafts → opens PR (with `Closes #<N>` in the body) and
+1. Worker posts its plan; reviewer pressure-tests it (cold lens — no
+   project context) before the worker writes code.
+2. Worker implements → opens PR (with `Closes #<N>` in the body) and
    posts the link in `#<project>-issue-<N>`.
-2. APM spawns **reviewer-<N>** against the draft (cold lens — no
-   project context). Trigger is draft-PR-open, not CI-green;
-   reviewer + CI run in parallel.
-3. Reviewer reads the diff, posts findings to GitHub, parts the
-   channel.
+3. Reviewer reads the diff and posts a headlined `APPROVED` /
+   `CHANGES REQUIRED` verdict to GitHub. It re-reviews on each push
+   and re-emits the verdict; CI runs in parallel.
 4. Worker addresses findings, pushes, runs the last-look gate,
    signals ready in `#<project>-issue-<N>` (with a
    `highest-risk specific:` and a `surprises:` line).
-5. APM flips the PR draft → ready and adds the human as reviewer.
+5. APM flips the PR draft → ready once the ready gate holds —
+   reviewer's latest verdict is `APPROVED`, the worker acked it, and
+   CI is green — and adds the human as reviewer.
 6. Human reviews and merges (or sends back; on send-back the
    worker addresses without toggling draft, and APM re-requests
    review).
-7. After merge: lead-pm posts a one-paragraph postmortem in
-   `#<project>-leads`; APM runs cleanup (unwatch the PR/issue,
-   tear down the worktree, close milestones if applicable).
+7. After merge: APM terminates the worker and reviewer and runs
+   cleanup (unwatch the PR/issue, tear down the worktree, close
+   milestones if applicable).
 
 ## Lifecycle = membership
 
@@ -143,7 +150,7 @@ Common spawns:
 # Worker pickup on a fresh issue:
 roost spawn <project>-worker-718-A -c '#<project>-issue-718'
 
-# Reviewer joining for the review pass:
+# Reviewer spawned at setup, alongside the worker:
 roost spawn <project>-reviewer-718 -c '#<project>-issue-718'
 
 # Hard restart (channel-as-lifecycle: kick + new worker JOINs same
@@ -239,9 +246,9 @@ and `custom_instructions` populated; the hook passes through, and
 the manual `/compact` actually steers the compactor with our
 directive. The directive is a single-line constant inside the hook
 script (one place to edit; covers the roost agent set generically).
-Short-lived agents (workers, reviewers) skip the flag — auto-compact
-is unlikely to fire in their lifetime and the default behavior is
-fine.
+Per-issue agents (workers, reviewers) skip the flag — auto-compact
+is unlikely to fire in a single issue's lifetime and the default
+behavior is fine.
 
 For lead-pm specifically, in-process recovery via `--steer-compact`
 covers most cases. For full respawn (process loss, hard kick), see
