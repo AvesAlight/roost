@@ -99,15 +99,13 @@ On confirmation, for each issue N:
      --channels '<issue-channel>' \
      --cwd <worktree-path> \
      --prompt '/worker <project> <N> <owner>/<repo> <branch> <human-nick> <worker-nick> <issue-channel>' \
-     --perm-irc --perm-target <project>-lead-pm \
      -- --effort <effort>
 
    roost spawn <reviewer-nick> --agent reviewer \
      --cache-ttl 1h \
      --channels '<issue-channel>' \
      --cwd <worktree-path> \
-     --prompt 'issue=<N> milestone=<milestone> human=<human-nick> gh-login=<gh-login>' \
-     --perm-irc --perm-target <project>-lead-pm
+     --prompt 'issue=<N> milestone=<milestone> human=<human-nick> gh-login=<gh-login>'
    ```
    (No `--model`/`--effort` on the reviewer spawn — `--model` is incompatible with `--agent`, and `reviewer.md`'s frontmatter already pins model + effort. The worker spawn keeps them because it doesn't use `--agent`; its model/effort are the lead's per-issue call. The reviewer shares the worker's worktree via `--cwd` — it reads the branch there but never edits.) If the lead named a cross-issue contract for this issue, append it to the reviewer's prompt after the required tokens (e.g. `... gh-login=<gh-login> consumes-contract-from=#<M>`) so it reviews with that lens.
 4. Join `<issue-channel>` yourself.

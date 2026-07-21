@@ -46,7 +46,6 @@ Spawn the associate-pm (APM). It owns the rote setup/teardown — starting the d
 ```bash
 roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --steer-compact --channels '#<project>-leads' \
   --prompt 'milestone=<slug> human=<human> gh-login=<gh-login>' \
-  --perm-irc --perm-target <project>-lead-pm \
   --ask-irc '#<project>-leads' --ask-target <project>-lead-pm
 ```
 
