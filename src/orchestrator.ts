@@ -57,6 +57,20 @@ function bootChannels(plugins: Plugin[], config: OrchestratorConfig, projectChan
   return [...chans].sort()
 }
 
+// Per-tick membership target: plugins' config-static channels (desiredChannels)
+// unioned with this tick's dynamic channels (result.channels). Plugins that
+// only join at boot (e.g. github-new-issues) return `channels: []` from every
+// runTick, so without the desiredChannels half a tick-dynamic sibling losing
+// interest in a channel would part it out from under a config-static plugin.
+export function reconcileDesiredChannels(
+  plugins: Plugin[],
+  config: OrchestratorConfig,
+  projectChannel: string,
+  resultChannels: string[],
+): string[] {
+  return [...new Set<string>([...bootChannels(plugins, config, projectChannel), ...resultChannels])].sort()
+}
+
 // IRC client shape shared by daemon and --dispatch-irc.
 function newIrcClient(nick: string, channels: string[]): RoostIrcClientImpl {
   return new RoostIrcClientImpl({
@@ -205,7 +219,7 @@ async function runDaemon(stateDir: string): Promise<void> {
 
     // Reconcile IRC membership against plugins' desired set, then snapshot.
     // On reconcile failure, re-query so the snapshot reflects reality.
-    const desired = new Set<string>([projectChannel, ...result.channels])
+    const desired = new Set<string>(reconcileDesiredChannels(plugins, config, projectChannel, result.channels))
     let joined: string[] | null = null
     try {
       for (const ch of (await client.whoisChannels()) ?? []) {
