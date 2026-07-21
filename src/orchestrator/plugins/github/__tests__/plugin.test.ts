@@ -768,7 +768,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
 
   it('skips event routing for an entry whose own repo slug fails to derive, keeping a healthy sibling routed', async () => {
     const badEv: OrchestratorEvent = {
-      kind: 'issue_comment', repo: 'GoCarrot/bad name', issue: 6, url: 'u',
+      kind: 'issue_comment', repo: 'org/my.tool', issue: 6, url: 'u',
       author: 'bob', body: 'x', body_preview: 'x', is_worker_reply: false,
       comment_id: 1, comment_url: 'u',
     } as OrchestratorEvent
@@ -779,19 +779,43 @@ describe('GitHubIssuesPlugin.runTick', () => {
     } as OrchestratorEvent
     const logs: string[] = []
     const spy = stubIssue((repo, number) => number === 6
-      ? { snap: fakeIssueSnap({ repo: 'GoCarrot/bad name', number: 6 }), events: [badEv] }
+      ? { snap: fakeIssueSnap({ repo: 'org/my.tool', number: 6 }), events: [badEv] }
       : { snap: fakeIssueSnap({ repo: 'org/repo', number: 50 }), events: [goodEv] })
     try {
       const cfg: OrchestratorConfig = {
         project: 'proj',
         plugins: {
-          'github-issues': { watched: [{ number: 6, repo: 'GoCarrot/bad name' }, { number: 50, repo: 'org/repo' }] },
+          'github-issues': { watched: [{ number: 6, repo: 'org/my.tool' }, { number: 50, repo: 'org/repo' }] },
         },
       }
       const result = await new GitHubIssuesPlugin('#proj', (m) => { logs.push(m) }).runTick(cfg, { issues: {} })
       expect(result.taggedEvents).toHaveLength(1)
       expect(result.taggedEvents[0]?.channels).toEqual(['#proj-repo-issue-50'])
-      expect(logs.some(l => l.includes('GoCarrot/bad name#6') && l.includes('cannot derive slug'))).toBe(true)
+      expect(logs.some(l => l.includes('org/my.tool#6') && l.includes('cannot derive slug'))).toBe(true)
+      // No prior snapshot for the bad entry (first-ever tick) → skip leaves
+      // its state key unset rather than advancing to the new snapshot, so
+      // it's treated as a fresh entry (and its events replay) once the repo
+      // alias is fixed, instead of the diff baseline silently moving on.
+      expect(result.state).toEqual({ issues: { 'org/repo#50': expect.objectContaining({ number: 50 }) } })
+    } finally { spy.mockRestore() }
+  })
+
+  it('retries a bad-slug entry from its prior snapshot instead of dropping it on advance', async () => {
+    const badEv: OrchestratorEvent = {
+      kind: 'issue_comment', repo: 'org/my.tool', issue: 6, url: 'u',
+      author: 'bob', body: 'x', body_preview: 'x', is_worker_reply: false,
+      comment_id: 1, comment_url: 'u',
+    } as OrchestratorEvent
+    const prev = fakeIssueSnap({ repo: 'org/my.tool', number: 6, title: 'stale' })
+    const spy = stubIssue({ snap: fakeIssueSnap({ repo: 'org/my.tool', number: 6, title: 'fresh' }), events: [badEv] })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'github-issues': { watched: [{ number: 6, repo: 'org/my.tool' }] } },
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: { 'org/my.tool#6': prev } })
+      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.state).toEqual({ issues: { 'org/my.tool#6': prev } })
     } finally { spy.mockRestore() }
   })
 })
@@ -866,7 +890,7 @@ describe('desiredChannels', () => {
       plugins: {
         'github-prs': {
           watched: [
-            { number: 6, repo: 'GoCarrot/bad name' },
+            { number: 6, repo: 'org/my.tool' },
             { number: 25, repo: 'org/repo' },
           ],
         },
@@ -874,7 +898,20 @@ describe('desiredChannels', () => {
     }
     const chans = new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).desiredChannels(cfg)
     expect(chans).toEqual(['#proj-repo-issue-25'])
-    expect(logs.some(l => l.includes('bad name') && l.includes('cannot derive slug'))).toBe(true)
+    expect(logs.some(l => l.includes('org/my.tool') && l.includes('cannot derive slug'))).toBe(true)
+  })
+
+  it('keeps an entry watched via an explicit channel even when its auto-derived slug throws', () => {
+    const logs: string[] = []
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: {
+        'github-prs': { watched: [{ number: 6, repo: 'org/my.tool', channels: ['#explicit-chan'] }] },
+      },
+    }
+    const chans = new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).desiredChannels(cfg)
+    expect(chans).toEqual(['#explicit-chan'])
+    expect(logs.some(l => l.includes('org/my.tool') && l.includes('cannot derive slug'))).toBe(true)
   })
 })
 

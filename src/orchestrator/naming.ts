@@ -20,7 +20,9 @@ export function validateProject(project: string): void {
 // Lowercases a repo basename and normalizes underscores to dashes — real repo
 // basenames commonly use underscores, and a dash is a legal slug/project char
 // where an underscore isn't. Shared by defaultProject's repo fallback and
-// repoSlug so the two derivations agree on what basename is bootable.
+// repoSlug so the two derivations agree on what basename is bootable. Widens
+// the existing cross-org-overlap footgun: `Org/foo_bar` and `Org/foo-bar` now
+// collide on the same normalized basename.
 function normalizeBasename(base: string): string {
   return base.toLowerCase().replaceAll('_', '-')
 }
@@ -44,9 +46,9 @@ export function isMultiRepo(config: OrchestratorConfig): boolean {
 }
 
 // Lowercased, underscore-normalized basename of `Owner/Repo` — interpolated
-// into nicks/channels, so must match the project pattern. Two known
-// footguns: cross-org overlap (`Org1/foo` + `Org2/foo`), and post-normalization
-// collision (`Org/foo_bar` + `Org/foo-bar`) both slugging to `foo-bar`.
+// into nicks/channels, so must match the project pattern. Cross-org overlap
+// (`Org1/foo` + `Org2/foo`) is a known footgun; see normalizeBasename for the
+// underscore/dash collision one.
 export function repoSlug(repo: string): string {
   const base = normalizeBasename(repo.split('/').pop() ?? '')
   if (!PROJECT_PATTERN.test(base)) {
