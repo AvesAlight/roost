@@ -612,40 +612,62 @@ PR #376 v3 is the load-bearing artifact for this decision. PR #376
 v1 and v2 are closed/superseded — re-read the PR thread for the
 design evolution.
 
-### Finding K — auto mode's classifier vetoes consequential external writes even on an allow-match (#654)
+### Finding K — auto mode's classifier can veto allow-listed commands, context-sensitively (#654)
 
 The puzzle: an auto-mode APM was blocked on `gh issue comment` as an
 "external system write" while `Bash(gh issue comment:*)` was already
 present in `settings.local.json` `permissions.allow`. The public
 Claude Code docs say allow rules resolve before the classifier in
-every mode. So the block should have been impossible. It wasn't.
+every mode. So the block should have been impossible. It wasn't. This
+finding explains why, and corrects a wrong first read along the way.
 
-Reproduced live on cc v2.1.217 in a bare auto-mode session with both
-`Bash(gh issue *)` and `Bash(gh issue comment:*)` loaded. Ran a
-battery, all allow-listed unless noted:
+Reproduced live on cc v2.1.217 in bare auto-mode sessions with both
+`Bash(gh issue *)` and `Bash(gh issue comment:*)` loaded. The first
+read of the data looked like a clean "consequential external write
+gate." More sampling killed that theory. The honest result is
+messier and more useful.
 
-- `gh api user`, `gh issue view` (network reads) → ran
-- `chmod +x <file>` (local write) → ran
-- `git push --dry-run` (no-op) → ran
-- `curl -X POST httpbin.org/post -d …` (non-allowlisted external write) → ran
-- `gh issue comment 999999 …` (GitHub issue write) → BLOCKED
-- `git push origin HEAD` (real remote write) → BLOCKED
+**What actually happens: the classifier is stateful.** The veto on a
+given allow-listed command does not reduce to a rule on the command
+string. It shifts with session context, clustering around early
+escalation-shaped actions. Evidence, all in one session, same
+allow-listed strings:
 
-**The finding:** auto mode applies a context-sensitive risk gate that
-vetoes commands it judges will make consequential, durable mutations
-to a shared system of record (a GitHub issue, a git remote), and this
-gate overrides an exact `permissions.allow` match. That last clause is
-the load-bearing correction to the documented model. The block is not
-a blanket "external write" rule: a POST to a test endpoint and a
-`--dry-run` push both passed. The two confirmed blocks are the
-consequential-write cases, one gh and one non-gh, so it is not a
-single-verb artifact.
+- Early (cold session, just after two escalation-shaped denials —
+  `tmux send-keys` into another agent's pane, an `.claude/` edit):
+  `gh issue comment 999999 …` → BLOCKED. `git push origin HEAD` →
+  BLOCKED.
+- Later (session had built up a plainly benign working pattern): the
+  *identical* `gh issue comment` and `tmux send-keys` strings → ran,
+  10+/10+. A real named-branch push (`git push -u origin <branch>`) →
+  ran and succeeded.
+- Four fresh agents, each attempting `gh issue comment` as their
+  first action over the trusted path → ran, 4/4.
 
-We characterize the *behavior*, not the mechanism. n=2 blocks can't
-distinguish a judgment call from a sophisticated heuristic, and the
-docs don't name one, so don't assert "it's a model judge." What is
-airtight: the decision is context-sensitive and not fully
-deterministic against the command string.
+So blocks clustered when the session was cold and around
+escalation- or ambiguity-shaped commands; a settled benign context
+cleared everything, including the exact strings that had blocked.
+Reads (`gh api user`, `gh issue view`) and local writes (`chmod`,
+`git commit`) never blocked at any point. A `--dry-run` push and a
+`curl -X POST` to a test endpoint also passed — so it was never a
+blanket "external write" rule.
+
+**Characterize the behavior, not the mechanism.** Both arms came back
+internally consistent (fresh 4/4 allow, warmed 10+/10+ allow), so what
+the data isolates is context-*dependence*, not proven randomness — the
+within-session block→allow flip is equally explained by "deterministic
+on hidden features like recent escalation-shaped attempts" as by
+"stochastic," and this data can't separate those. The exact trigger
+(cold-start strictness vs priming by preceding escalation-shaped
+denials) is likewise not isolated, and the docs don't name a
+mechanism, so don't assert "it's a model judge" or "it's random." What
+is airtight and decision-grade: the classifier can override an exact
+`permissions.allow` match, and whether it does could not be reduced to
+a rule on the command string — it shifted with session context. That
+is why the behavior felt random to the APM, and why it can't be mapped
+to a permission rule. Note the useful corollary: "it's random" would
+invite "just retry"; "keyed on escalation-shaped history" invites
+"don't lead with escalation-shaped actions."
 
 **Block source is native Claude Code, not roost.** The deny carried
 CC's exact `Blocked by classifier` reason string, the session had
@@ -653,25 +675,27 @@ CC's exact `Blocked by classifier` reason string, the session had
 and `gh issue comment` matches none of `classifyBash`'s patterns
 (src/pretooluse-prompt.ts), so roost's PreToolUse gate would pass it
 through regardless. Confounds ruled out: allow-list demonstrably
-loaded (reads and local writes passed), no `deny`/`ask` rule matched,
-exact pattern present, deny observed first-hand.
+loaded (reads and local writes ran via rules, never prompted), no
+`deny`/`ask` rule matched anywhere, exact pattern present, denies
+observed first-hand.
 
 **Answering the issue's questions:**
 
 1. *Does auto consult `permissions.allow`?* Yes. Allow-listed reads
-   and local writes ran without a prompt. But the risk gate can
-   override an allow-match for consequential external writes.
+   and local writes ran without a prompt. But the classifier can
+   still override an allow-match and hard-deny, depending on context.
 
 2. *How do you grant an already-running auto agent a new Bash verb,
-   short of restart?* For verbs the gate ignores (reads, local
-   writes): add the pattern to `settings.local.json`; edits reload
-   live, no restart. For the gated consequential-write verbs: you
-   *can't* reliably grant them via the allow-list at all, because the
-   veto is context-sensitive rather than pattern-controlled. The
-   supported path for those is operator approval through the
-   permbot / `--perm-irc` relay. That is not a workaround; it is the
-   only path that clears this gate. This is why the APM class runs
-   with a permission relay rather than a fat allow-list.
+   short of restart?* For verbs the classifier leaves alone (reads,
+   local writes): add the pattern to `settings.local.json`; edits
+   reload live, no restart needed. For verbs the classifier sometimes
+   vetoes (the consequential / escalation-shaped ones): you *can't*
+   grant them reliably via the allow-list, because the same rule
+   sometimes clears and sometimes gets vetoed. The reliable path is
+   operator approval through the permbot / `--perm-irc` relay. That is
+   not a workaround; it is the only path that clears the gate every
+   time. This is why the APM class runs with a permission relay rather
+   than a fat allow-list.
 
 3. *Is "per alex → reads as sandbox escape" real?* Partly, and it
    lives at a different layer. The model (not the harness classifier)
@@ -683,16 +707,22 @@ exact pattern present, deny observed first-hand.
    command's read-only sibling when asked plainly over the trusted
    path. So an authority claim attached to a boundary-pushing request
    plausibly raises suspicion rather than lowering it. We did not
-   isolate the "per alex" attribution cleanly: the commands where it
-   would matter are the same ones the harness gate blocks outright, so
-   model-layer suspicion and harness veto are confounded. State the
-   task plainly over the trusted path; don't argue authority.
+   isolate the "per alex" attribution cleanly: model-layer suspicion
+   and the harness veto are confounded on the commands where it would
+   matter. State the task plainly over the trusted path; don't argue
+   authority.
 
 **A second structural block:** an auto agent cannot edit its own
 `.claude/settings.local.json` to self-grant. That path is protected
 (`.claude/` routes writes to the classifier) and the edit is vetoed.
 Self-escalation is closed by design. Grants must come from outside the
 agent (the operator editing the file, or approving via the relay).
+
+**Method note:** this took five throwaway probe spawns plus in-session
+sampling to get here. The first, under-sampled read ("external write
+gate") was wrong; holding one exact command string constant across
+cold, warmed, and fresh arms is what surfaced the real, context-
+dependent behavior.
 
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
