@@ -821,6 +821,32 @@ describe('desiredChannels', () => {
     }
     expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg)).toEqual(['#proj-foo-issue-14'])
   })
+
+  it('normalizes an underscore repo basename instead of dropping its channel', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'github-prs': { watched: [{ number: 6, repo: 'GoCarrot/debian13_root' }] } },
+    }
+    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg)).toEqual(['#proj-debian13-root-issue-6'])
+  })
+
+  it('skips just the entry whose slug fails to derive, keeping a healthy sibling channel joined', () => {
+    const logs: string[] = []
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: {
+        'github-prs': {
+          watched: [
+            { number: 6, repo: 'GoCarrot/bad name' },
+            { number: 25, repo: 'org/repo' },
+          ],
+        },
+      },
+    }
+    const chans = new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).desiredChannels(cfg)
+    expect(chans).toEqual(['#proj-repo-issue-25'])
+    expect(logs.some(l => l.includes('bad name') && l.includes('cannot derive slug'))).toBe(true)
+  })
 })
 
 describe('multi-repo runTick — slug-aware channel routing', () => {

@@ -287,13 +287,20 @@ export abstract class GhBase extends GhPluginBase {
   }
 
   // No watches → no project lookup (avoids requiring `project`/`repo` on minimal configs).
+  // Per-entry try/catch: a slug-derivation failure on one entry (e.g. an
+  // unrepresentable repo basename) must not drop every sibling entry's
+  // channel — log and skip just the bad one.
   protected entryChannels(config: OrchestratorConfig, entries: WatchedEntry[] | undefined): string[] {
     if (!entries?.length) return []
     const project = defaultProject(config)
     const chans = new Set<string>()
     for (const entry of entries) {
       const { repo, number, channels } = resolveRepoEntry(entry, config.repo)
-      chans.add(issueChannel(project, number, channelSlug(config, repo)))
+      try {
+        chans.add(issueChannel(project, number, channelSlug(config, repo)))
+      } catch (e) {
+        this.log(`[${this.name}] skipping auto-derived channel for ${repo}#${number}: ${e}\n`)
+      }
       for (const c of channels) chans.add(c)
     }
     return [...chans]
