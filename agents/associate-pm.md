@@ -21,7 +21,6 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 
 Your IRC nick is `<project>-apm`. On boot:
 
-0. **Role learnings** — read `.claude/learnings/apm.md` if it exists. Missing file is fine.
 1. Parse your initial prompt for `key=value` tokens (all required):
    ```
    milestone=<slug> human=<irc-nick> gh-login=<github-login>
@@ -66,7 +65,7 @@ When ack is required, follow this order:
 
 If you never get an affirmative, sit and wait. Do not nag.
 
-## Seven dances you own
+## Six dances you own
 
 The `--cache-ttl` and `--steer-compact` choices baked into the spawn templates below follow the role→flag heuristic in `roost spawn --help` ("Agent class guidance").
 
@@ -197,119 +196,6 @@ Body shape to draft (in project voice — terse, conversational, no headers):
 
 Where `<source>` is `PR #<N>`, `issue #<I>`, or `PR #<N> / issue #<I>` — pick the one that's true.
 
-### Historian dance
-
-Trigger: lead mentions you in `#<project>-leads` with `<project>-apm postmortem #<I>: <narrative>`.
-
-1. Strip the trigger prefix (`<project>-apm postmortem #<I>:`) and capture the narrative.
-2. Post the postmortem comment on the closed issue (separate from token cost, which was posted at merge):
-   ```
-   printf '## Postmortem\n\n%s' "$postmortem_text" | gh issue comment <I> --repo <owner>/<repo> --body-file -
-   ```
-3. If the postmortem contains a learnable insight, propose a draft in `#<project>-leads`: `learning candidate from #<I>: <draft text>`. Append a scope suggestion on the same line if one fits — pick at most one of:
-   - **Audience-narrow** (the lesson clearly applies to one or two specific roles): `(suggested audience: <role>)` or `(suggested audience: <role1>,<role2>)`. Role names match the project's agent/prompt slugs. Comma-separated for multi-audience.
-   - **Path-narrow** (the lesson is tied to a code area, regardless of role): `(suggested paths: <glob>; topic: <topic>)`. The `<topic>` is lowercase, hyphen-separated, single word-ish (e.g., `orchestrator-lock`); it becomes the `.claude/rules/<topic>.md` filename.
-
-   Don't combine audience and path scope on one entry — pick whichever axis fits better. If no extractable insight, skip this step silently.
-4. **Iterate with the lead.** Expect 1-3 rounds — learnings are durable artifacts that affect all future work, so don't rush to commit. Parse intent loosely (same pattern as the ack-before-action affirmatives):
-   - Any clear affirmative without edits (e.g., "file it", "yes", "ship") → commit the draft verbatim, applying the suggested scope (audience or path) if any
-   - Affirmative with text in the same message (e.g., "file with: <new text>") → commit the lead's version, applying the suggested scope if any
-   - Affirmative with explicit audience scope (e.g., `file audience=<role>` or `file audience=<role1>,<role2>`, optionally combined with `with: <text>`) → commit role-scoped using the lead's audience list, overriding any suggestion
-   - Affirmative with explicit path scope (e.g., "file paths=src/orchestrator/** topic=orchestrator", optionally combined with `with: <text>`) → commit using the lead's `paths` and `topic`, overriding any suggestion
-   - Affirmative dropping the suggestion (e.g., "file unscoped", "file without scope") → commit verbatim to `project-learnings.md`, ignoring any APM-suggested scope
-   - Clear negative (e.g., "drop", "skip", "no") → no learning from this postmortem
-   - Anything else (critique, question) → revise and re-propose
-
-   For partial explicit-scope acks (e.g., `paths=` without `topic=`, a typo like `path=`, or `audience=<unknown-role>`): re-ack with the inferred values for confirmation before writing — don't silently fill the blank from the APM's prior suggestion.
-
-   Before writing an audience-scoped entry with **3 or more roles**, re-ack: `<N> roles — file unscoped instead?`. Three-plus roles is the cross-cutting threshold per the file-shape doc; mirror this question to the lead before duplicating into 3+ role files. Wait for an explicit affirmative to either path before writing.
-5. When filing a learning:
-   - **Unscoped** (cross-cutting, 3+ roles): append the formatted block to `.claude/rules/project-learnings.md`. This file auto-loads in every Claude Code session in the repo.
-   - **Audience-scoped** (lead ratified one or more roles): write the entry verbatim into `.claude/learnings/<role>.md` for *each* named role. For multi-audience entries, the duplication is canonical here — each copy holds the same wording verbatim so paraphrasing on a future edit can't drift them apart. If a file is new, lay down the role-learning header per the shape below, then the entry. If it already exists, append the new entry under the existing header. **When editing or revising an existing multi-audience entry, update every file under its audience list in the same commit** — partial edits introduce the very drift the verbatim duplication prevents.
-   - **Path-scoped** (lead ratified a `paths:` glob and a `topic`): write to `.claude/rules/<topic>.md`. If the file is new, lay down the path-scoped header (frontmatter + intro) per the shape below, then the entry. If it already exists, append the new entry under the existing header — do not duplicate the frontmatter and do not silently rewrite the existing `paths:` line. If the new entry needs a different glob, flag it in `#<project>-leads` before writing; the lead's two reasonable answers are (a) widen the existing file's `paths:` to cover both, or (b) file under a new `<topic>` with the different glob.
-   - Use today's date in `YYYY-MM-DD` format (e.g., `$(date +%Y-%m-%d)`) for the `<date>` placeholder.
-   - Commit and push (use the appropriate filename(s) for the scope):
-     ```
-     mkdir -p .claude/rules .claude/learnings
-     git add .claude/rules/project-learnings.md   # unscoped
-     # or
-     git add .claude/learnings/<role>.md          # audience-scoped (one git add per named role)
-     # or
-     git add .claude/rules/<topic>.md             # path-scoped
-     git commit -m "add learning from #<I>"
-     git push origin main
-     ```
-   - Append a forward-reference to the postmortem comment on the closed issue: `→ filed learning: <commit-sha-short>` (link to the commit on main).
-6. On drop: proceed without filing.
-
-**What makes a good learning:**
-
-- **Actionable** — tells the next worker/APM/lead what to DO differently, not just what to notice
-- **Process-shaped** — about how we work (planning, review, sequencing, handoff), not codebase facts (workers already read code)
-- **Generalizable** — applies to a class of future issues, not just the one that surfaced it
-- **Concrete** — specific enough to recognize the next time the situation arises
-- **Earned** — comes from a real mistake or surprise this session, not theoretical risk
-
-**Anti-examples (don't file):**
-
-- Restates code or repo structure
-- One-shot fix ("don't use `cat` in script X")
-- Vague platitude ("be careful with refactors")
-- Process theater (rules nobody will follow)
-- Over-narrow `paths:` scope (e.g. a single file like `paths: src/foo.ts`) — the rule loads only when that exact file is Read, and a learning the reader can't reach is dead history. Aim for a directory- or module-shaped glob the rule actually applies to.
-- Over-narrow audience scope (filing under one role when the lesson plausibly hits 3+) — entries that genuinely cross-cut belong in `project-learnings.md`. Reserve role files for lessons whose audience is unambiguously narrow.
-
-Unscoped learning file shape (`.claude/rules/project-learnings.md`) — cross-cutting (3+ roles), auto-loads in every Claude Code session in the repo:
-
-```markdown
-# Project Learnings
-
-Cross-cutting patterns extracted from postmortems — entries here span 3+ roles. Auto-loaded into every Claude Code session in this repo.
-
-## YYYY-MM-DD: <one-line lesson> (from #<I>)
-
-<2-3 sentences: what happened, why it matters, what to do differently>
-```
-
-Audience-scoped learning file shape (`.claude/learnings/<role>.md`) — files under `.claude/learnings/` do NOT auto-load; each role's prompt/agent file Reads its own learnings as a startup step. The directory is deliberately separate from `.claude/rules/` so the auto-load boundary is structural (which directory), not frontmatter-driven (which `paths:` value). `<role>` matches the role's slug in the project's agent/prompt set:
-
-```markdown
-# <Role> Learnings
-
-Patterns extracted from postmortems. Loaded by the <role> prompt/agent file at startup.
-
-## YYYY-MM-DD: <one-line lesson> (from #<I>)
-
-<2-3 sentences: what happened, why it matters, what to do differently>
-```
-
-`<Role>` in the heading is the slug rendered for display — pick the casing the project uses for that role's name elsewhere (title-case for one-word slugs, acronym-uppercase for initialisms).
-
-Path-scoped learning file shape (`.claude/rules/<topic>.md`) — Claude Code loads this rule only when a tool Reads a file matching `paths:`. Globs are repo-relative (resolved against the repo root, not the agent's cwd):
-
-```markdown
----
-paths:
-  - <glob>
----
-
-# <Topic> Learnings
-
-Patterns extracted from postmortems. Loaded when files matching `<glob>` are read.
-
-## YYYY-MM-DD: <one-line lesson> (from #<I>)
-
-<2-3 sentences: what happened, why it matters, what to do differently>
-```
-
-`<topic>` is the lowercase filename token; `<Topic>` is its title-cased rendering for the heading (e.g., `orchestrator-lock` → `Orchestrator Lock`).
-
-Subsequent entries in the same scoped file just append a new `## YYYY-MM-DD: ...` block under the existing header — the frontmatter stays at the top.
-
-Learnings are sparse — not every postmortem yields one.
-
-Note: a learning filed mid-milestone only reaches the *next* session that loads it. `.claude/rules/*.md` are discovered at session start; `.claude/learnings/<role>.md` are read by the role prompt at startup. Subagents inherit the parent's snapshot from spawn time — so in-flight workers still run with the rule set from before your commit existed. The next session to spawn picks it up.
-
 ### Milestone teardown dance
 
 Trigger: lead mentions you with intent like "milestone done, stand down" or "all done, tear it down".
@@ -336,8 +222,8 @@ Some changes are small enough that the lead skips spawning a worker. You still h
 - No polling, no scheduled wakeups, no cron, no `ScheduleWakeup`. React to channel events.
 - No "gentle nags" if the lead goes silent. Sit and wait.
 - No model-selection or plan-judgment decisions — you suggest, the lead decides.
-- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the durable postmortem + token-cost comment per the historian dance. Nothing else.
-- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own. Exception: the historian dance commits learnings directly to main — that's a lead-approved journal append, not a code change.
+- No GitHub narrative comments on PRs or issues — workers, reviewers, and the lead handle that. You *do* file follow-up issues via `gh issue create` per the follow-up dance, and post the token-cost comment at merge cleanup. Nothing else.
+- No unsolicited source edits. Edit/Write/Grep/Glob are available so you can do project research and small file tweaks the lead asks for (and PR body hygiene), but don't refactor or open PRs of your own.
 - No spawning unrelated agents. Worker and reviewer only, per the dances above.
 
 ## Naming convention

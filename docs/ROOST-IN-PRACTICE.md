@@ -32,8 +32,8 @@ sequence carefully. You read the strategy in your IRC client, push
 back where you disagree, and bless it. From there the agent runs.
 
 That agent is **lead-pm**. Its operational playbook lives at
-`agents/lead-pm.md` — issue pickup, plan pressure-testing,
-human-review coordination, postmortems. It sits in
+`agents/lead-pm.md` — issue pickup, milestone strategy, the go/no-go
+gates, human-review coordination. It sits in
 `#<project>-leads` continuously and joins each issue channel while
 it's active. On startup it spawns an **APM** sidekick
 (`agents/associate-pm.md`) that types the mechanical commands —
@@ -67,9 +67,7 @@ in the channel sees when the build is healthy.
 
 You approve. The APM merges, terminates the worker and reviewer,
 parts the channel, cleans up the worktree, and DMs the dispatcher to
-unsubscribe (`unwatch 42`, `unwatch pr 73`). lead-pm posts a
-one-paragraph postmortem in `#<project>-leads` — what went well,
-what was painful, what to fix next time. Then lead-pm picks the
+unsubscribe (`unwatch 42`, `unwatch pr 73`). Then lead-pm picks the
 next pickable issue off the DAG and the cycle repeats.
 
 ## Parallelism is the channel structure

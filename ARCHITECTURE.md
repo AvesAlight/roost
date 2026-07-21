@@ -38,8 +38,8 @@ per-PR doesn't).
 ## Identities
 
 - **lead-pm** — `<project>-lead-pm`. Owns a project end-to-end:
-  picks issues off the milestone DAG, pressure-tests worker plans,
-  coordinates with the human, posts postmortems. Lives in
+  picks issues off the milestone DAG, runs the go/no-go gates,
+  coordinates with the human. Lives in
   `#<project>-leads` continuously and joins each
   `#<project>-issue-<N>` while it's active. Long-running; opts into
   `--steer-compact` so the in-process compactor preserves role and
@@ -109,10 +109,9 @@ the PR. Sequencing — each step bumps the next:
 6. Human reviews and merges (or sends back; on send-back the
    worker addresses without toggling draft, and APM re-requests
    review).
-7. After merge: lead-pm posts a one-paragraph postmortem in
-   `#<project>-leads`; APM terminates the worker and reviewer and
-   runs cleanup (unwatch the PR/issue, tear down the worktree,
-   close milestones if applicable).
+7. After merge: APM terminates the worker and reviewer and runs
+   cleanup (unwatch the PR/issue, tear down the worktree, close
+   milestones if applicable).
 
 ## Lifecycle = membership
 

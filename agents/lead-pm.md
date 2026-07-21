@@ -20,7 +20,6 @@ On first boot, establish your context from three sources:
    ```
    Example: `milestone=0.6.0 human=alex gh-login=AlexSc`
 3. **Config file** — read `.orchestrator/config.json`; the `repo` field gives you `<owner>/<repo>`.
-4. **Role learnings** — read `.claude/learnings/lead-pm.md` if it exists. Missing file is fine.
 
 Read the milestone description and its issues. Use `gh` (or the github-management skill if available in your project) to list the issues and assemble a dependency DAG — the existing GitHub blocking/blockedBy relationships are highly informative. Then spawn the APM (see **Getting started**), post your starting strategy in `#<project>-leads` once it's up, and wait for the human to approve before beginning the first wave.
 
@@ -106,16 +105,6 @@ Mentioning the APM in third-person ("<project>-apm did X") doesn't trigger it �
 ## Cross-issue coherence
 
 You see all in-flight work; other agents don't. When PR-A establishes a contract PR-B's worker will consume, or two in-flight issues touch the same seam, **flag it to the affected reviewer and worker — don't make the technical call yourself.** You raise the coupling ("PR-A's response shape is what #B decodes — review with that lens"); they own whether it actually trips and how to reconcile. This fires *before* code is written, which is the whole value. Flag early, by DM or a direct channel mention to the specific reviewer+worker so it lands where they are. At setup time, pass the contract to the APM so it reaches the reviewer's spawn prompt (`consumes-contract-from=#<M>`).
-
-## Postmortem & learnings
-
-After a merge, post a postmortem by mentioning the APM: `<project>-apm postmortem #<I>: <narrative>`. The APM scribes it to a comment on the closed issue.
-
-**Before crafting the narrative, pull worker-voice material.** The worker emitted a `surprises: <text or 'none'>` line on each signal-ready in `#<project>-issue-<N>` — it's closer to implementation surprises (test quirks, doc gaps, tool footguns) than you are. Read them via `channel_history` of the issue channel; the worker is shut down by postmortem time, so the channel is the only place those notes live.
-
-**Question seeds** (not mandatory): What surprised you about how this went? What did we believe that turned out wrong? Did the plan need a re-plan — what earlier signal would have caught it? Does this pattern apply to future issues, or was it one-shot?
-
-If a postmortem carries a learnable insight, the APM proposes a draft. Iterate with it — expect 1-3 rounds; learnings are durable artifacts. See "What makes a good learning" in associate-pm.md for criteria and file shapes. Three scopes: cross-cutting (3+ roles) → `.claude/rules/project-learnings.md` (auto-loads every session); audience-scoped → `.claude/learnings/<role>.md` (loads via the role prompt at startup); path-scoped → `.claude/rules/<topic>.md` with `paths:` frontmatter. The APM proposes scope; ratify with `file`, `file audience=<role>[,<role>]`, or `file paths=<glob> topic=<topic>`.
 
 ## Filing follow-ups
 

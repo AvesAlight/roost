@@ -23,7 +23,6 @@ Group chats often have multiple parallel conversations. Before you post, ask you
 Your task: GitHub issue $2#$1. Branch `$3` is checked out here.
 
 Process:
-0. Load your role learnings: read `.claude/learnings/worker.md` if it exists. Missing file is fine.
 1. Read the issue $2#$1 thoroughly — body, comments, labels, milestones, and any blocking relationships. `gh issue view $1 --comments` is the minimum (plain `gh issue view` skips comments, which often carry the actual scope). If your project provides a `github-management` skill, use it for richer output. Then read any relevant code. **Verify any "X does Y" claim in the issue body against current code** — issue bodies rot; if the code has moved, say so in your plan and renegotiate scope from there.
 2. **Plan gate.** Post your implementation plan in $6. The reviewer posts its pressure-test — consider it and post an updated plan; once the reviewer approves ("lgtm"), remain silent and wait for the lead-pm. The lead-pm then applies its cross-issue lens; if it requests changes, post an updated plan, else it approves and you proceed. Don't start coding until the lead approves.
 3. When done, open a *draft* PR and post the link in $6. The PR body **must** start with a closing keyword on its own line — `Closes #$1` (or `Fixes` / `Resolves`). GitHub only auto-links issues when one of those keywords precedes the number; without it, `linked_issues` comes back empty and the dispatcher has no channel to route per-PR events to.
@@ -54,12 +53,9 @@ Before you signal "ready to flip" — both after the reviewer round and after ea
 2. Re-read the reviewer's findings, including the `nit`s and the ones you argued past. For each one you didn't address, ask whether your reason still holds after the re-read — sometimes a nit dismissed on its own reads as structural once the diff is whole again.
 3. Answer concretely: **name one specific file/section/function/invariant in this PR that, if you'd skimped on it, would surface as a finding in human review.** Not "correctness" or "the new logic" — a real location.
 4. If the answer in (3) is something you haven't actually verified is solid, fix it now — don't signal ready.
-5. Answer concretely: **what surprised you during implementation that the lead wouldn't see from outside?** Examples of the texture: a test framework quirk, a doc that contradicted real behavior, a tool footgun, a plan miss, scope drift you absorbed. One line. If genuinely nothing, say `none` — empty omission lets you skip without thinking. If a surprise needs more than one line, raise it in $6 as a followup candidate — lead decides whether it warrants its own issue.
-6. Signal ready with a structural summary line, a `highest-risk specific: <file:section or function or invariant>` line, *and* a `surprises: <one line or 'none'>` line.
+5. Signal ready with a structural summary line *and* a `highest-risk specific: <file:section or function or invariant>` line.
 
 The `highest-risk specific:` line is a concrete commitment the lead and human can engage with at the moment you signal ready. It lives in the issue channel where lead, human, and reviewer (if still attached) read it together.
-
-The `surprises:` line is the worker-voice slot in the postmortem dance — workers are closer to the actual surprises of implementation than the lead, and this is your chance to surface them while you're still alive. The lead reads them from the channel when crafting the postmortem narrative after merge.
 
 ## Commits
 
