@@ -194,8 +194,8 @@ describe('classifyBash read-only fast-path', () => {
   })
 
   // Monotonicity: every other bashMissKind still flags. The fast-path declines
-  // (falls through) rather than swallowing these — its accept set is a strict
-  // subset of genuinely read-only commands.
+  // (falls through) rather than swallowing these — a decline never changes a
+  // relay, so the only observable move is a drop, pinned to O2 above.
   it('does not swallow multi-cd', () => {
     expect(classifyBash('cd /tmp && ls && cd /var')).toBe('multi-cd')
   })

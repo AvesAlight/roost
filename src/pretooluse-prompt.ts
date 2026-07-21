@@ -54,14 +54,24 @@ export type BashMissKind =
   | 'flag-validation'       // CC: "flag-validation"
   | 'too-complex'           // CC: "too-complex"
 
-// Claude Code's "simple read-only command" fast-path: commands whose every
-// statement is a read-only command with no way to mutate state or escape
-// static validation. CC auto-grants these outright, so relaying them to the
-// operator is a parity violation (they never produce a blocking request). The
-// allowlist is a general read-only unix set plus `git` gated to its read-only
-// subcommands. Deliberately conservative — a command that isn't provably in
-// this set just falls through to the bashMissKind checks, so membership only
-// ever *drops* a relay, never adds one.
+// Shared with the bashMissKind detectors in classifyBash. isSimpleReadOnly
+// must reject exactly the shapes those detectors flag, or the fast-path could
+// drift into a false-positive accept — the one drift direction that loosens
+// the gate. Referencing the same const in both places keeps the two in
+// lockstep so a future tightening can't touch one without the other. (No `g`
+// flag → safe to share a single .test() target.)
+const NEWLINE_HASH    = /\n[ \t]*#/                     // CC: "semantics"
+const TOP_SUBSHELL    = /(?:^|[\s;&|`])\((?!\s*\))/     // CC: "shell-operators" (subshell)
+const TOP_CMD_GROUP   = /(?:^|[\s;&|`])\{\s/            // CC: "shell-operators" (command group)
+const ARITH_WITH_VARS = /\$\(\([^)]*[a-zA-Z_][^)]*\)\)/ // CC: "too-complex"
+
+// Command words the read-only fast-path treats as candidates. This is NOT a
+// safety allowlist — a name-level list can't prove non-mutation (`find
+// /tmp -delete`, `find . -exec rm {} +` are in here). What makes passing them
+// safe is the monotonic invariant, not the list: isSimpleReadOnly only ever
+// returns null (drops a relay), and CC auto-grants these shapes anyway, so an
+// accept can never diverge from parity. The list just scopes *which*
+// would-be-relayed shapes get dropped — its floor is O2 (`cd <dir>; <cmd>`).
 const READ_ONLY = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg',
   'find', 'echo', 'printf', 'pwd', 'cd', 'pushd', 'popd', 'which', 'type',
@@ -72,37 +82,38 @@ const READ_ONLY = new Set([
   'printenv', 'sha1sum', 'sha256sum', 'sha512sum', 'md5sum', 'git',
 ])
 
-// git subcommands that never mutate regardless of flags. `git` sits in
-// READ_ONLY only as a gate — the subcommand must land here or the fast-path
-// declines. Mutating-capable subcommands (branch/tag/remote/config/…) are
-// left out so a flag like `git branch -d` can't slip through.
+// git subcommands with no mutating form. `git` sits in READ_ONLY only as a
+// gate — the subcommand must land here or the fast-path declines. Subcommands
+// with a write form are left out (branch/tag/remote/config, and reflog which
+// has `expire --expire=now`, symbolic-ref which writes HEAD with an argument).
 const GIT_READONLY = new Set([
-  'status', 'log', 'diff', 'show', 'blame', 'reflog', 'ls-files',
+  'status', 'log', 'diff', 'show', 'blame', 'ls-files',
   'rev-parse', 'rev-list', 'describe', 'cat-file', 'for-each-ref',
   'shortlog', 'grep', 'whatchanged', 'ls-tree', 'ls-remote', 'show-ref',
-  'symbolic-ref', 'var', 'help', 'version',
+  'var', 'help', 'version',
 ])
 
 /**
  * True if the command matches Claude Code's read-only fast-path — every
  * statement a read-only command, with no subshell, background `&`, redirection,
  * process substitution, variable arithmetic, second cd, multi-positional cd, or
- * cd-into-git. An `true` here is a strict subset of what CC auto-grants, so
- * classifyBash can safely stay silent (return null); a `false` means "can't
- * prove it", and the command falls through to the bashMissKind checks unchanged.
+ * cd-into-git. Safe to return null on a true not because the allowlist proves
+ * non-mutation (it doesn't — see READ_ONLY) but because the fast-path is
+ * monotonic: it only drops relays, and CC auto-grants these shapes regardless.
+ * A false means "can't prove the fast-path shape", and the command falls
+ * through to the bashMissKind checks unchanged.
  */
 function isSimpleReadOnly(command: string): boolean {
   // Structural disqualifiers. Any of these means CC's fast-path declines, so
-  // classifyBash must not treat the command as simply read-only. These mirror
-  // the bashMissKind detectors below (newline-hash, process-substitution,
-  // shell-operators, too-complex) plus redirection and background — the shapes
-  // CC's own fast-path rejects — so the fast-path never swallows one of them.
-  if (/\n[ \t]*#/.test(command)) return false                    // newline-hash
-  if (/[<>]/.test(command)) return false                         // redirect / process-sub
-  if (/(?:^|[\s;&|`])\((?!\s*\))/.test(command)) return false    // subshell
-  if (/(?:^|[\s;&|`])\{\s/.test(command)) return false           // command group
-  if (/(?<!&)&(?!&)/.test(command)) return false                 // background &
-  if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return false // arithmetic with vars
+  // classifyBash must not treat the command as simply read-only. The four
+  // named regexes are the exact detectors below (see the const definitions);
+  // redirection and background are additional shapes CC's fast-path rejects.
+  if (NEWLINE_HASH.test(command)) return false
+  if (/[<>]/.test(command)) return false             // redirect / process-sub
+  if (TOP_SUBSHELL.test(command)) return false
+  if (TOP_CMD_GROUP.test(command)) return false
+  if (/(?<!&)&(?!&)/.test(command)) return false     // background &
+  if (ARITH_WITH_VARS.test(command)) return false
 
   const statements = command.split(/&&|\|\||[;|\n\r]/)
   let cdCount = 0
@@ -150,7 +161,7 @@ export function classifyBash(command: string): BashMissKind | null {
   // bug (worker-202 27-min hang) was a heredoc with this shape. Checked
   // against the raw command — the analyzer's trigger explicitly requires
   // the newline to be inside a quoted arg, env value, or redirect.
-  if (/\n[ \t]*#/.test(command)) return 'newline-hash'
+  if (NEWLINE_HASH.test(command)) return 'newline-hash'
 
   // Command-start anchor for cd patterns: start-of-string, shell operator
   // (with optional trailing whitespace), or newline. Excludes plain
@@ -195,8 +206,8 @@ export function classifyBash(command: string): BashMissKind | null {
   // CC bashMissKind: "shell-operators".
   // Top-level subshell ( ... ) or command group { ... }. Excludes $( ),
   // <( ), >( ), ${ }, and escaped \(.
-  if (/(?:^|[\s;&|`])\((?!\s*\))/.test(command)) return 'shell-operators'
-  if (/(?:^|[\s;&|`])\{\s/.test(command)) return 'shell-operators'
+  if (TOP_SUBSHELL.test(command)) return 'shell-operators'
+  if (TOP_CMD_GROUP.test(command)) return 'shell-operators'
 
   // CC bashMissKind: "flag-validation".
   // Wrapper commands (env/timeout/xargs/nice/nohup) with chdir-shaped flags
@@ -208,7 +219,7 @@ export function classifyBash(command: string): BashMissKind | null {
   // CC bashMissKind: "too-complex".
   // Arithmetic expansion with non-literal contents (variables, function
   // refs) — the bash AST parser rejects these.
-  if (/\$\(\([^)]*[a-zA-Z_][^)]*\)\)/.test(command)) return 'too-complex'
+  if (ARITH_WITH_VARS.test(command)) return 'too-complex'
 
   return null
 }
