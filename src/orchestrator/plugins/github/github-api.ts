@@ -232,20 +232,37 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
 
 // ---- Rate limit observability ----------------------------------------------
 
+// core (REST) budget + graphql (point) budget from the same /rate_limit call.
+// graphql is null when the response doesn't carry `resources.graphql` (e.g. a
+// stale gh CLI) — core alone is still worth surfacing.
+export interface RateLimitSnapshot {
+  core: RateLimitInfo
+  graphql: RateLimitInfo | null
+}
+
+function parseBudget(raw: unknown): RateLimitInfo | null {
+  if (raw == null || typeof raw !== 'object') return null
+  const b = raw as { remaining?: number; limit?: number; reset?: number }
+  if (b.remaining == null || b.limit == null || b.reset == null) return null
+  return { remaining: b.remaining, limit: b.limit, resetAt: b.reset }
+}
+
 // `gh api /rate_limit` — exempt endpoint, no token cost. `attempts: 1` because
 // retries would burn the budget we're trying to measure. Null on any failure.
 export async function fetchRateLimit(
   log: PluginLogger,
   deps?: Partial<SpawnDeps>
-): Promise<RateLimitInfo | null> {
+): Promise<RateLimitSnapshot | null> {
   try {
     // `attempts: 1` is last so deps can't accidentally override it.
     const raw = await spawnGh(['api', '/rate_limit'], { log, ...deps, attempts: 1 })
     if (raw == null || typeof raw !== 'object') return null
     const resp = raw as Record<string, unknown>
-    const rate = resp.rate as { remaining?: number; limit?: number; reset?: number } | undefined
-    if (!rate || rate.remaining == null || rate.limit == null || rate.reset == null) return null
-    return { remaining: rate.remaining, limit: rate.limit, resetAt: rate.reset }
+    const core = parseBudget(resp.rate)
+    if (!core) return null
+    const resources = resp.resources as Record<string, unknown> | undefined
+    const graphql = resources ? parseBudget(resources.graphql) : null
+    return { core, graphql }
   } catch {
     return null
   }

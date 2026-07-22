@@ -1708,9 +1708,8 @@ describe('GhPluginBase.observeRateLimit integration', () => {
 describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () => {
   function observe(plugin: GitHubPrsPlugin, remaining: number, resetInMs = 60 * 60_000) {
     const fetch = async () => ({
-      remaining,
-      limit: 5000,
-      resetAt: Math.floor((Date.now() + resetInMs) / 1000),
+      core: { remaining, limit: 5000, resetAt: Math.floor((Date.now() + resetInMs) / 1000) },
+      graphql: null,
     })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (plugin as any).observeRateLimit('#proj', fetch)
@@ -1763,5 +1762,81 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
       { remaining: 4800, ts: now - 10_000 },
     ]
     expect(await observe(plugin, 4800, 60 * 60_000)).toEqual([])
+  })
+})
+
+describe('GhPluginBase.observeRateLimit — graphql budget', () => {
+  function snapshotFetch(core: { remaining: number; resetInMs?: number }, graphql: { remaining: number; resetInMs?: number } | null) {
+    return async () => ({
+      core: { remaining: core.remaining, limit: 5000, resetAt: Math.floor((Date.now() + (core.resetInMs ?? 60 * 60_000)) / 1000) },
+      graphql: graphql
+        ? { remaining: graphql.remaining, limit: 5000, resetAt: Math.floor((Date.now() + (graphql.resetInMs ?? 60 * 60_000)) / 1000) }
+        : null,
+    })
+  }
+
+  it('logs both core and graphql budgets in one tick', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const logs: string[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any).log = (m: string) => logs.push(m)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 5000 }, { remaining: 4000 }))
+    expect(logs.some(l => l.includes('[ratelimit] gh remaining=5000'))).toBe(true)
+    expect(logs.some(l => l.includes('[ratelimit] gh-graphql remaining=4000'))).toBe(true)
+  })
+
+  it('omits graphql log line when the snapshot has no graphql budget', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const logs: string[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any).log = (m: string) => logs.push(m)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 5000 }, null))
+    expect(logs.some(l => l.includes('[ratelimit] gh remaining='))).toBe(true)
+    expect(logs.some(l => l.includes('gh-graphql'))).toBe(false)
+  })
+
+  it('graphql warning fires while core is in cooldown from a prior warn', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const now = Date.now()
+    // Force core's cross-instance cooldown active, as if it just warned —
+    // deterministic instead of relying on a real prior warn elsewhere in the
+    // suite (GhPluginBase._statics is shared by every GH plugin/test in the file).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._statics.warnedAt = now
+    // graphql's static must start clear so this test isn't order-dependent either.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._gqlStatics.warnedAt = null
+
+    // Core bursts too (would warn if not suppressed); graphql also bursts for
+    // the first time and should still fire — proving the cooldowns are independent.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
+    expect(result).toHaveLength(1)
+    expect((result[0].payload as { text: string }).text).toContain('GH-GraphQL')
+  })
+
+  it('both budgets can warn in the same tick when both cooldowns are clear', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const now = Date.now()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._statics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._gqlStatics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
+    expect(result).toHaveLength(2)
+    const texts: string[] = result.map((e: { payload: { text: string } }) => e.payload.text)
+    expect(texts.some(t => t.includes('GH-GraphQL'))).toBe(true)
+    expect(texts.some(t => t.includes('GH ') && !t.includes('GH-GraphQL'))).toBe(true)
   })
 })
