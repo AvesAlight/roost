@@ -11,6 +11,7 @@ tests/logs/
 coverage/
 
 .claude/*
+!.claude/agents
 !.claude/commands/
 !.claude/rules/
 
