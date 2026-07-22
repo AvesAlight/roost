@@ -76,9 +76,10 @@ describe('diffPr', () => {
     const prev: PrSnap = { ...basePrSnap({ ci_state: 'PENDING' }) }
     const cur = basePrSnap({ ci_state: 'SUCCESS', head_oid: 'abc' })
     const events = diffPr(prev, cur)
-    const ev = events.find(e => e.kind === 'ci_transitioned') as { from: string; to: string } | undefined
+    const ev = events.find(e => e.kind === 'ci_transitioned') as { from: string; to: string; head_oid?: string | null } | undefined
     expect(ev?.from).toBe('PENDING')
     expect(ev?.to).toBe('SUCCESS')
+    expect(ev?.head_oid).toBe('abc')
   })
 
   it('emits ci_transitioned on new push with terminal CI', () => {

@@ -84,9 +84,29 @@ describe('formatEvent', () => {
     const ev: OrchestratorEvent = {
       kind: 'ci_transitioned',
       repo: 'org/repo', pr: 10, url: 'https://github.com/org/repo/pull/10',
-      from: 'PENDING', to: 'SUCCESS', head_oid: 'abc123',
+      from: 'PENDING', to: 'SUCCESS', head_oid: 'abc123def456',
     } as OrchestratorEvent
-    expect(formatEvent(ev)).toBe('PR org/repo#10 CI: PENDING → SUCCESS')
+    expect(formatEvent(ev)).toBe('PR org/repo#10 CI: PENDING → SUCCESS (abc123d)')
+  })
+
+  it('formats ci_transitioned with missing head_oid', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'ci_transitioned',
+      repo: 'org/repo', pr: 10, url: 'https://github.com/org/repo/pull/10',
+      from: 'PENDING', to: 'SUCCESS', head_oid: null,
+    } as OrchestratorEvent
+    expect(formatEvent(ev)).toBe('PR org/repo#10 CI: PENDING → SUCCESS (?)')
+  })
+
+  it('formats pr_has_existing_ci_state', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_has_existing_ci_state',
+      repo: 'org/repo', pr: 10, url: 'https://github.com/org/repo/pull/10',
+      ci_state: 'SUCCESS', head_oid: 'abc123def456',
+    } as OrchestratorEvent
+    expect(formatEvent(ev)).toBe(
+      'PR org/repo#10 CI already terminal at watch time: SUCCESS (abc123d) — https://github.com/org/repo/pull/10'
+    )
   })
 
   it('formats labels_changed', () => {

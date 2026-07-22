@@ -75,6 +75,7 @@ export interface SeedEvent extends BaseEvent {
   conversation_comment_count?: number
   comment_count?: number
   ci_state?: string | null
+  head_oid?: string | null
   stderr?: string
   tick_utc?: string
 }

@@ -160,7 +160,7 @@ export function computePrEvents(
     events.push({ kind: 'pr_has_existing_comments', review_comment_count: existingRev, conversation_comment_count: existingConv, ...base })
   }
   if (snap.ci_state === 'SUCCESS' || snap.ci_state === 'FAILURE') {
-    events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, ...base })
+    events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, head_oid: snap.head_oid, ...base })
   }
   return { events, nextWarnedNoLinked: !linked.length }
 }
