@@ -409,6 +409,15 @@ describe('spawnGh --include header capture (Retry-After)', () => {
         .rejects.toMatchObject({ retryAfterMs: undefined })
     } finally { spawn.mockRestore() }
   })
+
+  it('strips the status-line+header block on a successful (exit 0) --include response, returning just the parsed body', async () => {
+    const stdout = 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{"remaining":10}'
+    const spawn = stubGhSpawn(stdout, 0)
+    try {
+      const result = await spawnGh(['api', '--include', 'rate_limit'], { log: () => {} })
+      expect(result).toEqual({ remaining: 10 })
+    } finally { spawn.mockRestore() }
+  })
 })
 
 describe('rollupToCiState', () => {
