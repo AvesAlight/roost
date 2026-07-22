@@ -399,13 +399,38 @@ describe('mapBatchOutcomes (per-alias isolation)', () => {
 describe('fetchRateLimit', () => {
   const noopLog = () => {}
 
-  it('returns parsed RateLimitInfo on success', async () => {
+  it('returns parsed core budget on success', async () => {
     const exec = async () => ({ rate: { limit: 5000, remaining: 4987, reset: 1716000000 } })
-    const info = await fetchRateLimit(noopLog, { exec })
-    expect(info).toEqual({ limit: 5000, remaining: 4987, resetAt: 1716000000 })
+    const snapshot = await fetchRateLimit(noopLog, { exec })
+    expect(snapshot?.core).toEqual({ limit: 5000, remaining: 4987, resetAt: 1716000000 })
   })
 
-  it('returns null when rate field is absent', async () => {
+  it('also parses the graphql budget from resources.graphql', async () => {
+    const exec = async () => ({
+      rate: { limit: 5000, remaining: 4987, reset: 1716000000 },
+      resources: { graphql: { limit: 5000, remaining: 4321, reset: 1716000500 } },
+    })
+    const snapshot = await fetchRateLimit(noopLog, { exec })
+    expect(snapshot?.graphql).toEqual({ limit: 5000, remaining: 4321, resetAt: 1716000500 })
+  })
+
+  it('graphql is null when resources.graphql is absent (core still returned)', async () => {
+    const exec = async () => ({ rate: { limit: 5000, remaining: 4987, reset: 1716000000 } })
+    const snapshot = await fetchRateLimit(noopLog, { exec })
+    expect(snapshot?.graphql).toBeNull()
+    expect(snapshot?.core).not.toBeNull()
+  })
+
+  it('graphql is null when resources.graphql fields are incomplete', async () => {
+    const exec = async () => ({
+      rate: { limit: 5000, remaining: 4987, reset: 1716000000 },
+      resources: { graphql: { limit: 5000 } },  // missing remaining + reset
+    })
+    const snapshot = await fetchRateLimit(noopLog, { exec })
+    expect(snapshot?.graphql).toBeNull()
+  })
+
+  it('returns null when rate field is absent (core is required)', async () => {
     const exec = async () => ({ resources: { core: { limit: 5000, remaining: 4987, reset: 1716000000 } } })
     expect(await fetchRateLimit(noopLog, { exec })).toBeNull()
   })

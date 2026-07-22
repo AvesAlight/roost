@@ -5,8 +5,8 @@ import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
 import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type TaggedEvent } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
-import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError, rateLimitKind } from './github-api.js'
-import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError, rateLimitKind, type RateLimitSnapshot } from './github-api.js'
+import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitStatics } from '../_rate-limit.js'
 import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS, BACKOFF_SCHEDULE_MS, formatBackoffNotice, formatReadFailureNote, formatBatchFailureNote, type RateLimitKind } from './backoff.js'
 
 // Per-entry read outcome. `readEntry` never throws the expected gh-error
@@ -24,9 +24,13 @@ export abstract class GhPluginBase extends BasePlugin {
   protected readonly log: PluginLogger
 
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
+  private _graphqlRateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
-  // Cross-instance cooldown handle — one warning per 10 min total.
+  // Cross-instance cooldown handles — one warning per 10 min total, core and
+  // graphql tracked independently so a graphql-budget warning isn't suppressed
+  // by (or suppresses) a core-budget one.
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
+  private static readonly _gqlStatics: RateLimitStatics = { warnedAt: null }
 
   // One breaker shared across every GH plugin — they poll one shared GH budget,
   // so a rate-limit on any of them should quiet all of them.
@@ -235,13 +239,16 @@ export abstract class GhPluginBase extends BasePlugin {
   // Runs even when scrapes failed — a failing tick is often a symptom of exhaustion.
   protected async observeRateLimit(
     projectChannel: string,
-    _fetch: (log: PluginLogger) => Promise<RateLimitInfo | null> = fetchRateLimit,
+    _fetch: (log: PluginLogger) => Promise<RateLimitSnapshot | null> = fetchRateLimit,
   ): Promise<TaggedEvent[]> {
-    const info = await _fetch(this.log)
-    if (!info) return []
-    const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')
-    this._rateLimitHistory = history
-    return events
+    const snapshot = await _fetch(this.log)
+    if (!snapshot) return []
+    const core = observeRateLimitFromInfo(snapshot.core, this._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')
+    this._rateLimitHistory = core.history
+    if (!snapshot.graphql) return core.events
+    const graphql = observeRateLimitFromInfo(snapshot.graphql, this._graphqlRateLimitHistory, GhPluginBase._gqlStatics, this.log, projectChannel, 'GH-GraphQL')
+    this._graphqlRateLimitHistory = graphql.history
+    return [...core.events, ...graphql.events]
   }
 }
 
