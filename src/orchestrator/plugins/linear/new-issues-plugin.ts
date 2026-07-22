@@ -1,12 +1,15 @@
-// Per-team new-issue triage feed for Linear. Polls watched teams for open
-// issues and announces the first time a given Linear ID is observed.
+// Per-team (optionally per-project) new-issue triage feed for Linear. Polls
+// watched teams for open issues and announces the first time a given Linear
+// ID is observed.
 //
 // DM grammar: claims target=`linear-team` — `watch linear-team <TEAM>
-// [#chan ...]`. Team key must match `^[A-Z]+$`.
+// [project:"<NAME>"] [#chan ...]`. Team key must match `^[A-Z]+$`.
 //
-// State slice: `{ teams: Record<string, string[]> }`. Seeding (`prev===null`)
-// and first-observation of a new team entry both capture without emitting.
-// Removed entries are carried forward so remove-then-readd doesn't replay.
+// State slice: `{ teams: Record<string, string[]> }`, keyed by
+// `entryKey(team, linearProject)` — bare team key when unscoped, `team::project`
+// when scoped. Seeding (`prev===null`) and first-observation of a new watch
+// entry both capture without emitting. Removed entries are carried forward so
+// remove-then-readd doesn't replay.
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
@@ -15,11 +18,24 @@ import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitStatics } from '../_rate-limit.js'
 import { tryClaimPerLinearTeam, type PerLinearTeamCommand } from '../grammar.js'
-import { LinearClient, type LinearIssueNode } from './linear-api.js'
+import { LinearClient, type FetchTeamIssuesResult, type LinearIssueNode } from './linear-api.js'
 
 export interface LinearNewIssuesWatchEntry {
   team: string
+  // Optional Linear project name scoping this watch to one project within
+  // `team`. Named `linearProject`, not `project` — `OrchestratorConfig.project`
+  // already means the roost project/repo elsewhere in this codebase, and a
+  // same-named field meaning something unrelated one file over invites drift.
+  linearProject?: string
   channels?: string[]
+}
+
+// Identity key for a watch entry: (team, linearProject) pair, not team alone —
+// `watch linear-team C` and `watch linear-team C project:"X"` are independent
+// watches that coexist. Unscoped entries key on the bare team so on-disk state
+// from before project filtering existed keeps matching without a migration.
+function entryKey(team: string, linearProject?: string | null): string {
+  return linearProject ? `${team}::${linearProject}` : team
 }
 
 interface LinearNewIssuesPluginConfig {
@@ -36,8 +52,12 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private readonly log: PluginLogger
   private readonly client: LinearClient
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
-  // Per-instance Map (vs class-static _statics for rate-limit) — team-missing is a per-watcher signal, rate-limit is per-API-budget shared across instances.
-  private _teamNotFoundWarnedAt = new Map<string, number>()
+  // Per-instance Map (vs class-static _statics for rate-limit) — not-found is a
+  // per-watcher signal, rate-limit is per-API-budget shared across instances.
+  // Keyed by `entryKey(team, linearProject)`, not bare team — two scoped
+  // watches on the same team with different (typo'd) project names each get
+  // their own cooldown slot, so one doesn't suppress the other's warning.
+  private _notFoundWarnedAt = new Map<string, number>()
 
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
@@ -60,8 +80,8 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     if (cmd.kind === 'help') return this.formatHelpSection()
     if (cmd.kind === 'plugin' && cmd.plugin === this.name) {
       const c = cmd.cmd as PerLinearTeamCommand
-      if (c.verb === 'watch') return this.applyWatch(merged, local, c.team, c.channels)
-      return this.applyUnwatch(merged, local, c.team)
+      if (c.verb === 'watch') return this.applyWatch(merged, local, c.team, c.project, c.channels)
+      return this.applyUnwatch(merged, local, c.team, c.project)
     }
     return null
   }
@@ -70,13 +90,20 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     return this.pluginConfig<LinearNewIssuesPluginConfig>(config)?.watched ?? []
   }
 
-  private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, team: string, channels: string[]): string {
-    const labelStr = `linear-team ${team}`
-    const match = (e: LinearNewIssuesWatchEntry) => e.team === team
+  private applyWatch(
+    merged: OrchestratorConfig,
+    local: OrchestratorConfig,
+    team: string,
+    project: string | null,
+    channels: string[],
+  ): string {
+    const labelStr = project ? `linear-team ${team} project:"${project}"` : `linear-team ${team}`
+    const match = (e: LinearNewIssuesWatchEntry) => entryKey(e.team, e.linearProject) === entryKey(team, project)
     if (!this.mergedWatched(merged).some(match)) {
       const slice = this.localSlice<LinearNewIssuesPluginConfig>(local)
       slice.watched ??= []
       const entry: LinearNewIssuesWatchEntry = { team }
+      if (project) entry.linearProject = project
       if (channels.length) entry.channels = [...channels]
       slice.watched.push(entry)
       return channels.length ? `watching ${labelStr} + ${channels.join(' ')}` : `watching ${labelStr}`
@@ -86,34 +113,37 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     return addChannelsToEntry(localEntry, channels, labelStr)
   }
 
-  private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, team: string): string {
+  private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, team: string, project: string | null): string {
+    const labelStr = project ? `linear-team ${team} project:"${project}"` : `linear-team ${team}`
     return applyUnwatchEntry<LinearNewIssuesWatchEntry>(
       this.mergedWatched(merged),
       this.pluginConfig<LinearNewIssuesPluginConfig>(local)?.watched ?? [],
-      e => e.team === team,
-      `linear-team ${team}`,
+      e => entryKey(e.team, e.linearProject) === entryKey(team, project),
+      labelStr,
     )
   }
 
   private formatListSection(merged: OrchestratorConfig): string {
     const entries = this.mergedWatched(merged)
-    const byTeam = new Map<string, Set<string>>()
+    const byKey = new Map<string, { team: string; project: string | null; chans: Set<string> }>()
     const order: string[] = []
     for (const e of entries) {
-      let chans = byTeam.get(e.team)
-      if (!chans) {
-        chans = new Set<string>()
-        byTeam.set(e.team, chans)
-        order.push(e.team)
+      const key = entryKey(e.team, e.linearProject)
+      let g = byKey.get(key)
+      if (!g) {
+        g = { team: e.team, project: e.linearProject ?? null, chans: new Set<string>() }
+        byKey.set(key, g)
+        order.push(key)
       }
-      for (const c of e.channels ?? []) chans.add(c)
+      for (const c of e.channels ?? []) g.chans.add(c)
     }
-    const header = `${this.name} (${byTeam.size}):`
-    if (!byTeam.size) return `${header}\n  (none)`
-    const lines = order.map(t => {
-      const chans = byTeam.get(t)!
-      const chansStr = chans.size ? ` + ${[...chans].join(' ')}` : ''
-      return `  ${t}${chansStr}`
+    const header = `${this.name} (${byKey.size}):`
+    if (!byKey.size) return `${header}\n  (none)`
+    const lines = order.map(k => {
+      const g = byKey.get(k)!
+      const projStr = g.project ? ` project:"${g.project}"` : ''
+      const chansStr = g.chans.size ? ` + ${[...g.chans].join(' ')}` : ''
+      return `  ${g.team}${projStr}${chansStr}`
     })
     return [header, ...lines].join('\n')
   }
@@ -121,9 +151,9 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   private formatHelpSection(): string {
     return [
       `${this.name} commands (DM only):`,
-      `  watch linear-team <TEAM> [#chan ...]   — watch new-issues feed for TEAM`,
-      `  unwatch linear-team <TEAM>             — stop watching new-issues feed`,
-      `  watch list                             — include this plugin's watched teams in the reply`,
+      `  watch linear-team <TEAM> [project:"<NAME>"] [#chan ...]   — watch new-issues feed for TEAM, optionally scoped to a project`,
+      `  unwatch linear-team <TEAM> [project:"<NAME>"]              — stop watching new-issues feed`,
+      `  watch list                                                 — include this plugin's watched teams in the reply`,
     ].join('\n')
   }
 
@@ -150,37 +180,44 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     const nextTeams: Record<string, string[]> = prev ? { ...prev.teams } : {}
 
     for (const entry of watchEntries) {
-      const { team, channels } = entry
+      const { team, linearProject, channels } = entry
+      const key = entryKey(team, linearProject)
+      const watchLabel = linearProject ? `team ${team} project "${linearProject}"` : `team ${team}`
+      const unwatchCmd = linearProject ? `unwatch linear-team ${team} project:"${linearProject}"` : `unwatch linear-team ${team}`
       const announcementChannels = channels?.length
         ? [...channels]
         : [resolveProjectChannel(config)]
 
-      let issues: LinearIssueNode[] | null
+      let result: FetchTeamIssuesResult
       try {
-        issues = await this.client.fetchTeamOpenIssues(team)
+        result = await this.client.fetchTeamOpenIssues(team, linearProject)
       } catch (e) {
-        this.log(`linear-new-issues: error fetching team ${team}: ${e instanceof Error ? e.message : String(e)}\n`)
+        this.log(`linear-new-issues: error fetching ${watchLabel}: ${e instanceof Error ? e.message : String(e)}\n`)
         continue
       }
 
-      if (issues === null) {
+      if (result.kind !== 'ok') {
         const now = Date.now()
-        const lastWarnedAt = this._teamNotFoundWarnedAt.get(team) ?? 0
+        const lastWarnedAt = this._notFoundWarnedAt.get(key) ?? 0
         if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
-          this._teamNotFoundWarnedAt.set(team, now)
+          this._notFoundWarnedAt.set(key, now)
+          const reason = result.kind === 'team-not-found'
+            ? `team ${team} not found`
+            : `project "${linearProject}" not found in team ${team}`
           taggedEvents.push({
             channels: [...announcementChannels],
-            payload: { kind: 'oneline', text: `[linear-new-issues] team ${team} not found — renamed or deleted? Unwatch with: \`unwatch linear-team ${team}\`` },
+            payload: { kind: 'oneline', text: `[linear-new-issues] ${reason} — renamed or deleted? Unwatch with: \`${unwatchCmd}\`` },
           })
         }
         continue
       }
+      const issues = result.issues
 
-      // First observation of this team (or full re-seed): capture without emitting.
-      const isFirstForTeam = prev === null || prev.teams[team] === undefined
-      const seen = new Set<string>(prev?.teams[team] ?? [])
+      // First observation of this watch (or full re-seed): capture without emitting.
+      const isFirstForKey = prev === null || prev.teams[key] === undefined
+      const seen = new Set<string>(prev?.teams[key] ?? [])
 
-      if (!isFirstForTeam) {
+      if (!isFirstForKey) {
         const newIssues = issues
           .filter(i => !seen.has(i.identifier))
           .sort((a, b) => linearIdNum(a.identifier) - linearIdNum(b.identifier))
@@ -193,7 +230,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       }
 
       for (const i of issues) seen.add(i.identifier)
-      nextTeams[team] = [...seen].sort((a, b) => linearIdNum(a) - linearIdNum(b))
+      nextTeams[key] = [...seen].sort((a, b) => linearIdNum(a) - linearIdNum(b))
     }
 
     taggedEvents.push(...this.observeLinearRateLimit(resolveProjectChannel(config)))

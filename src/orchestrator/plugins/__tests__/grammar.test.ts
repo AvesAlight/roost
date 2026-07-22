@@ -318,26 +318,64 @@ describe('tryClaimPerLinearId', () => {
 describe('tryClaimPerLinearTeam — target=linear-team', () => {
   it('claims `watch linear-team C`', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C')).toEqual({
-      kind: 'ok', cmd: { verb: 'watch', team: 'C', channels: [] },
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', project: null, channels: [] },
     })
   })
 
   it('claims multi-letter team key', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team MAR')).toEqual({
-      kind: 'ok', cmd: { verb: 'watch', team: 'MAR', channels: [] },
+      kind: 'ok', cmd: { verb: 'watch', team: 'MAR', project: null, channels: [] },
     })
   })
 
   it('claims with channels', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C #triage #leads')).toEqual({
-      kind: 'ok', cmd: { verb: 'watch', team: 'C', channels: ['#triage', '#leads'] },
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', project: null, channels: ['#triage', '#leads'] },
     })
   })
 
   it('claims `unwatch linear-team C`', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'unwatch linear-team C')).toEqual({
-      kind: 'ok', cmd: { verb: 'unwatch', team: 'C', channels: [] },
+      kind: 'ok', cmd: { verb: 'unwatch', team: 'C', project: null, channels: [] },
     })
+  })
+
+  it('claims a quoted project filter', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:"SDK 4.3.14"')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', project: 'SDK 4.3.14', channels: [] },
+    })
+  })
+
+  it('claims a quoted project filter alongside channels, in either order', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:"SDK 4.3.14" #triage')).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', team: 'C', project: 'SDK 4.3.14', channels: ['#triage'] },
+    })
+  })
+
+  it('claims `unwatch linear-team C project:"X"` — targets the scoped entry specifically', () => {
+    expect(tryClaimPerLinearTeam('linear-team', 'unwatch linear-team C project:"X"')).toEqual({
+      kind: 'ok', cmd: { verb: 'unwatch', team: 'C', project: 'X', channels: [] },
+    })
+  })
+
+  it('errors with a fixit on an unquoted project filter', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:SDK')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/must be quoted/)
+    expect((r as { kind: 'error'; message: string }).message).toContain('project:"<NAME>"')
+  })
+
+  it('errors on an unquoted project filter containing a space, without echoing a truncated guess', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:SDK 4.3.14')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/must be quoted/)
+    expect((r as { kind: 'error'; message: string }).message).not.toContain('4.3.14')
+  })
+
+  it('errors on an empty quoted project filter', () => {
+    const r = tryClaimPerLinearTeam('linear-team', 'watch linear-team C project:""')
+    expect(r?.kind).toBe('error')
+    expect((r as { kind: 'error'; message: string }).message).toMatch(/must not be empty/)
   })
 
   it('errors on lowercase team key', () => {

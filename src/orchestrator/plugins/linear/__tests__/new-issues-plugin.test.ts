@@ -1,6 +1,6 @@
 import { describe, it, expect, spyOn, beforeAll, afterAll } from 'bun:test'
 import { LinearNewIssuesPlugin, type LinearNewIssuesPluginState, formatNewLinearIssue } from '../new-issues-plugin.js'
-import { LinearClient, type LinearIssueNode } from '../linear-api.js'
+import { LinearClient, type LinearIssueNode, type FetchTeamIssuesResult } from '../linear-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import { RATE_LIMIT_WINDOW_MS, WARN_COOLDOWN_MS } from '../../_rate-limit.js'
 
@@ -34,8 +34,15 @@ function makePlugin(channel = '#proj-leads'): { plugin: LinearNewIssuesPlugin; c
 }
 
 // Stub fetchTeamOpenIssues on the prototype so all instances in a test get the mock.
-function stubFetch(response: LinearIssueNode[] | null) {
-  return spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue(response)
+// `response === null` maps to team-not-found (the common case in these tests);
+// pass a tagged result directly for project-not-found scenarios.
+function stubFetch(response: LinearIssueNode[] | null | FetchTeamIssuesResult) {
+  const tagged: FetchTeamIssuesResult = response === null
+    ? { kind: 'team-not-found' }
+    : Array.isArray(response)
+      ? { kind: 'ok', issues: response }
+      : response
+  return spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue(tagged)
 }
 
 // Suppress the rate-limit observe path — `getLastRateLimit` returns null, no events.
@@ -194,7 +201,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     const calls: string[] = []
     const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (team: string) => {
       calls.push(team)
-      return team === 'C' ? [issue('C-1')] : [issue('MAR-2')]
+      return { kind: 'ok', issues: team === 'C' ? [issue('C-1')] : [issue('MAR-2')] }
     })
     try {
       const config: OrchestratorConfig = {
@@ -216,7 +223,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
 
   it('seeds a new team entry without emitting when added to an existing config', async () => {
     const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (team: string) => {
-      return team === 'C' ? [issue('C-1')] : [issue('MAR-10'), issue('MAR-11')]
+      return { kind: 'ok', issues: team === 'C' ? [issue('C-1')] : [issue('MAR-10'), issue('MAR-11')] }
     })
     try {
       const config: OrchestratorConfig = {
@@ -271,6 +278,115 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const result = await plugin.runTick(baseConfig(), prevState([]))
       expect(result.taggedEvents).toHaveLength(0)
       expect(logs.some(l => l.includes('network error'))).toBe(true)
+    } finally { spy.mockRestore() }
+  })
+})
+
+describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
+  stubRateLimit()
+
+  it('passes the project name through to fetchTeamOpenIssues', async () => {
+    const calls: Array<[string, string | undefined]> = []
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (team, project) => {
+      calls.push([team, project])
+      return { kind: 'ok', issues: [] }
+    })
+    try {
+      const config: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'linear-new-issues': { watched: [{ team: 'C', linearProject: 'SDK 4.3.14' }] } },
+      }
+      const { plugin } = makePlugin()
+      await plugin.runTick(config, null)
+      expect(calls).toEqual([['C', 'SDK 4.3.14']])
+    } finally { spy.mockRestore() }
+  })
+
+  it('keeps a scoped and an unscoped watch on the same team as independent seen-sets', async () => {
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (_team, project) => {
+      return { kind: 'ok', issues: project ? [issue('C-1'), issue('C-2')] : [issue('C-1'), issue('C-2'), issue('C-3')] }
+    })
+    try {
+      const config: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'linear-new-issues': { watched: [{ team: 'C' }, { team: 'C', linearProject: 'SDK 4.3.14' }] } },
+      }
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(config, { teams: { C: ['C-1'], 'C::SDK 4.3.14': ['C-1'] } })
+      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      expect(texts.some(t => t.includes('C-2'))).toBe(true)
+      expect(texts.some(t => t.includes('C-3'))).toBe(true)
+      const state = result.state as LinearNewIssuesPluginState
+      expect(state.teams['C']).toEqual(['C-1', 'C-2', 'C-3'])
+      expect(state.teams['C::SDK 4.3.14']).toEqual(['C-1', 'C-2'])
+    } finally { spy.mockRestore() }
+  })
+
+  // The sharp collision test: two *scoped* entries on the same team with
+  // different project names must not share a state key or a cooldown slot.
+  it('keeps two scoped watches on the same team, different projects, fully independent', async () => {
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (_team, project) => {
+      if (project === 'X') return { kind: 'ok', issues: [issue('C-1'), issue('C-2')] }
+      if (project === 'Y') return { kind: 'ok', issues: [issue('C-10')] }
+      throw new Error(`unexpected project ${project}`)
+    })
+    try {
+      const config: OrchestratorConfig = {
+        project: 'proj',
+        plugins: {
+          'linear-new-issues': {
+            watched: [
+              { team: 'C', linearProject: 'X' },
+              { team: 'C', linearProject: 'Y' },
+            ],
+          },
+        },
+      }
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(config, { teams: { 'C::X': ['C-1'], 'C::Y': [] } })
+      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      expect(texts.some(t => t.includes('C-2'))).toBe(true)
+      expect(texts.some(t => t.includes('C-10'))).toBe(true)
+      const state = result.state as LinearNewIssuesPluginState
+      expect(state.teams['C::X']).toEqual(['C-1', 'C-2'])
+      expect(state.teams['C::Y']).toEqual(['C-10'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('emits "project not found in team" (not "team not found") when only the project is missing', async () => {
+    const spy = stubFetch({ kind: 'project-not-found' })
+    try {
+      const config: OrchestratorConfig = {
+        project: 'proj',
+        plugins: { 'linear-new-issues': { watched: [{ team: 'C', linearProject: 'Nope' }] } },
+      }
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(config, null)
+      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      expect(warnings).toHaveLength(1)
+      const text = (warnings[0]?.payload as { text: string }).text
+      expect(text).toContain('project "Nope" not found in team C')
+      expect(text).toContain('unwatch linear-team C project:"Nope"')
+    } finally { spy.mockRestore() }
+  })
+
+  it('a typo\'d project on team C does not suppress team C\'s own not-found cooldown, and vice versa', async () => {
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockImplementation(async (_team, project) =>
+      project ? { kind: 'project-not-found' } : { kind: 'team-not-found' },
+    )
+    try {
+      const config: OrchestratorConfig = {
+        project: 'proj',
+        plugins: {
+          'linear-new-issues': {
+            watched: [{ team: 'C' }, { team: 'C', linearProject: 'Typo' }],
+          },
+        },
+      }
+      const { plugin } = makePlugin()
+      const result = await plugin.runTick(config, null)
+      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      expect(warnings).toHaveLength(2)
     } finally { spy.mockRestore() }
   })
 })
@@ -351,8 +467,8 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     }
     // Put team C in cooldown (warned just now), team MAR has never warned
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._teamNotFoundWarnedAt.set('C', Date.now())
-    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue(null)
+    ;(plugin as any)._notFoundWarnedAt.set('C', Date.now())
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'team-not-found' })
     try {
       const result = await plugin.runTick(config, null)
       const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
@@ -368,7 +484,7 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
       const { plugin } = makePlugin()
       // Seed cooldown as if warning fired WARN_COOLDOWN_MS + 1ms ago
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(plugin as any)._teamNotFoundWarnedAt.set('C', Date.now() - WARN_COOLDOWN_MS - 1)
+      ;(plugin as any)._notFoundWarnedAt.set('C', Date.now() - WARN_COOLDOWN_MS - 1)
       const result = await plugin.runTick(baseConfig(), null)
       const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
       expect(warnings).toHaveLength(1)
@@ -428,7 +544,7 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
     ;(plugin as any)._rateLimitHistory = [
       { remaining: 2500, ts: Date.now() - 160_000 },
     ]
-    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
       const warnings = result.taggedEvents.filter(e =>
@@ -450,7 +566,7 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
       limit: 2500,
       resetAt: Math.floor((Date.now() + 60 * 60_000) / 1000),
     })
-    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
       const warnings = result.taggedEvents.filter(e =>
@@ -474,7 +590,7 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
     ;(plugin as any)._rateLimitHistory = [
       { remaining: 2500, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
     ]
-    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue([])
+    const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
       const warnings = result.taggedEvents.filter(e =>
