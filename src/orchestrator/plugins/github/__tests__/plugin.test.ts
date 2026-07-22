@@ -1820,4 +1820,23 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     expect(result).toHaveLength(1)
     expect((result[0].payload as { text: string }).text).toContain('GH-GraphQL')
   })
+
+  it('both budgets can warn in the same tick when both cooldowns are clear', async () => {
+    const plugin = new GitHubPrsPlugin('#proj')
+    const now = Date.now()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._statics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._gqlStatics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
+    expect(result).toHaveLength(2)
+    const texts: string[] = result.map((e: { payload: { text: string } }) => e.payload.text)
+    expect(texts.some(t => t.includes('GH-GraphQL'))).toBe(true)
+    expect(texts.some(t => t.includes('GH ') && !t.includes('GH-GraphQL'))).toBe(true)
+  })
 })
