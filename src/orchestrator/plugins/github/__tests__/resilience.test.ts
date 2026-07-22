@@ -241,9 +241,9 @@ function stubIssuesBatch(fn: (n: number) => BatchOutcome<GhIssueNode>): { mockRe
 // contract. Bun.spawn is the seam runGhGraphqlBatchOnce shells out through, so
 // mocking it exercises the actual per-alias-isolation and RATE_LIMITED paths
 // end-to-end — the mechanism the stubPrsBatch mock above short-circuits.
-function stubGhSpawn(stdout: string, exitCode: number): { mockRestore(): void } {
+function stubGhSpawn(stdout: string, exitCode: number, stderr = ''): { mockRestore(): void } {
   return spyOn(Bun, 'spawn').mockReturnValue({
-    stdout, stderr: '', exited: Promise.resolve(exitCode),
+    stdout, stderr, exited: Promise.resolve(exitCode),
   } as unknown as ReturnType<typeof Bun.spawn>)
 }
 
@@ -415,6 +415,37 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       ])
       expect(out.get('org/repo#1')).toEqual({ ok: true, node: { number: 1, state: 'OPEN' } })
       expect(out.get('org/repo#2')!.ok).toBe(false)  // dead alias isolated, not thrown
+    } finally { spawn.mockRestore() }
+  })
+
+  it('the same partial {data,errors} body wrapped in --include\'s status-line+header block still isolates the dead alias', async () => {
+    // runBatchQuery now always passes --include, so stdout leads with
+    // `HTTP/2.0 200 OK` + headers before the body gh used to write directly.
+    // That header block must be stripped before the 'data' in parsed check —
+    // otherwise the isolation test above would pass while the real call fails.
+    const jsonBody = JSON.stringify({
+      data: { e0: { pullRequest: { number: 1, state: 'OPEN' } }, e1: { pullRequest: null } },
+      errors: [{ type: 'NOT_FOUND', path: ['e1', 'pullRequest'], message: 'Could not resolve to a PullRequest' }],
+    })
+    const wrapped = `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${jsonBody}`
+    const spawn = stubGhSpawn(wrapped, 1)
+    try {
+      const out = await new GhClient(() => {}).fetchPrsBatch([
+        { repo: 'org/repo', number: 1 }, { repo: 'org/repo', number: 2 },
+      ])
+      expect(out.get('org/repo#1')).toEqual({ ok: true, node: { number: 1, state: 'OPEN' } })
+      expect(out.get('org/repo#2')!.ok).toBe(false)
+    } finally { spawn.mockRestore() }
+  })
+
+  it('a whole-batch secondary rate-limit carrying a Retry-After header honors the exact sub-minute wait (real exec seam)', async () => {
+    const wrapped = 'HTTP/2.0 403 Forbidden\r\nRetry-After: 20\r\n\r\n{"message":"You have exceeded a secondary rate limit"}'
+    const spawn = stubGhSpawn(wrapped, 1, 'gh: HTTP 403: You have exceeded a secondary rate limit')
+    try {
+      const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
+      const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
+      // 20s honored, not the schedule's 1m floor.
+      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 20s')
     } finally { spawn.mockRestore() }
   })
 

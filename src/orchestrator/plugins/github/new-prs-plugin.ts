@@ -170,7 +170,7 @@ export class GitHubNewPrsPlugin extends GhPluginBase {
       )
       // Rate-limit discards this tick's partial work and preserves prev state —
       // the next clean tick re-reads and announces what's genuinely new.
-      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { repos: {} }, projectChannel, config, r.kind)
+      if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { repos: {} }, projectChannel, config, r.kind, r.retryAfterMs)
       if (!r.ok) {
         taggedEvents.push(...r.events)
         continue

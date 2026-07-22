@@ -1,6 +1,15 @@
-import { describe, it, expect } from 'bun:test'
-import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure, rollupToCiState, rateLimitKind, mapBatchOutcomes } from '../github-api.js'
+import { describe, it, expect, spyOn } from 'bun:test'
+import { GhError, spawnGh, fetchRateLimit, isRateLimitError, describeReadFailure, rollupToCiState, rateLimitKind, mapBatchOutcomes, parseIncludeOutput } from '../github-api.js'
 import { computeRateLimitWarning, RATE_LIMIT_WINDOW_MS, type RateLimitInfo } from '../../_rate-limit.js'
+
+// Fake a `gh` subprocess so the header-capture tests drive gh's real
+// --include stdout contract (status line + headers + body, verified against a
+// real `gh api -i` 404) rather than a hand-shaped stand-in.
+function stubGhSpawn(stdout: string, exitCode: number, stderr = ''): { mockRestore(): void } {
+  return spyOn(Bun, 'spawn').mockReturnValue({
+    stdout, stderr, exited: Promise.resolve(exitCode),
+  } as unknown as ReturnType<typeof Bun.spawn>)
+}
 
 function mkErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1): gh api foo\n${stderr.trim()}`, stderr)
@@ -332,6 +341,82 @@ describe('rateLimitKind', () => {
     // Primary budget exhaustion and a bare 429 are not tagged secondary.
     expect(rateLimitKind(mkErr('gh: HTTP 403: API rate limit exceeded for user ID 1'))).toBe('primary')
     expect(rateLimitKind(mkErr('gh: HTTP 429: Too Many Requests'))).toBe('primary')
+  })
+})
+
+describe('parseIncludeOutput', () => {
+  it('splits the status line, lowercases header keys, and isolates the body — matches a real `gh api -i` 403', () => {
+    const raw = 'HTTP/2.0 403 Forbidden\r\nRetry-After: 30\r\nContent-Type: application/json; charset=utf-8\r\n\r\n' +
+      '{"message":"You have exceeded a secondary rate limit"}'
+    const parsed = parseIncludeOutput(raw)
+    expect(parsed.status).toBe(403)
+    expect(parsed.headers.get('retry-after')).toBe('30')
+    expect(parsed.headers.get('content-type')).toBe('application/json; charset=utf-8')
+    expect(parsed.body).toBe('{"message":"You have exceeded a secondary rate limit"}')
+  })
+
+  it('handles LF-only header blocks, not just CRLF', () => {
+    const parsed = parseIncludeOutput('HTTP/2.0 200 OK\nX-Foo: bar\n\n{"ok":true}')
+    expect(parsed.status).toBe(200)
+    expect(parsed.headers.get('x-foo')).toBe('bar')
+    expect(parsed.body).toBe('{"ok":true}')
+  })
+
+  it('passes non-HTTP text through unchanged — a call that never went through --include, or a network failure with no response at all', () => {
+    const raw = '{"data":{"e0":null}}'
+    const parsed = parseIncludeOutput(raw)
+    expect(parsed.status).toBeNull()
+    expect(parsed.headers.size).toBe(0)
+    expect(parsed.body).toBe(raw)
+  })
+})
+
+describe('spawnGh --include header capture (Retry-After)', () => {
+  it('captures a whole-second Retry-After onto the thrown GhError', async () => {
+    const stdout = 'HTTP/2.0 403 Forbidden\r\nRetry-After: 30\r\n\r\n{"message":"secondary rate limit"}'
+    const spawn = stubGhSpawn(stdout, 1, 'gh: HTTP 403: You have exceeded a secondary rate limit')
+    try {
+      await expect(spawnGh(['api', '--include', 'repos/org/repo/commits'], { log: () => {}, attempts: 1 }))
+        .rejects.toMatchObject({ retryAfterMs: 30_000 })
+    } finally { spawn.mockRestore() }
+  })
+
+  it('rounds a fractional Retry-After to the nearest ms', async () => {
+    const stdout = 'HTTP/2.0 403 Forbidden\r\nRetry-After: 1.5\r\n\r\n{}'
+    const spawn = stubGhSpawn(stdout, 1, 'gh: HTTP 403: You have exceeded a secondary rate limit')
+    try {
+      await expect(spawnGh(['api', '--include', 'x'], { log: () => {}, attempts: 1 }))
+        .rejects.toMatchObject({ retryAfterMs: 1500 })
+    } finally { spawn.mockRestore() }
+  })
+
+  it('treats a non-numeric Retry-After (an HTTP-date, or junk) as malformed — undefined, never a NaN', async () => {
+    // GitHub's documented secondary-limit Retry-After is delta-seconds; HTTP in
+    // general also allows an HTTP-date, but GH doesn't send one for this header.
+    // A stray date-shaped value must fall back cleanly, not produce NaN.
+    const stdout = 'HTTP/2.0 403 Forbidden\r\nRetry-After: Wed, 21 Oct 2015 07:28:00 GMT\r\n\r\n{}'
+    const spawn = stubGhSpawn(stdout, 1, 'gh: HTTP 403: You have exceeded a secondary rate limit')
+    try {
+      await expect(spawnGh(['api', '--include', 'x'], { log: () => {}, attempts: 1 }))
+        .rejects.toMatchObject({ retryAfterMs: undefined })
+    } finally { spawn.mockRestore() }
+  })
+
+  it('never attempts header parsing when the call did not opt into --include', async () => {
+    const spawn = stubGhSpawn('', 1, 'gh: HTTP 403: You have exceeded a secondary rate limit')
+    try {
+      await expect(spawnGh(['api', 'x'], { log: () => {}, attempts: 1 }))
+        .rejects.toMatchObject({ retryAfterMs: undefined })
+    } finally { spawn.mockRestore() }
+  })
+
+  it('strips the status-line+header block on a successful (exit 0) --include response, returning just the parsed body', async () => {
+    const stdout = 'HTTP/2.0 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{"remaining":10}'
+    const spawn = stubGhSpawn(stdout, 0)
+    try {
+      const result = await spawnGh(['api', '--include', 'rate_limit'], { log: () => {} })
+      expect(result).toEqual({ remaining: 10 })
+    } finally { spawn.mockRestore() }
   })
 })
 

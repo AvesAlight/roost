@@ -108,17 +108,72 @@ export class GhError extends Error {
   // classify off — the GraphQL RATE_LIMITED case (HTTP 200 with an error node).
   // Lets isRateLimitError recognize it without a fabricated status string.
   readonly rateLimited: boolean
-  constructor(msg: string, stderr = '', attempts = 1, rateLimited = false) {
+  // Retry-After header (ms), when the call went through --include and GitHub
+  // sent one — only meaningful for the secondary/burst limiter (see
+  // rateLimitKind). undefined when absent, non-numeric, or the call didn't
+  // capture headers at all.
+  readonly retryAfterMs?: number
+  constructor(msg: string, stderr = '', attempts = 1, rateLimited = false, retryAfterMs?: number) {
     super(msg)
     this.name = 'GhError'
     this.stderr = stderr
     this.attempts = attempts
     this.rateLimited = rateLimited
+    this.retryAfterMs = retryAfterMs
   }
 }
 
+// Splits `gh api --include` output into status/headers/body. Header keys are
+// lowercased for case-insensitive lookup. `status: null` when the text doesn't
+// look like an HTTP response at all (e.g. a network failure that never reached
+// a server — stdout is empty, --include had nothing to prepend).
+export interface GhIncludeResponse {
+  status: number | null
+  headers: Map<string, string>
+  body: string
+}
+
+export function parseIncludeOutput(raw: string): GhIncludeResponse {
+  const text = raw.replace(/\r\n/g, '\n')
+  const sepIdx = text.indexOf('\n\n')
+  if (!text.startsWith('HTTP/') || sepIdx === -1) {
+    return { status: null, headers: new Map(), body: raw }
+  }
+  const head = text.slice(0, sepIdx)
+  const body = text.slice(sepIdx + 2)
+  const lines = head.split('\n')
+  const statusMatch = lines[0].match(/^HTTP\/\S+\s+(\d+)/)
+  const status = statusMatch ? Number(statusMatch[1]) : null
+  const headers = new Map<string, string>()
+  for (const line of lines.slice(1)) {
+    const idx = line.indexOf(':')
+    if (idx === -1) continue
+    headers.set(line.slice(0, idx).trim().toLowerCase(), line.slice(idx + 1).trim())
+  }
+  return { status, headers, body }
+}
+
+// GitHub's documented secondary-limit Retry-After is always delta-seconds
+// (possibly fractional). HTTP in general also allows an HTTP-date, but GH
+// doesn't send one for this header — a non-numeric value (date or junk) is
+// treated as malformed and dropped rather than guessed at, so a bad parse
+// never feeds a NaN into the breaker's window math.
+function parseRetryAfterMs(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined
+  return Math.round(seconds * 1000)
+}
+
+function retryAfterFromIncludedStdout(stdout: string): number | undefined {
+  return parseRetryAfterMs(parseIncludeOutput(stdout).headers.get('retry-after'))
+}
+
 // Default SpawnDeps.exec — runs gh once, parses output, throws GhError on
-// non-zero exit. Tests inject a fake to avoid spawning a real gh.
+// non-zero exit. Tests inject a fake to avoid spawning a real gh. When `args`
+// carries `--include`, stdout leads with a status line + header block (present
+// on both the success and failure paths — verified against a real 404) that
+// must be stripped before JSON-parsing the body.
 async function runGhOnce(args: string[]): Promise<unknown> {
   const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
   const [out, errOut] = await Promise.all([
@@ -126,13 +181,18 @@ async function runGhOnce(args: string[]): Promise<unknown> {
     new Response(proc.stderr).text(),
   ])
   const exitCode = await proc.exited
+  const included = args.includes('--include')
   if (exitCode !== 0) {
     throw new GhError(
       `gh failed (exit ${exitCode}): gh ${args.join(' ')}\n${errOut.trim()}`,
-      errOut
+      errOut,
+      1,
+      false,
+      included ? retryAfterFromIncludedStdout(out) : undefined,
     )
   }
-  const trimmed = out.trim()
+  const body = included ? parseIncludeOutput(out).body : out
+  const trimmed = body.trim()
   if (!trimmed) return null
   try {
     return JSON.parse(trimmed)
@@ -146,9 +206,12 @@ async function runGhOnce(args: string[]): Promise<unknown> {
 // exec (runGhOnce) would throw and discard the resolved aliases. This exec keeps
 // stdout on a non-zero exit when a parseable GraphQL body is present, so
 // per-entry isolation survives one bad alias (verified: gh exits 1 but still
-// writes the full {data, errors} body to stdout). A non-zero exit with no usable
-// body (rate-limit / auth / network) throws, routing back through spawnGh's
-// retry + rate-limit classification.
+// writes the full {data, errors} body to stdout — with --include, that body
+// is preceded by a `HTTP/2.0 200 OK` status line + header block, which must be
+// stripped before the JSON parse or the isolation check below never sees the
+// body at all). A non-zero exit with no usable body (rate-limit / auth /
+// network) throws, routing back through spawnGh's retry + rate-limit
+// classification.
 async function runGhGraphqlBatchOnce(args: string[]): Promise<unknown> {
   const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
   const [out, errOut] = await Promise.all([
@@ -156,7 +219,9 @@ async function runGhGraphqlBatchOnce(args: string[]): Promise<unknown> {
     new Response(proc.stderr).text(),
   ])
   const exitCode = await proc.exited
-  const trimmed = out.trim()
+  const included = args.includes('--include')
+  const body = included ? parseIncludeOutput(out).body : out
+  const trimmed = body.trim()
   let parsed: unknown = null
   if (trimmed) {
     try { parsed = JSON.parse(trimmed) } catch { parsed = null }
@@ -167,7 +232,10 @@ async function runGhGraphqlBatchOnce(args: string[]): Promise<unknown> {
   }
   throw new GhError(
     `gh failed (exit ${exitCode}): gh ${args.join(' ')}\n${errOut.trim()}`,
-    errOut
+    errOut,
+    1,
+    false,
+    included ? retryAfterFromIncludedStdout(out) : undefined,
   )
 }
 
@@ -483,9 +551,13 @@ export function mapBatchOutcomes<T>(
 export class GhClient {
   constructor(private readonly log: PluginLogger) {}
 
+  // --include captures response headers (for Retry-After) but interleaves
+  // per-page headers into stdout under --paginate, breaking gh's JSON-array
+  // merge — so it's only added on non-paginated calls.
   private async api(endpoint: string, paginate = false): Promise<unknown> {
     const args = ['api']
     if (paginate) args.push('--paginate')
+    else args.push('--include')
     args.push(endpoint)
     return spawnGh(args, { log: this.log })
   }
@@ -532,6 +604,7 @@ export class GhClient {
     })
     const query = `query(${decls.join(',')}){ ${bodies.join(' ')} }`
     args.splice(2, 0, '-f', `query=${query}`)
+    args.push('--include')
     const raw = await spawnGh(args, { log: this.log, exec: runGhGraphqlBatchOnce })
     const env = (raw ?? {}) as GqlEnvelope
     if ((env.errors ?? []).some(e => e.type === 'RATE_LIMITED')) {

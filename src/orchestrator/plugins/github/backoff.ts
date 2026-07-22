@@ -41,12 +41,18 @@ export class RateLimitBreaker {
   // in the future and concurrent trips this tick see now < until and no-op.
   // `schedule` selects the window length by rate-limit kind (primary vs
   // secondary); the escalation level is shared across kinds — repeated trips of
-  // any kind back off further. Returns the new window (ms) when it actually
-  // advanced, else null.
-  trip(now: number, schedule: ReadonlyArray<number> = BACKOFF_SCHEDULE_MS): number | null {
+  // any kind back off further. `exactMs`, when given, overrides the scheduled
+  // window with GitHub's own Retry-After value — clamped to [1s, the
+  // schedule's own ceiling] as a sanity bound, with no floor at the schedule's
+  // minimum: the point of honoring it is that GH's real burst-limiter often
+  // clears faster than our fixed floor. Returns the new window (ms) when it
+  // actually advanced, else null.
+  trip(now: number, schedule: ReadonlyArray<number> = BACKOFF_SCHEDULE_MS, exactMs?: number): number | null {
     if (this.level > 0 && now < this.until) return null
     const idx = Math.min(this.level, schedule.length - 1)
-    const window = schedule[idx]
+    const window = exactMs != null && Number.isFinite(exactMs)
+      ? Math.min(Math.max(exactMs, 1000), schedule[schedule.length - 1])
+      : schedule[idx]
     this.level = Math.min(this.level + 1, schedule.length)
     this.until = now + window
     return window
@@ -75,10 +81,13 @@ export class RateLimitBreaker {
 
 // One-line notice posted when the breaker opens or escalates. Names the kind so
 // an operator can tell a burst-limit blip (secondary) from budget exhaustion
-// (primary) without digging the log.
+// (primary) without digging the log. Sub-minute windows (an honored exact
+// Retry-After can be well under a minute) render in seconds rather than
+// rounding down to a misleading "0m".
 export function formatBackoffNotice(windowMs: number, kind: RateLimitKind = 'primary'): string {
   const label = kind === 'secondary' ? 'secondary rate-limited' : 'rate-limited'
-  return `[dispatcher] GH ${label}, backing off ${Math.round(windowMs / 60_000)}m`
+  const duration = windowMs < 60_000 ? `${Math.round(windowMs / 1000)}s` : `${Math.round(windowMs / 60_000)}m`
+  return `[dispatcher] GH ${label}, backing off ${duration}`
 }
 
 // Cooldown-gated note for an entry whose read keeps failing past the
