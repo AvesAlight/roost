@@ -80,7 +80,7 @@ export class GitHubIssuesPlugin extends GhBase {
       if (!(e instanceof GhError)) throw e
       // Rate-limit → back off the whole tick; discard partial work, preserve
       // prev. `kind` picks the schedule (secondary burst gets the ~1m floor).
-      if (isRateLimitError(e)) return this.breakerTripResult(now, prevState ?? { issues: {} }, projectChannel, config, rateLimitKind(e))
+      if (isRateLimitError(e)) return this.breakerTripResult(now, prevState ?? { issues: {} }, projectChannel, config, rateLimitKind(e), e.retryAfterMs)
       // Whole-batch transient failure isn't a per-entry condition, so it doesn't
       // spike per-entry counts. Preserve prev, replay channels, and surface one
       // throttled batch-level warn so a sustained outage doesn't go silent.

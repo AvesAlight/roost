@@ -97,6 +97,29 @@ describe('RateLimitBreaker — secondary (burst) schedule', () => {
   })
 })
 
+describe('RateLimitBreaker — exact Retry-After override', () => {
+  it('honors an exact override under the schedule floor (the whole point: GH often clears faster than our fixed floor)', () => {
+    const b = new RateLimitBreaker()
+    expect(b.trip(T0, SECONDARY_BACKOFF_SCHEDULE_MS, 20_000)).toBe(20_000)
+  })
+
+  it('clamps an implausibly large exact value to the schedule ceiling', () => {
+    const b = new RateLimitBreaker()
+    const ceiling = SECONDARY_BACKOFF_SCHEDULE_MS[SECONDARY_BACKOFF_SCHEDULE_MS.length - 1]
+    expect(b.trip(T0, SECONDARY_BACKOFF_SCHEDULE_MS, 999 * M)).toBe(ceiling)
+  })
+
+  it('clamps a sub-second exact value up to 1s (sanity floor, not the schedule floor)', () => {
+    const b = new RateLimitBreaker()
+    expect(b.trip(T0, SECONDARY_BACKOFF_SCHEDULE_MS, 10)).toBe(1000)
+  })
+
+  it('falls back to the schedule when no exact value is given', () => {
+    const b = new RateLimitBreaker()
+    expect(b.trip(T0, SECONDARY_BACKOFF_SCHEDULE_MS, undefined)).toBe(1 * M)
+  })
+})
+
 describe('format helpers', () => {
   it('formatBackoffNotice renders the window in minutes', () => {
     expect(formatBackoffNotice(5 * M)).toBe('[dispatcher] GH rate-limited, backing off 5m')
@@ -107,6 +130,11 @@ describe('format helpers', () => {
     // Primary is the default and keeps the original wording.
     expect(formatBackoffNotice(5 * M, 'primary')).toBe('[dispatcher] GH rate-limited, backing off 5m')
     expect(formatBackoffNotice(1 * M, 'secondary')).toBe('[dispatcher] GH secondary rate-limited, backing off 1m')
+  })
+
+  it('formatBackoffNotice renders sub-minute windows in seconds, not a rounded-down "0m"', () => {
+    expect(formatBackoffNotice(20_000, 'secondary')).toBe('[dispatcher] GH secondary rate-limited, backing off 20s')
+    expect(formatBackoffNotice(59_000, 'secondary')).toBe('[dispatcher] GH secondary rate-limited, backing off 59s')
   })
 
   it('formatReadFailureNote surfaces the failure reason and embeds the verbatim recovery command', () => {

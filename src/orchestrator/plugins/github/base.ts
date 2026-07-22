@@ -14,7 +14,7 @@ import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS
 // never abandons sibling reads (bun late-rejection footgun) on the first error.
 export type ReadEntryResult<T> =
   | { ok: true; value: T }
-  | { ok: false; rateLimited: true; kind: RateLimitKind }
+  | { ok: false; rateLimited: true; kind: RateLimitKind; retryAfterMs?: number }
   | { ok: false; rateLimited: false; events: TaggedEvent[] }
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
@@ -83,16 +83,21 @@ export abstract class GhPluginBase extends BasePlugin {
   // A rate-limit surfaced this tick: open/escalate the breaker, emit one notice
   // when it actually advanced, preserve state and channels. `kind` picks the
   // backoff schedule — secondary (burst) clears fast so it gets a ~1m floor;
-  // primary (budget) waits out the longer reset window.
+  // primary (budget) waits out the longer reset window. `retryAfterMs`, when
+  // present, only overrides the window for the secondary kind — GH's
+  // Retry-After header is the burst limiter's own answer; primary's reset is a
+  // different signal (the budget epoch) and stays schedule-only here.
   protected breakerTripResult(
     now: number,
     prevState: unknown,
     projectChannel: string,
     config: OrchestratorConfig,
     kind: RateLimitKind = 'primary',
+    retryAfterMs?: number,
   ): PluginTickResult {
     const schedule = kind === 'secondary' ? SECONDARY_BACKOFF_SCHEDULE_MS : BACKOFF_SCHEDULE_MS
-    const window = GhPluginBase._breaker.trip(now, schedule)
+    const exactMs = kind === 'secondary' ? retryAfterMs : undefined
+    const window = GhPluginBase._breaker.trip(now, schedule, exactMs)
     const taggedEvents: TaggedEvent[] = window != null
       ? [{ channels: [projectChannel], payload: { kind: 'oneline', text: formatBackoffNotice(window, kind) } }]
       : []
@@ -155,7 +160,7 @@ export abstract class GhPluginBase extends BasePlugin {
       return { ok: true, value }
     } catch (e) {
       if (!(e instanceof GhError)) throw e
-      if (isRateLimitError(e)) return { ok: false, rateLimited: true, kind: rateLimitKind(e) }
+      if (isRateLimitError(e)) return { ok: false, rateLimited: true, kind: rateLimitKind(e), retryAfterMs: e.retryAfterMs }
       const events = this.recordEntryFailure(
         cooldownKey, noteChannels, recoveryCmd, describeReadFailure(e.stderr), e.message, now,
       )
