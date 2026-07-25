@@ -154,9 +154,8 @@ export function computePrEvents(
   const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : undefined) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
   if (!linked.length) events.push({ kind: 'pr_no_linked_issues', ...base })
-  // Pre-watch comments/reviews: post them straight to the channel as real
-  // comment events (framed by pr_has_existing_comments) rather than a
-  // count-only "scan manually" summary. Framing line first → header-then-dump.
+  // Pre-watch comments/reviews: post them to the channel as real comment
+  // events framed by pr_has_existing_comments. Framing line first → header-then-dump.
   const backlog = backlogPrEvents(snap, agentLogins)
   if (backlog.total > 0) {
     events.push({ kind: 'pr_has_existing_comments', ...base, backlog_total: backlog.total, backlog_posted: backlog.posted })

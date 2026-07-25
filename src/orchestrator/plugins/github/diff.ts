@@ -180,7 +180,7 @@ export function formatCommentEvent(
 
 // Review-event builder — mirrors formatCommentEvent so the live diff and the
 // backlog dump share one construction path. state is uppercased to match the
-// REST-shaped value shouldPush/format key on.
+// REST-shaped value format renders in the review header.
 export function formatReviewEvent(
   r: GhReview,
   opts: {
@@ -317,20 +317,22 @@ export function diffIssue(
 // ---- Backlog dump (newly-watched PR/issue) ---------------------------------
 //
 // When a PR/issue is first watched, pre-watch comments/reviews already exist
-// on GitHub (Linear linkback bot comments, prior review threads, etc.). The
-// count-only "scan manually" summary left agents without context; these
-// builders emit the actual items as the same event kinds the live diff uses,
-// so they route and render identically to fresh comments.
+// on GitHub. These builders emit the actual items as the same event kinds
+// the live diff uses, so they route and render identically to fresh comments.
 //
 // GitHub databaseIds are globally monotonic across node types, so merging
 // review/conversation/review events by id gives true chronological order —
 // the readable shape for a one-time history dump. The most-recent-K cap keeps
 // a long pre-watch thread from flooding the channel; within the posted K,
 // order stays ascending (oldest→newest) so the thread reads naturally.
+//
+// Formatting is deferred to a thunk per item so only the kept K are formatted
+// — the cap exists to bound the work for a large pre-watch history, and
+// formatting every item then discarding the tail would defeat that.
 
 interface BacklogItem {
   id: number
-  ev: OrchestratorEvent
+  format: () => OrchestratorEvent
 }
 
 function pickMostRecentK(items: BacklogItem[], cap: number): BacklogItem[] {
@@ -351,21 +353,21 @@ export function backlogPrEvents(
   for (const id of snap.seen_review_comment_ids) {
     const c = snap._review_comments_by_id[id]
     if (!c) continue
-    items.push({ id, ev: formatCommentEvent(c, { kind: 'pr_review_comment', ...opts }) })
+    items.push({ id, format: () => formatCommentEvent(c, { kind: 'pr_review_comment', ...opts }) })
   }
   for (const id of snap.seen_conversation_comment_ids) {
     const c = snap._conversation_comments_by_id[id]
     if (!c) continue
-    items.push({ id, ev: formatCommentEvent(c, { kind: 'pr_conversation_comment', ...opts }) })
+    items.push({ id, format: () => formatCommentEvent(c, { kind: 'pr_conversation_comment', ...opts }) })
   }
   for (const id of snap.seen_review_ids) {
     const r = snap._reviews_by_id[id]
     if (!r) continue
-    items.push({ id, ev: formatReviewEvent(r, { reviewId: id, ...opts }) })
+    items.push({ id, format: () => formatReviewEvent(r, { reviewId: id, ...opts }) })
   }
 
   const posted = pickMostRecentK(items, cap)
-  return { events: posted.map(i => i.ev), total: items.length, posted: posted.length }
+  return { events: posted.map(i => i.format()), total: items.length, posted: posted.length }
 }
 
 export function backlogIssueEvents(
@@ -379,9 +381,9 @@ export function backlogIssueEvents(
   for (const id of snap.seen_comment_ids) {
     const c = snap._comments_by_id[id]
     if (!c) continue
-    items.push({ id, ev: formatCommentEvent(c, { kind: 'issue_comment', ...opts }) })
+    items.push({ id, format: () => formatCommentEvent(c, { kind: 'issue_comment', ...opts }) })
   }
 
   const posted = pickMostRecentK(items, cap)
-  return { events: posted.map(i => i.ev), total: items.length, posted: posted.length }
+  return { events: posted.map(i => i.format()), total: items.length, posted: posted.length }
 }
