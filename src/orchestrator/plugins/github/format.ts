@@ -96,7 +96,12 @@ export function formatEvent(event: OrchestratorEvent): string {
 
   if (kind === 'pr_has_existing_comments') {
     const ev = event as SeedEvent
-    return `PR ${tag} BACKLOG: ${ev.review_comment_count ?? 0} review + ${ev.conversation_comment_count ?? 0} conversation comments existed before watch — scan manually: ${event.url ?? ''}`
+    const total = ev.backlog_total ?? 0
+    const posted = ev.backlog_posted ?? total
+    if (posted < total) {
+      return `PR ${tag} BACKLOG: showing ${posted} most recent of ${total} pre-watch comments — earlier at ${event.url ?? ''}`
+    }
+    return `PR ${tag} BACKLOG: posting ${total} pre-watch comments below`
   }
 
   if (kind === 'pr_has_existing_ci_state') {
@@ -106,7 +111,12 @@ export function formatEvent(event: OrchestratorEvent): string {
 
   if (kind === 'issue_has_existing_comments') {
     const ev = event as SeedEvent
-    return `Issue ${tag} BACKLOG: ${ev.comment_count ?? 0} comments existed before watch — scan manually: ${event.url ?? ''}`
+    const total = ev.backlog_total ?? 0
+    const posted = ev.backlog_posted ?? total
+    if (posted < total) {
+      return `Issue ${tag} BACKLOG: showing ${posted} most recent of ${total} pre-watch comments — earlier at ${event.url ?? ''}`
+    }
+    return `Issue ${tag} BACKLOG: posting ${total} pre-watch comments below`
   }
 
   if (kind === 'dispatcher_error') {

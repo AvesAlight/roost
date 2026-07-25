@@ -71,9 +71,10 @@ export interface SeedEvent extends BaseEvent {
     | 'pr_merged'
     | 'pr_closed'
     | 'pr_no_linked_issues'
-  review_comment_count?: number
-  conversation_comment_count?: number
-  comment_count?: number
+  // Backlog dump framing: total pre-watch items found, and how many were
+  // actually posted (total > posted means the rest were elided by the cap).
+  backlog_total?: number
+  backlog_posted?: number
   ci_state?: string | null
   head_oid?: string | null
   stderr?: string
@@ -97,6 +98,14 @@ const ALWAYS_PUSH_KINDS = new Set([
 ])
 const MEANINGFUL_LABEL_PREFIXES = ['phase:', 'plan:']
 const MEANINGFUL_LABELS_EXACT = new Set(['ready-for-merge'])
+
+// Most pre-watch items to post inline when a PR/issue is newly watched.
+// Backlog is a one-time dump at watch time, so this only bites on large
+// pre-watch histories; the typical linkback case (a handful of comments)
+// always posts in full. When elided, the most recent K are kept (the
+// actionable tail of an active thread) and the framing line points to the
+// URL for earlier history.
+export const BACKLOG_COMMENT_CAP = 20
 
 export function shouldPush(event: OrchestratorEvent): boolean {
   const kind = event.kind
@@ -169,6 +178,42 @@ export function formatCommentEvent(
   return ev
 }
 
+// Review-event builder — mirrors formatCommentEvent so the live diff and the
+// backlog dump share one construction path. state is uppercased to match the
+// REST-shaped value shouldPush/format key on.
+export function formatReviewEvent(
+  r: GhReview,
+  opts: {
+    reviewId: number
+    repo?: string
+    pr?: number
+    url: string
+    agentLogins?: Set<string>
+    linkedIssues?: LinkedIssue[]
+  }
+): ReviewEvent {
+  const author = r.user?.login
+  const body = r.body ?? ''
+  const isAgentAuthor = Boolean(opts.agentLogins?.size && author && opts.agentLogins.has(author))
+  const ev: ReviewEvent = {
+    kind: 'pr_review_submitted',
+    review_id: opts.reviewId,
+    review_url: r.html_url,
+    author,
+    state: (r.state ?? '').toUpperCase(),
+    body,
+    body_preview: body.slice(0, 280),
+    is_worker_reply: isAgentAuthor,
+  }
+  if (opts.repo) ev.repo = opts.repo
+  if (opts.pr != null) {
+    ev.pr = opts.pr
+    ev.url = opts.url
+    if (opts.linkedIssues?.length) ev.linked_issues = opts.linkedIssues
+  }
+  return ev
+}
+
 // ---- PR diff ---------------------------------------------------------------
 
 function linkedSpread(linked: LinkedIssue[]): { linked_issues?: LinkedIssue[] } {
@@ -235,19 +280,7 @@ export function diffPr(
 
   for (const rid of newIds(prev.seen_review_ids, cur._reviews_by_id)) {
     const review = cur._reviews_by_id[rid] as GhReview
-    const reviewAuthor = review.user?.login
-    events.push({
-      kind: 'pr_review_submitted',
-      repo, pr: n, url: cur.url ?? '',
-      review_id: rid,
-      review_url: review.html_url,
-      author: reviewAuthor,
-      state: (review.state ?? '').toUpperCase(),
-      body: review.body ?? '',
-      body_preview: (review.body ?? '').slice(0, 280),
-      is_worker_reply: Boolean(agentLogins?.size && reviewAuthor && agentLogins.has(reviewAuthor)),
-      ...linkedSpread(linked),
-    } as ReviewEvent)
+    events.push(formatReviewEvent(review, { reviewId: rid, repo, pr: n, url: cur.url ?? '', agentLogins, linkedIssues: linked }))
   }
 
   return events
@@ -279,4 +312,76 @@ export function diffIssue(
   }
 
   return events
+}
+
+// ---- Backlog dump (newly-watched PR/issue) ---------------------------------
+//
+// When a PR/issue is first watched, pre-watch comments/reviews already exist
+// on GitHub (Linear linkback bot comments, prior review threads, etc.). The
+// count-only "scan manually" summary left agents without context; these
+// builders emit the actual items as the same event kinds the live diff uses,
+// so they route and render identically to fresh comments.
+//
+// GitHub databaseIds are globally monotonic across node types, so merging
+// review/conversation/review events by id gives true chronological order —
+// the readable shape for a one-time history dump. The most-recent-K cap keeps
+// a long pre-watch thread from flooding the channel; within the posted K,
+// order stays ascending (oldest→newest) so the thread reads naturally.
+
+interface BacklogItem {
+  id: number
+  ev: OrchestratorEvent
+}
+
+function pickMostRecentK(items: BacklogItem[], cap: number): BacklogItem[] {
+  items.sort((a, b) => a.id - b.id)
+  const start = Math.max(0, items.length - cap)
+  return items.slice(start)
+}
+
+export function backlogPrEvents(
+  snap: PrSnapInternal,
+  agentLogins: Set<string>,
+  cap: number = BACKLOG_COMMENT_CAP,
+): { events: OrchestratorEvent[]; total: number; posted: number } {
+  const linked = snap.linked_issues ?? []
+  const opts = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', agentLogins, linkedIssues: linked }
+
+  const items: BacklogItem[] = []
+  for (const id of snap.seen_review_comment_ids) {
+    const c = snap._review_comments_by_id[id]
+    if (!c) continue
+    items.push({ id, ev: formatCommentEvent(c, { kind: 'pr_review_comment', ...opts }) })
+  }
+  for (const id of snap.seen_conversation_comment_ids) {
+    const c = snap._conversation_comments_by_id[id]
+    if (!c) continue
+    items.push({ id, ev: formatCommentEvent(c, { kind: 'pr_conversation_comment', ...opts }) })
+  }
+  for (const id of snap.seen_review_ids) {
+    const r = snap._reviews_by_id[id]
+    if (!r) continue
+    items.push({ id, ev: formatReviewEvent(r, { reviewId: id, ...opts }) })
+  }
+
+  const posted = pickMostRecentK(items, cap)
+  return { events: posted.map(i => i.ev), total: items.length, posted: posted.length }
+}
+
+export function backlogIssueEvents(
+  snap: IssueSnapInternal,
+  agentLogins: Set<string>,
+  cap: number = BACKLOG_COMMENT_CAP,
+): { events: OrchestratorEvent[]; total: number; posted: number } {
+  const opts = { repo: snap.repo, issue: snap.number, url: snap.url ?? '', agentLogins }
+
+  const items: BacklogItem[] = []
+  for (const id of snap.seen_comment_ids) {
+    const c = snap._comments_by_id[id]
+    if (!c) continue
+    items.push({ id, ev: formatCommentEvent(c, { kind: 'issue_comment', ...opts }) })
+  }
+
+  const posted = pickMostRecentK(items, cap)
+  return { events: posted.map(i => i.ev), total: items.length, posted: posted.length }
 }

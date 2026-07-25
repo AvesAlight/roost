@@ -11,7 +11,7 @@
 import type { PrSnap, IssueSnap } from './types.js'
 import type { GhComment, GhReview, GhPrNode, GhIssueNode } from './github-api.js'
 import { labelNames, rollupToCiState } from './github-api.js'
-import { diffPr, diffIssue, type OrchestratorEvent } from './diff.js'
+import { diffPr, diffIssue, backlogPrEvents, backlogIssueEvents, type OrchestratorEvent } from './diff.js'
 
 // ---- Snapshot types & helpers ---------------------------------------------
 
@@ -154,10 +154,13 @@ export function computePrEvents(
   const base = { repo: snap.repo, pr: snap.number, url: snap.url ?? '', title: snap.title ?? '', ...(linked.length ? { linked_issues: linked } : undefined) }
   const events: OrchestratorEvent[] = [{ kind: 'pr_added_to_watch', ...base }]
   if (!linked.length) events.push({ kind: 'pr_no_linked_issues', ...base })
-  const existingRev = snap.seen_review_comment_ids.length
-  const existingConv = snap.seen_conversation_comment_ids.length
-  if (existingRev || existingConv) {
-    events.push({ kind: 'pr_has_existing_comments', review_comment_count: existingRev, conversation_comment_count: existingConv, ...base })
+  // Pre-watch comments/reviews: post them straight to the channel as real
+  // comment events (framed by pr_has_existing_comments) rather than a
+  // count-only "scan manually" summary. Framing line first → header-then-dump.
+  const backlog = backlogPrEvents(snap, agentLogins)
+  if (backlog.total > 0) {
+    events.push({ kind: 'pr_has_existing_comments', ...base, backlog_total: backlog.total, backlog_posted: backlog.posted })
+    events.push(...backlog.events)
   }
   if (snap.ci_state === 'SUCCESS' || snap.ci_state === 'FAILURE') {
     events.push({ kind: 'pr_has_existing_ci_state', ci_state: snap.ci_state, head_oid: snap.head_oid, ...base })
@@ -176,8 +179,10 @@ export function computeIssueEvents(
   // New to watch list
   const base = { repo: snap.repo, issue: snap.number, url: snap.url ?? '', title: snap.title ?? '' }
   const events: OrchestratorEvent[] = [{ kind: 'issue_added_to_watch', ...base }]
-  if (snap.seen_comment_ids.length) {
-    events.push({ kind: 'issue_has_existing_comments', comment_count: snap.seen_comment_ids.length, ...base })
+  const backlog = backlogIssueEvents(snap, agentLogins)
+  if (backlog.total > 0) {
+    events.push({ kind: 'issue_has_existing_comments', ...base, backlog_total: backlog.total, backlog_posted: backlog.posted })
+    events.push(...backlog.events)
   }
   return events
 }

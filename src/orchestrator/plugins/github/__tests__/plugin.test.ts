@@ -112,6 +112,43 @@ describe('GitHubPrsPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
+  it('routes backlog framing + pre-watch comment events to the linked-issue channel like live comments', async () => {
+    const framingEv: OrchestratorEvent = {
+      kind: 'pr_has_existing_comments',
+      repo: 'org/repo', pr: 25, url: 'https://example.com/p/25', title: 'P',
+      linked_issues: [{ repo: 'org/repo', number: 14 }],
+      backlog_total: 1, backlog_posted: 1,
+    } as OrchestratorEvent
+    const commentEv: OrchestratorEvent = {
+      kind: 'pr_conversation_comment',
+      repo: 'org/repo', pr: 25, url: 'https://example.com/p/25',
+      author: 'linear-bot', body: 'Linked to PROJ-123', body_preview: 'Linked to PROJ-123', is_worker_reply: false,
+      comment_id: 9, comment_url: 'https://example.com/c/9',
+      linked_issues: [{ repo: 'org/repo', number: 14 }],
+    } as OrchestratorEvent
+    const spy = stubPr({
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 14 }] }),
+      events: [framingEv, commentEv],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] },
+          'github-issues': { watched: [] },
+        },
+      }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
+      expect(result.taggedEvents).toHaveLength(2)
+      // framing line ships first (oneline), routed to the linked-issue channel unioned with entry
+      expect(result.taggedEvents[0]?.payload.kind).toBe('oneline')
+      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      // the pre-watch comment routes identically to a live comment
+      expect(result.taggedEvents[1]?.payload.kind).toBe('multiline')
+      expect(result.taggedEvents[1]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+    } finally { spy.mockRestore() }
+  })
+
   it('persists scraped PR state under its own slice', async () => {
     const spy = stubPr({
       snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 7 }] }), events: [],
