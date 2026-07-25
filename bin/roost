@@ -982,8 +982,8 @@ cmd_spawn() {
   # suppresses the failure-cleanup trap, so spawn_test.sh can read the files
   # written above after a preflight failure exits the spawn. Prod operators
   # never set this — the success path prints "data dir: ..." after tmux comes up.
-  # This does not stop the spawn: on the success path, tmux and claude still
-  # start for real — tests must tear those sessions down themselves.
+  # This does not stop the spawn: ROOST_SPAWN_NO_LAUNCH=1 (set by the test
+  # suite) is what skips the real tmux/claude launch after staging.
   if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
     echo "  data dir (preflight): ${ROOST_DATA_DIR}"
   else
@@ -1123,6 +1123,19 @@ cmd_spawn() {
   if [ "${ROOST_SPAWN_KEEP_DATA_DIR:-0}" = "1" ]; then
     echo "  inner cmd (preflight): ${inner_cmd}"
     printf '%s' "${inner_cmd}" > "${ROOST_DATA_DIR}/inner-cmd.txt"
+  fi
+
+  # Test seam: ROOST_SPAWN_NO_LAUNCH=1 stops the spawn here, before the
+  # tmux/ircd preflight and the real claude launch. spawn_test.sh assertions
+  # inspect staged files and banner output — none depend on a live session —
+  # so stage-then-exit makes the suite deterministic and fast regardless of
+  # whether ergo is running locally. Without this, an ergo-up dev box does a
+  # real tmux new-session + claude launch per test (and require_ircd's TCP
+  # probe hangs ~75s on the unroutable-IP cases), pushing the suite from
+  # seconds to ~7min. Prod operators never set this. ROOST_SPAWN_KEEP_DATA_DIR
+  # is independent: it retains the staged files for tests that inspect them.
+  if [ "${ROOST_SPAWN_NO_LAUNCH:-0}" = "1" ]; then
+    exit 0
   fi
 
   require_tmux

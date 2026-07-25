@@ -8,6 +8,14 @@ PASS=0
 FAIL=0
 TDIR=""
 
+# Skip the real tmux + claude launch: every assertion inspects staged files
+# or banner output, none need a live session. Without this, an ergo-up dev
+# box launches a real claude per test (and require_ircd's TCP probe hangs
+# ~75s on the unroutable-IP cases), pushing the suite from seconds to ~7min.
+# CI is unaffected (no ergo → require_ircd fails fast anyway); this just
+# makes the ergo-up path match.
+export ROOST_SPAWN_NO_LAUNCH=1
+
 ok()   { echo "PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
 
@@ -18,8 +26,8 @@ setup() {
 
 teardown() {
   rm -rf "$TDIR"
-  # On dev boxes with ergo running, shell-resolution tests pass through to a
-  # real tmux new-session — kill it so the next test gets a fresh "roost-testnick".
+  # belt-and-suspenders: NO_LAUNCH never starts a session, but if a caller
+  # dropped the flag, don't leak roost-testnick into the next test.
   tmux kill-session -t "roost-testnick" 2>/dev/null || true
   trap - EXIT
   TDIR=""
@@ -950,6 +958,35 @@ fi
 [ -n "$data_dir_on" ] && rm -rf "$data_dir_on"
 data_dir_off="$(echo "$out_off" | sed -n 's/.*data dir (preflight): //p' | head -1)"
 [ -n "$data_dir_off" ] && rm -rf "$data_dir_off"
+teardown
+
+# -- Test 48: ROOST_SPAWN_NO_LAUNCH=1 exits 0 before the real launch --------
+# The suite sets NO_LAUNCH globally, so a broken seam that falls through to
+# require_ircd still looks green on CI (no ergo → require_ircd exits 2, and
+# every other test ||-true's the exit code). The regression is silent on CI
+# and only surfaces as a slow ergo-up dev box. This pins the seam directly:
+# exit 0, no roost-testnick tmux session left behind, returns in well under
+# the 30s dismissal-timeout, and preflight staging still ran. Catches
+# fallthrough on ergo-up (session left behind + slow) and ergo-down (exit 2
+# instead of 0).
+
+setup
+tmux kill-session -t roost-testnick 2>/dev/null || true
+SECONDS=0
+out="$(ROOST_SPAWN_NO_LAUNCH=1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1)"; rc=$?
+elapsed=$SECONDS
+no_session=1
+if tmux has-session -t roost-testnick 2>/dev/null; then no_session=0; fi
+tmux kill-session -t roost-testnick 2>/dev/null || true
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+if [ "$rc" -eq 0 ] && [ "$no_session" -eq 1 ] && [ "$elapsed" -le 10 ] \
+    && [ -n "$data_dir" ]; then
+  ok "NO_LAUNCH: exits 0 before launch (no tmux session, fast, preflight staged)"
+else
+  fail "NO_LAUNCH: exits 0 before launch (no tmux session, fast, preflight staged)" \
+    "rc=$rc no_session=$no_session elapsed=${elapsed}s out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
 echo ""
