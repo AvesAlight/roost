@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { computePrEvents, computeIssueEvents, buildPrSnapshot, buildIssueSnapshot } from '../scraper.js'
+import { BACKLOG_COMMENT_CAP } from '../diff.js'
 import type { PrSnap, IssueSnap } from '../types.js'
 import type { PrSnapInternal, IssueSnapInternal } from '../scraper.js'
 import type { GhPrNode, GhIssueNode } from '../github-api.js'
@@ -63,23 +64,89 @@ describe('computePrEvents — new watch entry (prevSnap = null)', () => {
     expect(ev?.linked_issues).toEqual([{ repo: 'org/repo', number: 5 }, { repo: 'org/repo', number: 6 }])
   })
 
-  it('emits pr_has_existing_comments when review comments exist', () => {
-    const snap = basePrInternal({ seen_review_comment_ids: [1, 2] })
+  it('posts pre-watch review comments as real comment events, framed by pr_has_existing_comments', () => {
+    const snap = basePrInternal({
+      seen_review_comment_ids: [1, 2],
+      _review_comments_by_id: {
+        1: { id: 1, html_url: 'rc/1', user: { login: 'alice' }, body: 'nit one', path: 'a.ts', line: 10 },
+        2: { id: 2, html_url: 'rc/2', user: { login: 'bob' }, body: 'nit two', path: 'b.ts', line: 20 },
+      },
+    })
     const { events } = computePrEvents(snap, null, new Set())
-    const ev = events.find(e => e.kind === 'pr_has_existing_comments') as { review_comment_count?: number } | undefined
-    expect(ev?.review_comment_count).toBe(2)
+    const framing = events.find(e => e.kind === 'pr_has_existing_comments') as { backlog_total?: number; backlog_posted?: number } | undefined
+    expect(framing?.backlog_total).toBe(2)
+    expect(framing?.backlog_posted).toBe(2)
+    const comments = events.filter(e => e.kind === 'pr_review_comment') as Array<{ body: string; comment_url?: string; author?: string }>
+    expect(comments).toHaveLength(2)
+    expect(comments.map(c => c.body)).toEqual(['nit one', 'nit two'])
+    expect(comments.every(c => c.comment_url?.startsWith('rc/'))).toBe(true)
   })
 
-  it('emits pr_has_existing_comments when conversation comments exist', () => {
-    const snap = basePrInternal({ seen_conversation_comment_ids: [3] })
+  it('posts pre-watch conversation comments as real comment events', () => {
+    const snap = basePrInternal({
+      seen_conversation_comment_ids: [3],
+      _conversation_comments_by_id: { 3: { id: 3, html_url: 'c/3', user: { login: 'carol' }, body: 'hello' } },
+    })
     const { events } = computePrEvents(snap, null, new Set())
-    const ev = events.find(e => e.kind === 'pr_has_existing_comments') as { conversation_comment_count?: number } | undefined
-    expect(ev?.conversation_comment_count).toBe(1)
+    const framing = events.find(e => e.kind === 'pr_has_existing_comments') as { backlog_total?: number } | undefined
+    expect(framing?.backlog_total).toBe(1)
+    const comments = events.filter(e => e.kind === 'pr_conversation_comment') as Array<{ body: string }>
+    expect(comments.map(c => c.body)).toEqual(['hello'])
   })
 
-  it('does not emit pr_has_existing_comments when no existing comments', () => {
+  it('emits the framing line before the backlog comment events (header-then-dump)', () => {
+    const snap = basePrInternal({
+      seen_conversation_comment_ids: [3],
+      _conversation_comments_by_id: { 3: { id: 3, html_url: 'c/3', user: { login: 'carol' }, body: 'hello' } },
+    })
+    const { events } = computePrEvents(snap, null, new Set())
+    const framingIdx = events.findIndex(e => e.kind === 'pr_has_existing_comments')
+    const firstCommentIdx = events.findIndex(e => e.kind === 'pr_conversation_comment')
+    expect(framingIdx).toBeGreaterThanOrEqual(0)
+    expect(framingIdx).toBeLessThan(firstCommentIdx)
+  })
+
+  it('merges review/conversation/review backlog by id ascending (chronological)', () => {
+    // ids interleaved across types: review comment 100, conversation 200, review 300
+    const snap = basePrInternal({
+      seen_review_comment_ids: [100],
+      seen_conversation_comment_ids: [200],
+      seen_review_ids: [300],
+      _review_comments_by_id: { 100: { id: 100, html_url: 'rc/100', user: { login: 'a' }, body: 'rc' } },
+      _conversation_comments_by_id: { 200: { id: 200, html_url: 'c/200', user: { login: 'b' }, body: 'conv' } },
+      _reviews_by_id: { 300: { id: 300, html_url: 'r/300', user: { login: 'c' }, body: 'rev', state: 'APPROVED' } },
+    })
+    const { events } = computePrEvents(snap, null, new Set())
+    const backlogKinds = ['pr_review_comment', 'pr_conversation_comment', 'pr_review_submitted']
+    const order = events.filter(e => backlogKinds.includes(e.kind)).map(e => e.kind)
+    expect(order).toEqual(['pr_review_comment', 'pr_conversation_comment', 'pr_review_submitted'])
+    const framing = events.find(e => e.kind === 'pr_has_existing_comments') as { backlog_total?: number } | undefined
+    expect(framing?.backlog_total).toBe(3)
+  })
+
+  it('does not emit pr_has_existing_comments or backlog events when none', () => {
     const { events } = computePrEvents(basePrInternal(), null, new Set())
     expect(events.some(e => e.kind === 'pr_has_existing_comments')).toBe(false)
+    expect(events.some(e => ['pr_review_comment', 'pr_conversation_comment', 'pr_review_submitted'].includes(e.kind))).toBe(false)
+  })
+
+  it('caps the backlog to most-recent-K and records elision on the framing line', () => {
+    const total = BACKLOG_COMMENT_CAP + 5
+    const ids = Array.from({ length: total }, (_, i) => i + 1)
+    const byId: Record<number, { id: number; html_url: string; user: { login: string }; body: string }> = {}
+    for (const id of ids) byId[id] = { id, html_url: `c/${id}`, user: { login: 'u' }, body: `body ${id}` }
+    const snap = basePrInternal({ seen_conversation_comment_ids: ids, _conversation_comments_by_id: byId })
+    const { events } = computePrEvents(snap, null, new Set())
+    const framing = events.find(e => e.kind === 'pr_has_existing_comments') as { backlog_total?: number; backlog_posted?: number } | undefined
+    expect(framing?.backlog_total).toBe(total)
+    expect(framing?.backlog_posted).toBe(BACKLOG_COMMENT_CAP)
+    const comments = events.filter(e => e.kind === 'pr_conversation_comment') as Array<{ body: string }>
+    expect(comments).toHaveLength(BACKLOG_COMMENT_CAP)
+    // most-recent-K: the kept ids are the last BACKLOG_COMMENT_CAP, in ascending order
+    const keptBodies = comments.map(c => c.body)
+    const expectedFirst = `body ${ids[total - BACKLOG_COMMENT_CAP]}`
+    expect(keptBodies[0]).toBe(expectedFirst)
+    expect(keptBodies[keptBodies.length - 1]).toBe(`body ${ids[ids.length - 1]}`)
   })
 
   it('emits pr_has_existing_ci_state for terminal CI', () => {
@@ -123,16 +190,28 @@ describe('computeIssueEvents — new watch entry (prevIssue = null)', () => {
     expect(events.some(e => e.kind === 'issue_added_to_watch')).toBe(true)
   })
 
-  it('emits issue_has_existing_comments when comments exist', () => {
-    const snap = baseIssueInternal({ seen_comment_ids: [1, 2, 3] })
+  it('posts pre-watch issue comments as real comment events, framed by issue_has_existing_comments', () => {
+    const snap = baseIssueInternal({
+      seen_comment_ids: [1, 2, 3],
+      _comments_by_id: {
+        1: { id: 1, html_url: 'c/1', user: { login: 'x' }, body: 'a' },
+        2: { id: 2, html_url: 'c/2', user: { login: 'y' }, body: 'b' },
+        3: { id: 3, html_url: 'c/3', user: { login: 'z' }, body: 'c' },
+      },
+    })
     const events = computeIssueEvents(snap, null, new Set())
-    const ev = events.find(e => e.kind === 'issue_has_existing_comments') as { comment_count?: number } | undefined
-    expect(ev?.comment_count).toBe(3)
+    const framing = events.find(e => e.kind === 'issue_has_existing_comments') as { backlog_total?: number; backlog_posted?: number } | undefined
+    expect(framing?.backlog_total).toBe(3)
+    expect(framing?.backlog_posted).toBe(3)
+    const comments = events.filter(e => e.kind === 'issue_comment') as Array<{ body: string; comment_url?: string }>
+    expect(comments.map(c => c.body)).toEqual(['a', 'b', 'c'])
+    expect(comments.every(c => c.comment_url?.startsWith('c/'))).toBe(true)
   })
 
-  it('does not emit issue_has_existing_comments when no comments', () => {
+  it('does not emit issue_has_existing_comments or backlog events when no comments', () => {
     const events = computeIssueEvents(baseIssueInternal(), null, new Set())
     expect(events.some(e => e.kind === 'issue_has_existing_comments')).toBe(false)
+    expect(events.some(e => e.kind === 'issue_comment')).toBe(false)
   })
 })
 

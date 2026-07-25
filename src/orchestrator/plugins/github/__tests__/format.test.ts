@@ -109,6 +109,37 @@ describe('formatEvent', () => {
     )
   })
 
+  it('formats pr_has_existing_comments framing (no elision)', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_has_existing_comments',
+      repo: 'org/repo', pr: 10, url: 'https://github.com/org/repo/pull/10',
+      backlog_total: 3, backlog_posted: 3,
+    } as OrchestratorEvent
+    expect(formatEvent(ev)).toBe('PR org/repo#10 BACKLOG: posting 3 pre-watch comments below')
+  })
+
+  it('formats pr_has_existing_comments framing (elided)', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_has_existing_comments',
+      repo: 'org/repo', pr: 10, url: 'https://github.com/org/repo/pull/10',
+      backlog_total: 25, backlog_posted: 20,
+    } as OrchestratorEvent
+    expect(formatEvent(ev)).toBe(
+      'PR org/repo#10 BACKLOG: showing 20 most recent of 25 pre-watch comments — earlier at https://github.com/org/repo/pull/10'
+    )
+  })
+
+  it('formats issue_has_existing_comments framing (elided)', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'issue_has_existing_comments',
+      repo: 'org/repo', issue: 20, url: 'https://github.com/org/repo/issues/20',
+      backlog_total: 30, backlog_posted: 20,
+    } as OrchestratorEvent
+    expect(formatEvent(ev)).toBe(
+      'Issue org/repo#20 BACKLOG: showing 20 most recent of 30 pre-watch comments — earlier at https://github.com/org/repo/issues/20'
+    )
+  })
+
   it('formats labels_changed', () => {
     const ev: OrchestratorEvent = {
       kind: 'labels_changed',
