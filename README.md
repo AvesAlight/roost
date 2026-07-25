@@ -157,8 +157,8 @@ roost spawn myproject-pm --agent project-manager \
   --ollama-model glm-5.2:cloud -c '#myproject-leads' ...
 ```
 
-The prompt changes that tell an agent it's running on ollama are an
-operator concern, not a roost-repo deliverable.
+Any prompt edits that tell an agent it's running on ollama are
+yours to make.
 
 ### Debugging a failed spawn
 

@@ -206,15 +206,10 @@ Options:
                              See "Agent class guidance" below for which
                              agents need this.
   --ollama-model TAG        Route the spawn through ollama instead of
-                             calling \`claude\` directly: runs
-                             \`ollama launch claude --model TAG -- <roost args>\`.
-                             ollama owns the local-server protocol and forces
-                             all native model selectors (opus/sonnet/haiku,
-                             and the agent frontmatter \`model:\`) to TAG, so
-                             roost does not parse or change frontmatter — the
-                             roost --model tier and --agent still flow through
-                             underneath and ollama remaps them. Without the
-                             flag, behavior is unchanged. See README,
+                             \`claude\`. ollama forces every native model
+                             selector (the --model tier and agent frontmatter
+                             \`model:\`) to TAG; without the flag, \`claude\`
+                             runs against Anthropic as usual. See README,
                              "Running an agent on ollama".
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
