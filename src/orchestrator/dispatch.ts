@@ -118,7 +118,18 @@ export async function dispatchTaggedEvents(
 }
 
 function renderPayload(payload: TaggedEventPayload): string {
-  if (payload.kind === 'oneline') return payload.text
-  if (payload.kind === 'multiline') return [payload.header, payload.body, payload.url].join('\n')
-  return renderBatch(payload.blocks)
+  switch (payload.kind) {
+    case 'oneline':
+      return payload.text
+    case 'multiline':
+      return [payload.header, payload.body, payload.url].join('\n')
+    case 'multiline_batch':
+      return renderBatch(payload.blocks)
+    default: {
+      // Exhaustiveness guard — a new payload variant must add a case above,
+      // rather than silently fall through to a default renderer.
+      const _exhaustive: never = payload
+      throw new Error(`unhandled TaggedEventPayload kind: ${(_exhaustive as { kind: string }).kind}`)
+    }
+  }
 }
