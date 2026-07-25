@@ -119,11 +119,11 @@ roost --version
 ```
 
 `spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
-`--mcp-config`, `-p|--prompt-file`, `--cwd`, and `--` (everything
-after forwards to claude verbatim). Default channel is `#roost`;
-default model is `opus` (Opus 4.8). Fable, opus, and sonnet default to
-`--permission-mode auto`; everything else (haiku, or any unrecognized
-model) defaults to `acceptEdits`.
+`--mcp-config`, `-p|--prompt-file`, `--cwd`, `--ollama-model`, and `--`
+(everything after forwards to claude verbatim). Default channel is
+`#roost`; default model is `opus` (Opus 4.8). Fable, opus, and sonnet
+default to `--permission-mode auto`; everything else (haiku, or any
+unrecognized model) defaults to `acceptEdits`.
 
 `spawn` also injects `--append-system-prompt-file` naming the joined
 channels as legitimate user-instruction sources, so the auto-mode
@@ -135,6 +135,30 @@ instead. The injection is always on for loopback hosts. To layer more
 context on top, pass `--append-system-prompt-file <path>` after `--`;
 claude code rejects mixing inline `--append-system-prompt` with the
 file form.
+
+### Running an agent on ollama
+
+`--ollama-model <tag>` routes a spawn through ollama instead of calling
+`claude` directly. roost runs
+`ollama launch claude --model <tag> -- <roost args>`, passing the
+settings, plugin-dir, channels, trust, agent, and model args through
+ollama's `--` separator unchanged. ollama owns the local-server
+protocol and forces every native model selector (the `--model` tier
+and the agent frontmatter `model:`) to the tag, so roost does not parse
+or change frontmatter. Without the flag, `claude` runs against
+Anthropic exactly as today.
+
+Which agents use ollama is an operator choice. Point a specific spawn
+at it — e.g. run your pm/apm on an ollama-hosted model while
+workers/reviewers stay on Anthropic:
+
+```bash
+roost spawn myproject-pm --agent project-manager \
+  --ollama-model glm-5.2:cloud -c '#myproject-leads' ...
+```
+
+The prompt changes that tell an agent it's running on ollama are an
+operator concern, not a roost-repo deliverable.
 
 ### Debugging a failed spawn
 

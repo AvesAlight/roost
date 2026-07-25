@@ -33,6 +33,7 @@ roost spawn <nick> [-c CHANS] [-m MODEL] [--agent NAME] [-s SESSION] [--mcp-conf
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
+                   [--ollama-model TAG] \
                    [--perm-irc --perm-target NICK] \
                    [--ask-irc CHANNEL --ask-target NICK]
 roost agents [--all]
@@ -67,6 +68,16 @@ Defaults:
   with a directive (so the compactor runs with `custom_instructions`
   rather than its empty default). See `roost spawn --help`
   ("Agent class guidance") for which agents need this.
+- `--ollama-model TAG`: routes the spawn through ollama instead of
+  calling `claude` directly — runs
+  `ollama launch claude --model TAG -- <roost args>`. ollama owns the
+  local-server protocol and remaps every native model selector (the
+  `--model` tier and the agent frontmatter `model:`) to TAG, so roost
+  doesn't parse or change frontmatter. Without the flag, `claude` runs
+  against Anthropic exactly as today. Which agents you point at this is
+  an operator choice — e.g. spawn your pm/apm with `--ollama-model` to
+  run those on an ollama-hosted model while workers/reviewers stay on
+  Anthropic.
 
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:plugin:roost:roost-irc` flag, the
