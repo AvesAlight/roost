@@ -205,6 +205,12 @@ Options:
                              our directive instead of the empty default.
                              See "Agent class guidance" below for which
                              agents need this.
+  --ollama-model TAG        Route the spawn through ollama instead of
+                             \`claude\`. ollama forces every native model
+                             selector (the --model tier and agent frontmatter
+                             \`model:\`) to TAG; without the flag, \`claude\`
+                             runs against Anthropic as usual. See README,
+                             "Running an agent on ollama".
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
@@ -677,6 +683,7 @@ cmd_spawn() {
   local permission_mode=""
   local cache_ttl=""
   local steer_compact=0
+  local ollama_model=""
   local extra_args=()
 
   if [ "$#" -lt 1 ]; then
@@ -704,6 +711,7 @@ cmd_spawn() {
       --permission-mode) permission_mode="$2"; shift 2 ;;
       --cache-ttl)      cache_ttl="$2"; shift 2 ;;
       --steer-compact)  steer_compact=1; shift ;;
+      --ollama-model)   ollama_model="$2"; shift 2 ;;
 
       --)               shift; extra_args=("$@"); break ;;
       *)
@@ -866,6 +874,12 @@ cmd_spawn() {
   # default applies).
   echo "spawning ${nick} in ${channels} (session ${session_name}, model: ${model}, permission-mode: ${permission_mode:-(claude default)}, cache-ttl: ${cache_ttl:-(claude default)}, shell: ${shell_basename}, cwd: ${cwd})"
   [ -n "${extra_str}" ] && echo "  extra claude args:${extra_str}"
+  # When --ollama-model is set the spawn routes through `ollama launch claude
+  # --model <tag> --`; the banner's model: line above still shows the roost
+  # --model tier (opus by default) because ollama owns the remap to the tag,
+  # not roost. Naming the override here keeps the two lines from reading as
+  # contradictory to an operator grepping spawn output.
+  [ -n "${ollama_model}" ] && echo "  ollama model: ${ollama_model} (routes via 'ollama launch claude --model ${ollama_model} --'; overrides model: ${model})"
 
   # Create a per-session data directory. mktemp guarantees uniqueness across
   # concurrent spawns and across repos using identical nick names.
@@ -1078,7 +1092,21 @@ cmd_spawn() {
       echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
       ;;
   esac
-  local inner_cmd="claude${model_flag}${perm_mode_flag}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${trust_flag}${extra_str}"
+  # Launcher prefix: `claude` against Anthropic by default, or
+  # `ollama launch claude --model <tag> --` when --ollama-model is set. The
+  # roost args below pass through ollama's `--` separator verbatim and
+  # unchanged — ollama owns the local-server protocol and the model remap
+  # (it forces all native model selectors to the tag), so roost does not
+  # parse or change the agent's frontmatter `model:` or the --model tier
+  # flag; both still flow to claude underneath and ollama remaps them. The
+  # tag interpolates unquoted, the same way ${model} does, and the whole
+  # inner_cmd goes through printf '%q' to the login shell — no separate
+  # quoting path, matching how --model is handled.
+  local launcher="claude"
+  if [ -n "${ollama_model}" ]; then
+    launcher="ollama launch claude --model ${ollama_model} --"
+  fi
+  local inner_cmd="${launcher}${model_flag}${perm_mode_flag}${mcp_flag}${agent_flag} --settings ${ROOST_SETTINGS} --plugin-dir ${ROOST_DIR} --dangerously-load-development-channels ${channel_server}${trust_flag}${extra_str}"
   if [ -n "${prompt_file}" ]; then
     # intentionally single-quoted: fragment is injected into a tmux pane and must expand at runtime in that shell
     # shellcheck disable=SC2016

@@ -855,6 +855,103 @@ fi
 [ -n "$data_dir2" ] && rm -rf "$data_dir2"
 teardown
 
+# -- Test 43: no --ollama-model → inner_cmd runs claude directly ---------------
+# Default path unchanged: the launcher prefix is `claude`, no `ollama launch`.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF 'claude --model opus' \
+    && ! echo "$inner_cmd" | grep -qF 'ollama launch'; then
+  ok "no --ollama-model: inner_cmd starts with claude, no ollama launch"
+else
+  fail "no --ollama-model: inner_cmd starts with claude, no ollama launch" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 44: --ollama-model routes via 'ollama launch claude --model <tag> --' -
+# The launcher prefix swaps; the roost args (settings, plugin-dir, channels
+# server, trust) follow after ollama's `--` separator unchanged.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --ollama-model glm-5.2:cloud --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF 'ollama launch claude --model glm-5.2:cloud --' \
+    && echo "$inner_cmd" | grep -qF -- '--settings' \
+    && echo "$inner_cmd" | grep -qF -- '--plugin-dir' \
+    && echo "$inner_cmd" | grep -qF -- 'server:plugin:roost:roost-irc' \
+    && ! echo "$inner_cmd" | grep -qF -- 'ollama launch claude --model glm-5.2:cloud --ollama'; then
+  ok "--ollama-model: routes via 'ollama launch claude --model <tag> --' with roost args after the separator"
+else
+  fail "--ollama-model: routes via 'ollama launch claude --model <tag> --' with roost args after the separator" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 45: --ollama-model + --agent → agent passes through after `--` -------
+# ollama owns the remap; roost doesn't touch frontmatter. The --agent flag still
+# flows to claude underneath ollama's separator.
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: myagent\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/myagent.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent myagent --ollama-model glm-5.2:cloud --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF 'ollama launch claude --model glm-5.2:cloud --' \
+    && echo "$inner_cmd" | grep -qF -- '--agent myagent'; then
+  ok "--ollama-model + --agent: ollama prefix present, --agent passes through after --"
+else
+  fail "--ollama-model + --agent: ollama prefix present, --agent passes through after --" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 46: --ollama-model + --model → both present (ollama remaps) ---------
+# Req 3: default model selection still works. The roost --model tier still
+# flows to claude underneath; ollama's override remaps it to the tag, not roost.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --model sonnet --ollama-model glm-5.2:cloud --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF 'ollama launch claude --model glm-5.2:cloud --' \
+    && echo "$inner_cmd" | grep -qF -- ' --model sonnet'; then
+  ok "--ollama-model + --model: ollama override prefix + roost --model both present (ollama remaps)"
+else
+  fail "--ollama-model + --model: ollama override prefix + roost --model both present (ollama remaps)" "inner_cmd=$inner_cmd"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 47: --ollama-model banner names the tag + override -------------------
+# The banner's model: line still shows the roost tier (opus default) since
+# ollama owns the remap; the ollama line clarifies the override so the two
+# don't read as contradictory. Absent when the flag isn't passed.
+
+setup
+out_on="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --ollama-model glm-5.2:cloud --cwd "$TDIR" 2>&1 || true)"
+data_dir_on="$(echo "$out_on" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+out_off="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --cwd "$TDIR" 2>&1 || true)"
+if echo "$out_on" | grep -qF "ollama model: glm-5.2:cloud" \
+    && echo "$out_on" | grep -qF "overrides model: opus" \
+    && ! echo "$out_off" | grep -q "ollama model:"; then
+  ok "--ollama-model banner: names tag + override when set, absent when not"
+else
+  fail "--ollama-model banner: names tag + override when set, absent when not" "on=$out_on off=$out_off"
+fi
+[ -n "$data_dir_on" ] && rm -rf "$data_dir_on"
+data_dir_off="$(echo "$out_off" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+[ -n "$data_dir_off" ] && rm -rf "$data_dir_off"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
