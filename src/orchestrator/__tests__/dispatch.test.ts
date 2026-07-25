@@ -47,10 +47,15 @@ describe('batchConsecutiveMultiline', () => {
     }
   })
 
-  it('leaves a singleton multiline run as multiline (no behavior change)', () => {
+  it('wraps a singleton multiline run as a one-block batch', () => {
     const events = [ml(['#a'], 'h1', 'b1', 'u1')]
     const out = batchConsecutiveMultiline(events)
-    expect(out).toEqual(events)
+    expect(out).toHaveLength(1)
+    expect(out[0]!.payload.kind).toBe('multiline_batch')
+    if (out[0]!.payload.kind === 'multiline_batch') {
+      expect(out[0]!.payload.blocks).toEqual([{ header: 'h1', body: 'b1', url: 'u1' }])
+      expect(out[0]!.channels).toEqual(['#a'])
+    }
   })
 
   it('compares channel sets as a sorted set, not array order', () => {
@@ -64,7 +69,7 @@ describe('batchConsecutiveMultiline', () => {
     const events = [ml(['#a'], 'h1'), ml(['#b'], 'h2'), ml(['#a'], 'h3')]
     const out = batchConsecutiveMultiline(events)
     expect(out).toHaveLength(3)
-    expect(out.every(e => e.payload.kind === 'multiline')).toBe(true)
+    expect(out.every(e => e.payload.kind === 'multiline_batch')).toBe(true)
   })
 
   it('breaks the run when an oneline event intervenes', () => {
@@ -72,9 +77,9 @@ describe('batchConsecutiveMultiline', () => {
     const out = batchConsecutiveMultiline(events)
     expect(out).toHaveLength(3)
     // The two multilines are NOT merged across the intervening oneline.
-    expect(out[0]!.payload.kind).toBe('multiline')
+    expect(out[0]!.payload.kind).toBe('multiline_batch')
     expect(out[1]!.payload.kind).toBe('oneline')
-    expect(out[2]!.payload.kind).toBe('multiline')
+    expect(out[2]!.payload.kind).toBe('multiline_batch')
   })
 
   it('merges cross-PR comments that share a channel set, headers disambiguating', () => {
