@@ -1,6 +1,6 @@
 import type { RoostIrcClient } from '../irc-client.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
-import type { TaggedEvent, TaggedEventPayload, MultilineBlock } from './plugin.js'
+import type { IrcMessage } from './plugin.js'
 
 export async function waitForReady(
   client: RoostIrcClient,
@@ -33,100 +33,61 @@ export async function connectAndWait(
   await Promise.all(channels.map(ch => client.join(ch)))
 }
 
-// Normalized channel-set key for batch grouping. `.sort()` so order drift in
-// a plugin's resolveChannels call doesn't split a batch that should merge —
-// the audience is the set of channels, not their iteration order. `\0` joins
-// the sorted names so `['#ab']` and `['#a', '#b']` can't collide (NUL can't
-// appear in an IRC channel name). The full set — not just the first channel —
-// keys the batch because a batch can target several channels (an issue channel
-// plus a Linear channel).
-function channelSetKey(channels: string[]): string {
-  return [...channels].sort().join('\0')
-}
-
-// Collapse consecutive `multiline`-payload events that share a channel set
-// into one `multiline_batch` event, rendered by the dispatcher as a single
-// IRC message. Every comment event — including a singleton — becomes a
-// `multiline_batch` (a one-block batch renders byte-identically to a
-// `multiline` payload, so there is no separate single-comment path). Only
-// consecutive runs merge — an intervening `oneline` event breaks the run,
-// preserving ordering vs lifecycle/CI events. Channel-set (not per-PR)
-// granularity is deliberate: every comment landing in one channel in one tick
-// is that channel's audience context, so merging across PRs/issues that share
-// a channel is the intended behavior, with headers disambiguating the source.
-export function batchConsecutiveMultiline(events: TaggedEvent[]): TaggedEvent[] {
-  const out: TaggedEvent[] = []
-  // Channels are captured from the first event of a run and stored on the
-  // batch object, rather than re-indexed into the run later.
-  let batch: { channels: string[]; blocks: MultilineBlock[]; key: string } | null = null
-
-  const flush = () => {
-    if (!batch) return
-    out.push({ channels: batch.channels, payload: { kind: 'multiline_batch', blocks: batch.blocks } })
-    batch = null
-  }
-
-  for (const ev of events) {
-    if (ev.payload.kind === 'multiline') {
-      const block = { header: ev.payload.header, body: ev.payload.body, url: ev.payload.url }
-      const key = channelSetKey(ev.channels)
-      if (batch && batch.key === key) {
-        batch.blocks.push(block)
-      } else {
-        flush()
-        batch = { channels: ev.channels, blocks: [block], key }
+// One IRC message per channel per tick. Plugins emit uniform `{channels, text}`
+// messages; this groups them by individual channel (not channel-set), appending
+// each message's text to every channel it targets, in emission order. The
+// dispatcher then posts one joined message per channel.
+//
+// Per-individual-channel (not per-channel-set) is deliberate: an event routed to
+// {#issue, #linear} shares its text with both channels, and each channel sees
+// one message with everything destined for it — no splits. Channel-set keying
+// was an artifact of the oneline/multiline batching era; the uniform seam drops
+// it. Within a channel, order follows the order plugins emitted messages
+// (runOneTick concatenates all plugins' messages, so cross-plugin merges land
+// here too — a GitHub + Linear message to one channel arrive as one message).
+//
+// Post order across channels is the Map's insertion order — the first message
+// that touched a channel claims its slot. Channels are independent audiences, so
+// cross-channel order isn't observable as meaningful; insertion order just
+// keeps it deterministic.
+//
+// Empty-text messages are skipped (a blank line is never a useful IRC post).
+// Channels are deduped per message via a Set so `[#a, #a]` posts once.
+export function groupMessagesByChannel(messages: IrcMessage[]): Map<string, string[]> {
+  const byChannel = new Map<string, string[]>()
+  for (const msg of messages) {
+    if (!msg.text) continue
+    const seen = new Set<string>()
+    for (const ch of msg.channels) {
+      if (seen.has(ch)) continue
+      seen.add(ch)
+      let bucket = byChannel.get(ch)
+      if (!bucket) {
+        bucket = []
+        byChannel.set(ch, bucket)
       }
-    } else {
-      flush()
-      out.push(ev)
+      bucket.push(msg.text)
     }
   }
-  flush()
-  return out
+  return byChannel
 }
 
-// Render a multiline_batch payload as one IRC message: blocks joined by a
-// blank line, each block header/body/url on its own line.
-function renderBatch(blocks: MultilineBlock[]): string {
-  return blocks.map(b => [b.header, b.body, b.url].join('\n')).join('\n\n')
-}
-
-// Plugin-agnostic, payload-shape-aware. Channels are pre-resolved by the
-// plugin's resolveChannels — trust the input. say() has no delivery ack; a
-// mid-tick disconnect silently drops in-flight events. Consecutive multiline
-// events to the same channel set are batched into one message so a receiving
-// agent sees every comment before replying to any of them.
-export async function dispatchTaggedEvents(
-  taggedEvents: TaggedEvent[],
+// Plugin-agnostic. Channels are pre-resolved by the plugin's resolveChannels —
+// trust the input. say() has no delivery ack; a mid-tick disconnect silently
+// drops in-flight messages. All messages for a channel in one tick are joined
+// (blank-line separated) into a single IRC post so a receiving agent sees the
+// full tick's worth of context before replying.
+export async function dispatchMessages(
+  messages: IrcMessage[],
   client: RoostIrcClient
 ): Promise<void> {
   const failures: string[] = []
-  for (const { channels, payload } of batchConsecutiveMultiline(taggedEvents)) {
-    for (const target of channels) {
-      try {
-        const text = renderPayload(payload)
-        client.say(target, text)
-      } catch (e) {
-        failures.push(`${payload.kind} -> ${target}: ${e}`)
-      }
+  for (const [target, texts] of groupMessagesByChannel(messages)) {
+    try {
+      client.say(target, texts.join('\n\n'))
+    } catch (e) {
+      failures.push(`${target}: ${e}`)
     }
   }
   if (failures.length) throw new Error(failures.join('; '))
-}
-
-function renderPayload(payload: TaggedEventPayload): string {
-  switch (payload.kind) {
-    case 'oneline':
-      return payload.text
-    case 'multiline':
-      return [payload.header, payload.body, payload.url].join('\n')
-    case 'multiline_batch':
-      return renderBatch(payload.blocks)
-    default: {
-      // Exhaustiveness guard — a new payload variant must add a case above,
-      // rather than silently fall through to a default renderer.
-      const _exhaustive: never = payload
-      throw new Error(`unhandled TaggedEventPayload kind: ${(_exhaustive as { kind: string }).kind}`)
-    }
-  }
 }

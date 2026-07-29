@@ -7,9 +7,11 @@ import type {
   LinearGithubPrLinkedEvent,
   LinearSeedEvent,
 } from './diff.js'
-import type { TaggedEventPayload } from '../../plugin.js'
 
-const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
+// linear_comment renders as three lines (header + body + url); the rest render
+// as a single line. The dispatcher no longer distinguishes — this branch just
+// picks the line shape.
+const COMMENT_KINDS: ReadonlySet<string> = new Set([
   'linear_comment',
 ])
 
@@ -70,15 +72,17 @@ export function formatLinearEvent(event: LinearEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-export function formatLinearPayload(event: LinearEvent): TaggedEventPayload {
-  if (MULTILINE_COMMENT_KINDS.has(event.kind)) {
+// Render one Linear event as the text of an IRC message. linear_comment becomes
+// three lines (header + body + url); everything else is a single line from
+// formatLinearEvent. Byte-identical to the former multiline payload render.
+export function formatLinearMessage(event: LinearEvent): string {
+  if (COMMENT_KINDS.has(event.kind)) {
     const ev = event as LinearCommentEvent
-    return {
-      kind: 'multiline',
-      header: formatCommentHeader(ev),
-      body: ev.body ?? '',
-      url: ev.comment_url ?? ev.url ?? '',
-    }
+    return [
+      formatCommentHeader(ev),
+      ev.body ?? '',
+      ev.comment_url ?? ev.url ?? '',
+    ].join('\n')
   }
-  return { kind: 'oneline', text: formatLinearEvent(event) }
+  return formatLinearEvent(event)
 }

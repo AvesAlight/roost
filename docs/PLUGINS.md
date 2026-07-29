@@ -15,8 +15,7 @@ import {
   type Plugin,
   type PluginConfig,
   type PluginTickResult,
-  type TaggedEvent,
-  type TaggedEventPayload,
+  type IrcMessage,
   type PluginFactory,
   type PluginLogger,
   type Command,
@@ -31,12 +30,12 @@ import {
 |---|---|
 | `name` | Slot key for both slices. Must match the string passed to `registerPlugin`. |
 | `desiredChannels(config)` | Channels to join at boot. The orchestrator adds the project channel. |
-| `runTick(config, prevState)` | Returns `{ state, taggedEvents, channels }`. `prevState === null` on a seed tick. `channels` is the post-scrape set. |
+| `runTick(config, prevState)` | Returns `{ state, messages, channels }`. `prevState === null` on a seed tick. `channels` is the post-scrape set. |
 | `parseCommand?(line)` | Optional. Claim a single watch/unwatch DM line. See "DM grammar" below. |
 | `grammarPriority?` | Optional. Higher = parsed first when two plugins overlap. Default 0. Operator override: `config.plugin_priorities[name]` replaces this outright. |
 | `handleCommand?(merged, local, cmd)` | Optional. Receives `list`/`help` broadcasts + any command this plugin's own `parseCommand` claimed. Returns a reply or `null`. Return `"error: ..."` on failure. Don't throw. |
 
-The dispatcher writes each `TaggedEvent` to every channel in `event.channels`. Event kind strings are yours.
+The dispatcher writes each `IrcMessage`'s text to every channel in `message.channels`, batching same-channel texts into one IRC message per channel per tick. Your `runTick` returns fully-rendered text — the dispatcher does no formatting, only grouping.
 
 ## DM grammar
 
@@ -98,9 +97,9 @@ class MyPlugin extends BasePlugin {
     const rooms = this.pluginConfig<MySlice>(config)?.rooms ?? []
     return {
       state: null,
-      taggedEvents: rooms.map(channel => ({
+      messages: rooms.map(channel => ({
         channels: [channel],
-        payload: { kind: 'oneline', text: '[acme_pulse] still alive' },
+        text: '[acme_pulse] still alive',
       })),
       channels: rooms,
     }
@@ -149,7 +148,7 @@ From a fresh repo:
    }
    ```
 
-4. **Dry-run the dispatcher.** Prints `TaggedEvent` JSON to stdout. No IRC, no state written.
+4. **Dry-run the dispatcher.** Prints `IrcMessage` JSON to stdout. No IRC, no state written.
 
    ```sh
    "$(roost root)/bin/dispatcher" --dry-run --config-dir .orchestrator
@@ -173,18 +172,18 @@ const config: PluginConfig = { plugins: { 'my-plugin': { rooms: ['#x'] } } }
 describe('MyPlugin.runTick', () => {
   it('seeds without emitting on first run', async () => {
     const result = await new MyPlugin('#proj-leads').runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('emits on the second tick when state changes', async () => {
     const prev = { /* ... */ }
     const result = await new MyPlugin('#proj-leads').runTick(config, prev)
-    expect(result.taggedEvents[0]?.channels).toEqual(['#x'])
+    expect(result.messages[0]?.channels).toEqual(['#x'])
   })
 })
 ```
 
-Mock IO at the boundary your plugin owns. Assert on `state` and `taggedEvents`.
+Mock IO at the boundary your plugin owns. Assert on `state` and `messages`.
 
 **Integration tests** are optional. Spin up a test IRC server and run the dispatcher with only your plugin loaded. Worth doing only if your plugin depends on the dispatch layer (channel sync, DM handling).
 
@@ -203,4 +202,4 @@ Both expose only `roost/plugin`. Deep imports may change.
 
 ## Versioning
 
-No compile-time API check yet. The seam types (`Plugin`, `BasePlugin`, `TaggedEvent`, `PluginTickResult`) haven't changed shape since they landed. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.
+No compile-time API check yet. The seam types are `Plugin`, `BasePlugin`, `IrcMessage`, and `PluginTickResult`. Plugins emit fully-rendered `IrcMessage { channels, text }` values; the dispatcher groups by channel and posts — no payload-kind union, no `oneline`/`multiline` distinction. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.

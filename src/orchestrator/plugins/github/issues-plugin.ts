@@ -1,11 +1,11 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
-import type { PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { PluginTickResult, IrcMessage } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { snapshotIssueFromNode } from './scraper.js'
 import { GhError, isRateLimitError, rateLimitKind, type BatchOutcome, type GhIssueNode } from './github-api.js'
-import { formatPayload } from './format.js'
+import { formatMessage } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { IssueSnap, IssuePluginState } from './types.js'
 
@@ -48,7 +48,7 @@ export class GitHubIssuesPlugin extends GhBase {
     // Nothing to poll: return before the breaker block. An idle plugin must not
     // reset the shared breaker — at half-open it would clear a sibling's
     // in-flight escalation every tick and pin the backoff at its first window.
-    if (!watched.length) return { state: prevState ?? { issues: {} }, taggedEvents: [], channels: [] }
+    if (!watched.length) return { state: prevState ?? { issues: {} }, messages: [], channels: [] }
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as IssuePluginState | null
@@ -84,14 +84,14 @@ export class GitHubIssuesPlugin extends GhBase {
       // Whole-batch transient failure isn't a per-entry condition, so it doesn't
       // spike per-entry counts. Preserve prev, replay channels, and surface one
       // throttled batch-level warn so a sustained outage doesn't go silent.
-      const taggedEvents = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
-      return { state: prevState ?? { issues: {} }, taggedEvents, channels: this.skipChannels(config) }
+      const messages = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
+      return { state: prevState ?? { issues: {} }, messages, channels: this.skipChannels(config) }
     }
     this.breakerReset(now)
     this.clearBatchFailure()
 
     const curState: IssuePluginState = { issues: {} }
-    const taggedEvents: TaggedEvent[] = []
+    const messages: IrcMessage[] = []
     for (const { key, repo, number, entryChannels, recoveryCmd, prevIssue } of resolved) {
       const outcome = batch.get(key)
       // No outcome = throttled this tick; outcome.ok false = per-alias failure.
@@ -99,7 +99,7 @@ export class GitHubIssuesPlugin extends GhBase {
       // failure counter and warns past the threshold; a throttle stays silent.
       if (!outcome || !outcome.ok) {
         if (outcome && !outcome.ok) {
-          taggedEvents.push(...this.recordEntryFailure(key, [projectChannel], recoveryCmd, outcome.reason, outcome.logDetail, now))
+          messages.push(...this.recordEntryFailure(key, [projectChannel], recoveryCmd, outcome.reason, outcome.logDetail, now))
         }
         if (prevIssue) curState.issues[key] = prevIssue
         continue
@@ -128,21 +128,21 @@ export class GitHubIssuesPlugin extends GhBase {
             GitHubIssuesPlugin.issueEventChannels(project, event, slug),
             entryChannels
           ).filter(ch => ch !== projectChannel)
-          taggedEvents.push({
+          messages.push({
             channels: [projectChannel],
-            payload: { kind: 'oneline', text: `now watching issue ${key} — routing events to ${routingChannels.join(', ')}` },
+            text: `now watching issue ${key} — routing events to ${routingChannels.join(', ')}`,
           })
           continue
         }
         if (!shouldPush(event)) continue
-        taggedEvents.push({
+        messages.push({
           channels: this.resolveChannels(GitHubIssuesPlugin.issueEventChannels(project, event, slug), entryChannels),
-          payload: formatPayload(event),
+          text: formatMessage(event),
         })
       }
     }
 
-    taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state: curState, taggedEvents, channels: this.rememberChannels(this.desiredChannels(config)) }
+    messages.push(...await this.observeRateLimit(projectChannel))
+    return { state: curState, messages, channels: this.rememberChannels(this.desiredChannels(config)) }
   }
 }

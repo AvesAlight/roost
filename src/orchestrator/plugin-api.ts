@@ -10,8 +10,7 @@ export {
   type PluginFactory,
   type PluginLogger,
   type PluginTickResult,
-  type TaggedEvent,
-  type TaggedEventPayload,
+  type IrcMessage,
 } from './plugin.js'
 
 export type { Command } from './dispatcher-dm-handler.js'

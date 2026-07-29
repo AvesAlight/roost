@@ -29,8 +29,8 @@ function stubFetch(
   )
 }
 
-function onelineText(payload: { kind: 'oneline'; text: string } | unknown): string {
-  return (payload as { kind: 'oneline'; text: string }).text
+function msgText(m: { text: string } | undefined | null): string {
+  return m!.text
 }
 
 describe('GitHubCommitsPlugin.runTick', () => {
@@ -43,7 +43,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
         { repo: 'AvesAlight/homebrew-tap', branch: 'main', path: 'Formula/roost.rb' },
       ])
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, null)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       const state = result.state as CommitsPluginState
       expect(state.commits['AvesAlight/homebrew-tap@main:Formula/roost.rb']).toEqual({ last_sha: 'aaa1111' })
     } finally { spy.mockRestore() }
@@ -59,11 +59,11 @@ describe('GitHubCommitsPlugin.runTick', () => {
       const config = baseConfig([{ repo: 'AvesAlight/homebrew-tap' }])
       const prev: CommitsPluginState = { commits: { 'AvesAlight/homebrew-tap@main': { last_sha: 'aaa1111' } } }
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, prev)
-      expect(result.taggedEvents).toHaveLength(2)
-      expect(onelineText(result.taggedEvents[0]?.payload)).toBe(
+      expect(result.messages).toHaveLength(2)
+      expect(msgText(result.messages[0])).toBe(
         'commit AvesAlight/homebrew-tap@main bbb2222: bump 0.6.4 — https://github.com/org/repo/commit/bbb2222'
       )
-      expect(onelineText(result.taggedEvents[1]?.payload)).toBe(
+      expect(msgText(result.messages[1])).toBe(
         'commit AvesAlight/homebrew-tap@main ccc3333: bump 0.6.5 — https://github.com/org/repo/commit/ccc3333'
       )
     } finally { spy.mockRestore() }
@@ -92,11 +92,11 @@ describe('GitHubCommitsPlugin.runTick', () => {
       ])
       const prev: CommitsPluginState = { commits: { 'AvesAlight/homebrew-tap@main': { last_sha: 'aaa1111' } } }
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, prev)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#release', '#leads'])
+      expect(result.messages[0]?.channels).toEqual(['#release', '#leads'])
 
       const defaultConfig = baseConfig([{ repo: 'AvesAlight/homebrew-tap' }])
       const result2 = await new GitHubCommitsPlugin('#proj-leads').runTick(defaultConfig, prev)
-      expect(result2.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result2.messages[0]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -132,7 +132,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       const state = result.state as CommitsPluginState
       expect(state.commits['AvesAlight/homebrew-tap@main:Formula/roost.rb']).toEqual({ last_sha: 'rrr2222' })
       expect(state.commits['AvesAlight/homebrew-tap@main:Formula/tng.rb']).toEqual({ last_sha: 'zzz2222' })
-      expect(result.taggedEvents).toHaveLength(2)
+      expect(result.messages).toHaveLength(2)
     } finally { spy.mockRestore() }
   })
 
@@ -156,7 +156,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       const plugin = new GitHubCommitsPlugin('#proj-leads', (msg) => { logs.push(msg) })
       const result = await plugin.runTick(config, prev)
       // All 20 announced (watermark missing => emit everything in the page).
-      expect(result.taggedEvents).toHaveLength(20)
+      expect(result.messages).toHaveLength(20)
       // WARN line logged exactly once for this entry; no IRC event for it.
       const warnLines = logs.filter(l => l.includes('watermark') && l.includes('not in page'))
       expect(warnLines).toHaveLength(1)
@@ -173,7 +173,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       const prev: CommitsPluginState = { commits: { 'AvesAlight/homebrew-tap@main': { last_sha: 'gone000' } } }
       const plugin = new GitHubCommitsPlugin('#proj-leads', (msg) => { logs.push(msg) })
       const result = await plugin.runTick(config, prev)
-      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.messages).toHaveLength(1)
       const warnLines = logs.filter(l => l.includes('watermark'))
       expect(warnLines).toHaveLength(0)
     } finally { spy.mockRestore() }
@@ -189,7 +189,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       }
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, null)
       expect(spy).not.toHaveBeenCalled()
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect(result.channels).toEqual([])
     } finally { spy.mockRestore() }
   })
@@ -222,7 +222,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       const config = baseConfig([{ repo: 'AvesAlight/homebrew-tap' }])
       const prev: CommitsPluginState = { commits: {} }
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, prev)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       const state = result.state as CommitsPluginState
       expect(state.commits['AvesAlight/homebrew-tap@main']).toEqual({ last_sha: 'aaa1111' })
     } finally { spy.mockRestore() }
@@ -245,7 +245,7 @@ describe('GitHubCommitsPlugin.runTick', () => {
       ])
       const prev: CommitsPluginState = { commits: { 'AvesAlight/homebrew-tap@main:Formula/roost.rb': { last_sha: 'aaa1111' } } }
       const result = await new GitHubCommitsPlugin('#proj-leads').runTick(config, prev)
-      expect(onelineText(result.taggedEvents[0]?.payload)).toBe(
+      expect(msgText(result.messages[0])).toBe(
         'commit AvesAlight/homebrew-tap@main [Formula/roost.rb] ccc3333: roost 0.6.4 — https://github.com/org/repo/commit/ccc3333'
       )
     } finally { spy.mockRestore() }

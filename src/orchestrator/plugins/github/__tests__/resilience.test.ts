@@ -44,9 +44,7 @@ function issuesConfig(): OrchestratorConfig {
 function pr(n: number): GhRepoPr {
   return { number: n, title: `PR ${n}`, html_url: `https://github.com/org/repo/pull/${n}`, labels: [], user: { login: 'ext' } }
 }
-function oneline(e: { payload: unknown }): string {
-  return (e.payload as { kind: 'oneline'; text: string }).text
-}
+function msgText(e: { text: string }): string { return e.text }
 function ghErr(stderr: string): GhError {
   return new GhError(`gh failed (exit 1)\n${stderr}`, stderr, 3)
 }
@@ -79,8 +77,8 @@ describe('gh-call resilience (readEntry + breaker)', () => {
     const spy = spyOn(GhClient.prototype, 'fetchRepoOpenPrs').mockResolvedValue([pr(1), pr(2)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(prsConfig(), { repos: { 'org/repo': [1] } })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(oneline(result.taggedEvents[0]!)).toContain('org/repo#2')
+      expect(result.messages).toHaveLength(1)
+      expect(msgText(result.messages[0]!)).toContain('org/repo#2')
     } finally { spy.mockRestore() }
   })
 
@@ -90,11 +88,11 @@ describe('gh-call resilience (readEntry + breaker)', () => {
       const plugin = new GitHubNewPrsPlugin('#proj-leads')
       const results = await runTicks(plugin, prsConfig(), { repos: { 'org/repo': [1, 2] } }, READ_FAILURE_THRESHOLD)
       // Every tick before the last is silent — a one-off flap never pings IRC.
-      for (const r of results.slice(0, -1)) expect(r.taggedEvents).toHaveLength(0)
+      for (const r of results.slice(0, -1)) expect(r.messages).toHaveLength(0)
       // The Nth consecutive failure warns, with the failure reason + recovery cmd.
       const warned = results[results.length - 1]!
-      expect(warned.taggedEvents).toHaveLength(1)
-      const text = oneline(warned.taggedEvents[0]!)
+      expect(warned.messages).toHaveLength(1)
+      const text = msgText(warned.messages[0]!)
       expect(text).toContain('github-new-prs: org/repo read failing: deleted/renamed (HTTP 404)')
       expect(text).toContain('recover: unwatch new-prs org/repo')
       // Prev state carried forward untouched across every skipped tick.
@@ -108,11 +106,11 @@ describe('gh-call resilience (readEntry + breaker)', () => {
       const plugin = new GitHubNewPrsPlugin('#proj-leads')  // same instance → shared failure state
       const warmup = await runTicks(plugin, prsConfig(), { repos: { 'org/repo': [1] } }, READ_FAILURE_THRESHOLD)
       expect(spy).toHaveBeenCalledTimes(READ_FAILURE_THRESHOLD)  // read every tick up to the threshold
-      expect(warmup[warmup.length - 1]!.taggedEvents).toHaveLength(1)  // warned on the Nth
+      expect(warmup[warmup.length - 1]!.messages).toHaveLength(1)  // warned on the Nth
       // Next tick: degraded entry inside the cooldown → no re-read, no repeat warn.
       const throttled = await plugin.runTick(prsConfig(), warmup[warmup.length - 1]!.state)
       expect(spy).toHaveBeenCalledTimes(READ_FAILURE_THRESHOLD)  // did NOT re-read
-      expect(throttled.taggedEvents).toHaveLength(0)
+      expect(throttled.messages).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 
@@ -121,8 +119,8 @@ describe('gh-call resilience (readEntry + breaker)', () => {
     try {
       const prev: NewPrsPluginState = { repos: { 'org/repo': [1] } }
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(prsConfig(), prev)
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
+      expect(result.messages).toHaveLength(1)
+      expect(msgText(result.messages[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
       expect((result.state as NewPrsPluginState).repos['org/repo']).toEqual([1])
     } finally { spy.mockRestore() }
   })
@@ -135,7 +133,7 @@ describe('gh-call resilience (readEntry + breaker)', () => {
       expect(spy).toHaveBeenCalledTimes(1)
       const second = await plugin.runTick(prsConfig(), { repos: { 'org/repo': [1] } })
       expect(spy).toHaveBeenCalledTimes(1)  // breaker open → did not poll again
-      expect(second.taggedEvents).toHaveLength(0)  // silent
+      expect(second.messages).toHaveLength(0)  // silent
     } finally { spy.mockRestore() }
   })
 
@@ -146,7 +144,7 @@ describe('gh-call resilience (readEntry + breaker)', () => {
       // No throw — a 422 is now a per-entry condition, not a whole-tick crash.
       const results = await runTicks(plugin, prsConfig(), { repos: { 'org/repo': [1] } }, READ_FAILURE_THRESHOLD)
       const warned = results[results.length - 1]!
-      expect(oneline(warned.taggedEvents[0]!)).toContain('read failing: validation failed (HTTP 422), likely a query bug')
+      expect(msgText(warned.messages[0]!)).toContain('read failing: validation failed (HTTP 422), likely a query bug')
     } finally { spy.mockRestore() }
   })
 
@@ -164,7 +162,7 @@ describe('gh-call resilience (readEntry + breaker)', () => {
       const plugin = new GitHubNewIssuesPlugin('#proj-leads')
       const results = await runTicks(plugin, issuesConfig(), { repos: { 'org/repo': [1] } }, READ_FAILURE_THRESHOLD)
       const warned = results[results.length - 1]!
-      const text = oneline(warned.taggedEvents[0]!)
+      const text = msgText(warned.messages[0]!)
       expect(text).toContain('github-new-issues: org/repo read failing: deleted/renamed (HTTP 404)')
       expect(text).toContain('recover: unwatch new-issues org/repo')
       expect((warned.state as NewIssuesPluginState).repos['org/repo']).toEqual([1])
@@ -272,8 +270,8 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const result = results[results.length - 1]!
 
       // The dead entry warns once past the threshold; the healthy sibling is untouched.
-      expect(result.taggedEvents).toHaveLength(1)
-      const text = oneline(result.taggedEvents[0]!)
+      expect(result.messages).toHaveLength(1)
+      const text = msgText(result.messages[0]!)
       expect(text).toContain('github-prs: org/repo#1 read failing: deleted/renamed (not found)')
       expect(text).toContain('recover: unwatch pr 1')  // single-repo → bare number, no repo suffix
 
@@ -306,7 +304,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const prev: PrPluginState = { prs: { 'org/repo#1': prevPr1, 'org/repo#2': prSnap({ number: 2, title: 'P2-stale' }) } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, prev)
       // First miss tick is silent (below threshold) but did NOT throw.
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       const state = result.state as PrPluginState
       expect(state.prs['org/repo#1']).toEqual(prevPr1)            // dead entry carried forward
       expect(state.prs['org/repo#2']!.title).toBe('P2-fresh')     // sibling freshly processed
@@ -327,8 +325,8 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const results = await runTicks(new GitHubIssuesPlugin('#proj-leads'), config, prev, READ_FAILURE_THRESHOLD)
       const result = results[results.length - 1]!
 
-      expect(result.taggedEvents).toHaveLength(1)
-      const text = oneline(result.taggedEvents[0]!)
+      expect(result.messages).toHaveLength(1)
+      const text = msgText(result.messages[0]!)
       expect(text).toContain('github-issues: org/repo#1 read failing: deleted/renamed (not found)')
       expect(text).toContain('recover: unwatch 1')
       expect((result.state as IssuePluginState).issues['org/repo#1']).toEqual(prevIssue1)
@@ -344,7 +342,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
         project: 'proj', plugins: { 'github-prs': { watched: [{ number: 5, repo: 'org/other' }] } },
       }
       const results = await runTicks(new GitHubPrsPlugin('#proj-leads'), config, { prs: {} }, READ_FAILURE_THRESHOLD)
-      expect(oneline(results[results.length - 1]!.taggedEvents[0]!)).toContain('recover: unwatch pr 5 org/other')
+      expect(msgText(results[results.length - 1]!.messages[0]!)).toContain('recover: unwatch pr 5 org/other')
     } finally { prsBatch.mockRestore() }
 
     GhPluginBase.resetBreakerForTest()
@@ -354,7 +352,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
         project: 'proj', plugins: { 'github-issues': { watched: [{ number: 8, repo: 'org/other' }] } },
       }
       const results = await runTicks(new GitHubIssuesPlugin('#proj-leads'), config, { issues: {} }, READ_FAILURE_THRESHOLD)
-      expect(oneline(results[results.length - 1]!.taggedEvents[0]!)).toContain('recover: unwatch 8 org/other')
+      expect(msgText(results[results.length - 1]!.messages[0]!)).toContain('recover: unwatch 8 org/other')
     } finally { issuesBatch.mockRestore() }
   })
 
@@ -364,7 +362,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
       const prev: PrPluginState = { prs: { 'org/repo#1': prSnap({ number: 1 }) } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, prev)
-      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
+      expect(msgText(result.messages[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
       expect((result.state as PrPluginState).prs['org/repo#1']).toBeDefined()  // prev preserved
     } finally { batch.mockRestore() }
   })
@@ -374,7 +372,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     try {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
-      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 1m')
+      expect(msgText(result.messages[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 1m')
     } finally { batch.mockRestore() }
   })
 
@@ -389,8 +387,8 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       // batch-level warn — the first tick — then stays quiet inside the cooldown,
       // prev intact and the breaker untouched (a 500 is transient, not rate-limit).
       const results = await runTicks(new GitHubPrsPlugin('#proj-leads'), config, prev, READ_FAILURE_THRESHOLD + 1)
-      expect(oneline(results[0]!.taggedEvents[0]!)).toContain('batch read failing (2 entries)')
-      for (const r of results.slice(1)) expect(r.taggedEvents).toHaveLength(0)
+      expect(msgText(results[0]!.messages[0]!)).toContain('batch read failing (2 entries)')
+      for (const r of results.slice(1)) expect(r.messages).toHaveLength(0)
       expect((results[results.length - 1]!.state as PrPluginState).prs['org/repo#1']).toBeDefined()
       expect(tripSpy).not.toHaveBeenCalled()
     } finally { tripSpy.mockRestore(); batch.mockRestore() }
@@ -445,7 +443,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
       // 20s honored, not the schedule's 1m floor.
-      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 20s')
+      expect(msgText(result.messages[0]!)).toBe('[dispatcher] GH secondary rate-limited, backing off 20s')
     } finally { spawn.mockRestore() }
   })
 
@@ -458,7 +456,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     try {
       const config: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [{ number: 1 }] } } }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(config, { prs: {} })
-      expect(oneline(result.taggedEvents[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
+      expect(msgText(result.messages[0]!)).toBe('[dispatcher] GH rate-limited, backing off 5m')
     } finally { spawn.mockRestore() }
   })
 
@@ -467,12 +465,12 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     try {
       const emptyPrs: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-prs': { watched: [] } } }
       const prsResult = await new GitHubPrsPlugin('#proj-leads').runTick(emptyPrs, { prs: {} })
-      expect(prsResult.taggedEvents).toHaveLength(0)
+      expect(prsResult.messages).toHaveLength(0)
       expect(prsResult.channels).toEqual([])
 
       const emptyIssues: OrchestratorConfig = { project: 'proj', repo: 'org/repo', plugins: { 'github-issues': { watched: [] } } }
       const issuesResult = await new GitHubIssuesPlugin('#proj-leads').runTick(emptyIssues, { issues: {} })
-      expect(issuesResult.taggedEvents).toHaveLength(0)
+      expect(issuesResult.messages).toHaveLength(0)
       expect(issuesResult.channels).toEqual([])
 
       // Neither idle plugin touched the breaker — at half-open this is what keeps
@@ -498,7 +496,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
 class ReadEntryProbe extends GhPluginBase {
   readonly name = 'probe'
   desiredChannels(): string[] { return [] }
-  async runTick(): Promise<PluginTickResult> { return { state: null, taggedEvents: [], channels: [] } }
+  async runTick(): Promise<PluginTickResult> { return { state: null, messages: [], channels: [] } }
   call<T>(key: string, body: () => Promise<T>, now: number): Promise<ReadEntryResult<T>> {
     return this.readEntry(key, ['#probe'], 'unwatch probe', body, now)
   }
@@ -517,7 +515,7 @@ describe('readEntry failure-threshold state machine (direct, injected clock)', (
   function noteText(r: ReadEntryResult<unknown>): string {
     if (r.ok || r.rateLimited) throw new Error('expected a per-entry note result')
     expect(r.events).toHaveLength(1)
-    return (r.events[0]!.payload as { kind: 'oneline'; text: string }).text
+    return r.events[0]!.text
   }
 
   it('stays silent below the threshold, then warns on the Nth consecutive failure', async () => {

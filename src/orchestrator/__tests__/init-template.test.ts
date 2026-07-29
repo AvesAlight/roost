@@ -40,7 +40,7 @@ describe('bin/roost init template', () => {
     const plugins = buildPlugins(merged, '#my-project-leads', () => {})
     const results = await Promise.all(plugins.map(p => p.runTick(merged, null)))
     for (const result of results) {
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
     }
   })
 })

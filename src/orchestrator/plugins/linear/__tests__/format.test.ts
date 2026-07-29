@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { formatLinearEvent, formatLinearPayload } from '../format.js'
+import { formatLinearEvent, formatLinearMessage } from '../format.js'
 import type {
   LinearStateEvent,
   LinearLabelEvent,
@@ -115,8 +115,8 @@ describe('formatLinearEvent — oneline shapes (issue body examples)', () => {
   })
 })
 
-describe('formatLinearPayload', () => {
-  it('returns multiline shape for linear_comment', () => {
+describe('formatLinearMessage', () => {
+  it('renders linear_comment as header / body / url joined by newlines', () => {
     const ev: LinearCommentEvent = {
       kind: 'linear_comment',
       identifier: 'C-758',
@@ -127,17 +127,15 @@ describe('formatLinearPayload', () => {
       body: 'looks good\nshipping',
       body_preview: 'looks good\nshipping',
     }
-    const payload = formatLinearPayload(ev)
-    expect(payload.kind).toBe('multiline')
-    if (payload.kind !== 'multiline') throw new Error('expected multiline')
-    expect(payload.header).toBe('Issue C-758 comment by alice:')
-    expect(payload.body).toBe('looks good\nshipping')
-    expect(payload.url).toBe(`${url}#comment-c1`)
+    expect(formatLinearMessage(ev)).toBe(
+      `Issue C-758 comment by alice:\nlooks good\nshipping\n${url}#comment-c1`
+    )
   })
 
-  it('returns oneline shape for non-comment events', () => {
+  it('renders non-comment events as a single line', () => {
     const ev: LinearLabelEvent = { kind: 'linear_labels_changed', identifier: 'C-758', added: ['x'], removed: [] }
-    const payload = formatLinearPayload(ev)
-    expect(payload.kind).toBe('oneline')
+    const out = formatLinearMessage(ev)
+    expect(out).toBe('Issue C-758 labels: +x')
+    expect(out.includes('\n')).toBe(false)
   })
 })

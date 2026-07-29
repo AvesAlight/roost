@@ -1,28 +1,35 @@
 import { describe, it, expect } from 'bun:test'
-import { formatEvent, formatCommentHeader, formatPayload } from '../format.js'
+import { formatEvent, formatCommentHeader, formatMessage } from '../format.js'
 import type { OrchestratorEvent } from '../diff.js'
 
-describe('formatPayload', () => {
-  it('returns oneline for non-comment kinds', () => {
+describe('formatMessage', () => {
+  it('returns a single line for non-comment kinds', () => {
     const ev: OrchestratorEvent = { kind: 'pr_merged', repo: 'org/r', pr: 5, url: 'u', title: 't' } as OrchestratorEvent
-    const p = formatPayload(ev)
-    expect(p.kind).toBe('oneline')
-    if (p.kind === 'oneline') expect(p.text).toContain('PR org/r#5 merged')
+    expect(formatMessage(ev)).toContain('PR org/r#5 merged')
+    // Single line — no header/body/url join.
+    expect(formatMessage(ev).includes('\n')).toBe(false)
   })
 
-  it('returns multiline for comment kinds with header/body/url', () => {
+  it('renders comment kinds as header / body / url joined by newlines', () => {
     const ev: OrchestratorEvent = {
       kind: 'pr_review_comment', repo: 'org/r', pr: 5,
       author: 'alice', body: 'a\nb', body_preview: 'a',
       comment_url: 'https://example.com/c/1',
     } as OrchestratorEvent
-    const p = formatPayload(ev)
-    expect(p.kind).toBe('multiline')
-    if (p.kind === 'multiline') {
-      expect(p.header).toBe('PR org/r#5 comment by alice:')
-      expect(p.body).toBe('a\nb')
-      expect(p.url).toBe('https://example.com/c/1')
-    }
+    expect(formatMessage(ev)).toBe(
+      'PR org/r#5 comment by alice:\na\nb\nhttps://example.com/c/1'
+    )
+  })
+
+  it('renders a review with empty body as header / blank / url', () => {
+    const ev: OrchestratorEvent = {
+      kind: 'pr_review_submitted', repo: 'org/r', pr: 5,
+      author: 'alice', state: 'COMMENT', body: '', body_preview: '',
+      review_url: 'https://example.com/r/1',
+    } as OrchestratorEvent
+    expect(formatMessage(ev)).toBe(
+      'PR org/r#5 review by alice (COMMENT):\n\nhttps://example.com/r/1'
+    )
   })
 })
 

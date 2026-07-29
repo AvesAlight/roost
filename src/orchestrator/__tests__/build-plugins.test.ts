@@ -94,7 +94,7 @@ function makePlugin(name: string, grammarPriority?: number): Plugin {
     grammarPriority,
     parseCommand: () => null,
     desiredChannels: () => [],
-    runTick: async (): Promise<PluginTickResult> => ({ state: null, taggedEvents: [], channels: [] }),
+    runTick: async (): Promise<PluginTickResult> => ({ state: null, messages: [], channels: [] }),
   }
 }
 
@@ -102,7 +102,7 @@ function makePlainPlugin(name: string): Plugin {
   return {
     name,
     desiredChannels: () => [],
-    runTick: async (): Promise<PluginTickResult> => ({ state: null, taggedEvents: [], channels: [] }),
+    runTick: async (): Promise<PluginTickResult> => ({ state: null, messages: [], channels: [] }),
   }
 }
 

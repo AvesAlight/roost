@@ -140,13 +140,13 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
     }
     const result = await plugin(client).runTick(cfg, { issues: {} })
-    const addedToWatch = result.taggedEvents.find(e =>
-      e.payload.kind === 'oneline' && e.payload.text.startsWith('now watching linear issue'))
+    const addedToWatch = result.messages.find(e =>
+      e.text.startsWith('now watching linear issue'))
     expect(addedToWatch).toBeDefined()
     expect(addedToWatch?.channels).toEqual(['#proj-leads'])
 
-    const backlog = result.taggedEvents.find(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('BACKLOG'))
+    const backlog = result.messages.find(e =>
+      e.text.includes('BACKLOG'))
     expect(backlog).toBeDefined()
     expect(backlog?.channels).toEqual(['#proj-issue-c-758'])
 
@@ -162,7 +162,7 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
     }
     const result = await plugin(client).runTick(cfg, null)
     // Seed path emits nothing — mirror github's `prevSnap === undefined` rule.
-    expect(result.taggedEvents).toEqual([])
+    expect(result.messages).toEqual([])
     expect(isTombstone((result.state as LinearIssuePluginState).issues['C-9999'])).toBe(true)
   })
 
@@ -184,8 +184,8 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
     }
     const result = await plugin(client).runTick(cfg, prev)
-    const stateEv = result.taggedEvents.find(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('state:'))
+    const stateEv = result.messages.find(e =>
+      e.text.includes('state:'))
     expect(stateEv).toBeDefined()
     expect(stateEv?.channels).toEqual(['#proj-issue-c-758'])
   })
@@ -204,8 +204,8 @@ describe('LinearIssuesPlugin.runTick — disappeared lifecycle', () => {
     // First tick after the DM lands — prev is the post-seed state object,
     // entry is new (prev.issues[key] undefined → prevEntry=null in scraper).
     const tick1 = await plugin(client).runTick(cfg, { issues: {} })
-    const disappeared = tick1.taggedEvents.find(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('no longer accessible'))
+    const disappeared = tick1.messages.find(e =>
+      e.text.includes('no longer accessible'))
     expect(disappeared).toBeDefined()
     expect(disappeared?.channels).toEqual(['#proj-leads']) // project channel
     expect(isTombstone((tick1.state as LinearIssuePluginState).issues['C-9999'])).toBe(true)
@@ -219,8 +219,8 @@ describe('LinearIssuesPlugin.runTick — disappeared lifecycle', () => {
     const tick2 = await new LinearIssuesPlugin('#proj-leads', () => {}, guardedClient)
       .runTick(cfg, tick1.state as LinearIssuePluginState)
     expect(fetchCalls).toBe(0)
-    const reEmit = tick2.taggedEvents.find(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('no longer accessible'))
+    const reEmit = tick2.messages.find(e =>
+      e.text.includes('no longer accessible'))
     expect(reEmit).toBeUndefined()
     expect(isTombstone((tick2.state as LinearIssuePluginState).issues['C-9999'])).toBe(true)
   })
@@ -239,12 +239,12 @@ describe('LinearIssuesPlugin.runTick — backlog seed once-only', () => {
     }
 
     const tick1 = await plugin(client).runTick(cfg, { issues: {} })
-    expect(tick1.taggedEvents.some(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('BACKLOG'))).toBe(true)
+    expect(tick1.messages.some(e =>
+      e.text.includes('BACKLOG'))).toBe(true)
 
     const tick2 = await plugin(client).runTick(cfg, tick1.state as LinearIssuePluginState)
-    expect(tick2.taggedEvents.some(e =>
-      e.payload.kind === 'oneline' && e.payload.text.includes('BACKLOG'))).toBe(false)
+    expect(tick2.messages.some(e =>
+      e.text.includes('BACKLOG'))).toBe(false)
   })
 })
 
@@ -259,7 +259,7 @@ describe('LinearIssuesPlugin.runTick — no watches', () => {
     }
     const result = await plugin(client).runTick({ project: 'proj' }, null)
     expect(calls).toBe(0)
-    expect(result.taggedEvents).toEqual([])
+    expect(result.messages).toEqual([])
     expect(result.channels).toEqual([])
   })
 })
@@ -327,17 +327,17 @@ describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
     ]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
-    const warnings = events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))
+    const warnings = events.filter((e: { text?: string }) => e.text?.includes('rate limit warning'))
     expect(warnings).toHaveLength(1)
     expect(warnings[0]?.channels).toEqual(['#proj-leads'])
-    expect(warnings[0]?.payload.text).toContain('Linear')
+    expect(warnings[0]?.text).toContain('Linear')
   })
 
   it('no warning on cold start (empty history)', () => {
     const p = plugin(rlClient(rlInfo(100)))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
-    expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
+    expect(events.filter((e: { text?: string }) => e.text?.includes('rate limit warning'))).toHaveLength(0)
   })
 
   it('no warning when getLastRateLimit returns null', () => {
@@ -355,6 +355,6 @@ describe('LinearIssuesPlugin.observeRateLimit — warning emission', () => {
     ]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = (p as any).observeRateLimit('#proj-leads')
-    expect(events.filter((e: { payload: { text?: string } }) => e.payload.text?.includes('rate limit warning'))).toHaveLength(0)
+    expect(events.filter((e: { text?: string }) => e.text?.includes('rate limit warning'))).toHaveLength(0)
   })
 })

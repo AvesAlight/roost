@@ -39,7 +39,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(1), pr(2), pr(3)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), null)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as NewPrsPluginState).repos['org/repo']).toEqual([1, 2, 3])
     } finally { spy.mockRestore() }
   })
@@ -48,15 +48,9 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(1), pr(2), pr(3)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([1]))
-      expect(result.taggedEvents).toHaveLength(2)
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'new PR org/repo#2: PR 2 — https://github.com/org/repo/pull/2',
-      })
-      expect(result.taggedEvents[1]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'new PR org/repo#3: PR 3 — https://github.com/org/repo/pull/3',
-      })
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toBe('new PR org/repo#2: PR 2 — https://github.com/org/repo/pull/2')
+      expect(result.messages[1]?.text).toBe('new PR org/repo#3: PR 3 — https://github.com/org/repo/pull/3')
     } finally { spy.mockRestore() }
   })
 
@@ -64,7 +58,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(5)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -73,7 +67,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     try {
       const config = baseConfig({ plugins: { 'github-new-prs': { watched: [{ repo: 'org/repo', channels: ['#triage', '#leads'] }] } } })
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#triage', '#leads'])
+      expect(result.messages[0]?.channels).toEqual(['#triage', '#leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -81,8 +75,8 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(1), pr(2)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      result.taggedEvents[0]?.channels.push('#tampered')
-      expect(result.taggedEvents[1]?.channels).toEqual(['#proj-leads'])
+      result.messages[0]?.channels.push('#tampered')
+      expect(result.messages[1]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -90,7 +84,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(7, { labels: [{ name: 'enhancement' }, { name: 'good first issue' }] })])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      const text = result.messages[0]?.text
       expect(text).toBe('new PR org/repo#7: PR 7 [enhancement, good first issue] — https://github.com/org/repo/pull/7')
     } finally { spy.mockRestore() }
   })
@@ -107,7 +101,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     const spy = stubFetch([pr(1), pr(2)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([1, 2]))
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 
@@ -117,7 +111,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
       plugins: { 'github-new-prs': { watched: [] } },
     }
     const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('no-ops when watched is absent', async () => {
@@ -126,15 +120,15 @@ describe('GitHubNewPrsPlugin.runTick', () => {
       plugins: { 'github-new-prs': {} },
     }
     const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('orders announcements by PR number', async () => {
     const spy = stubFetch([pr(20), pr(5), pr(11)])
     try {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      const numbers = result.taggedEvents.map(e =>
-        ((e.payload as { kind: 'oneline'; text: string }).text.match(/#(\d+)/)?.[1])
+      const numbers = result.messages.map(e =>
+        (e.text.match(/#(\d+)/)?.[1])
       )
       expect(numbers).toEqual(['5', '11', '20'])
     } finally { spy.mockRestore() }
@@ -180,9 +174,9 @@ describe('GitHubNewPrsPlugin.runTick', () => {
       }
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, { repos: { 'org/a': [], 'org/b': [] } })
       expect(calls).toEqual(['org/a', 'org/b'])
-      expect(result.taggedEvents).toHaveLength(2)
-      expect((result.taggedEvents[0]?.payload as { text: string }).text).toContain('org/a#1')
-      expect((result.taggedEvents[1]?.payload as { text: string }).text).toContain('org/b#2')
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toContain('org/a#1')
+      expect(result.messages[1]?.text).toContain('org/b#2')
     } finally { spy.mockRestore() }
   })
 
@@ -203,7 +197,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
         },
       }
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, { repos: { 'org/a': [] } })
-      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      const texts = result.messages.map(e => e.text)
       expect(texts.every(t => t.includes('org/a'))).toBe(true)
       expect(texts.some(t => t.includes('org/new'))).toBe(false)
       expect((result.state as NewPrsPluginState).repos['org/new']).toEqual([10, 11])
@@ -232,8 +226,8 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     try {
       const config = baseConfig({ agent_logins: ['roost-agent', 'another-agent'] })
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, prevState([]))
-      expect(result.taggedEvents).toHaveLength(1)
-      expect((result.taggedEvents[0]?.payload as { text: string }).text).toContain('org/repo#2')
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.text).toContain('org/repo#2')
     } finally { spy.mockRestore() }
   })
 
@@ -247,7 +241,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, prevState([]))
       // Both numbers seeded, only #2 announced.
       expect((result.state as NewPrsPluginState).repos['org/repo']).toEqual([1, 2])
-      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.messages).toHaveLength(1)
     } finally { spy.mockRestore() }
   })
 
@@ -256,7 +250,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     try {
       const config = baseConfig({ agent_logins: ['roost-agent'] })
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(config, prevState([]))
-      expect(result.taggedEvents).toHaveLength(1)
+      expect(result.messages).toHaveLength(1)
     } finally { spy.mockRestore() }
   })
 
@@ -265,7 +259,7 @@ describe('GitHubNewPrsPlugin.runTick', () => {
     try {
       const oldState = { seen_pr_numbers: [1, 2, 3] }
       const result = await new GitHubNewPrsPlugin('#proj-leads').runTick(baseConfig(), oldState)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as NewPrsPluginState).repos['org/repo']).toEqual([1, 2])
     } finally { spy.mockRestore() }
   })

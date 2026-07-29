@@ -1,11 +1,11 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel, linearIssueChannel, resolveProjectChannel } from '../../naming.js'
-import type { PluginLogger, PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { PluginLogger, PluginTickResult, IrcMessage } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { snapshotPrFromNode } from './scraper.js'
 import { GhError, isRateLimitError, rateLimitKind, type BatchOutcome, type GhPrNode } from './github-api.js'
-import { formatPayload } from './format.js'
+import { formatMessage } from './format.js'
 import { shouldPush, type OrchestratorEvent } from './diff.js'
 import type { LinkedIssue, PrSnap, PrPluginState } from './types.js'
 import { LinearClient } from '../linear/linear-api.js'
@@ -206,7 +206,7 @@ export class GitHubPrsPlugin extends GhBase {
     // Nothing to poll: return before the breaker block. An idle plugin must not
     // reset the shared breaker — at half-open it would clear a sibling's
     // in-flight escalation every tick and pin the backoff at its first window.
-    if (!watched.length) return { state: prevState ?? { prs: {} }, taggedEvents: [], channels: [] }
+    if (!watched.length) return { state: prevState ?? { prs: {} }, messages: [], channels: [] }
     const agentLogins = this.agentLogins(config)
 
     const prev = prevState as PrPluginState | null
@@ -242,8 +242,8 @@ export class GitHubPrsPlugin extends GhBase {
       // Whole-batch transient failure isn't a per-entry condition, so it doesn't
       // spike per-entry counts. Preserve prev, replay channels, and surface one
       // throttled batch-level warn so a sustained outage doesn't go silent.
-      const taggedEvents = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
-      return { state: prevState ?? { prs: {} }, taggedEvents, channels: this.skipChannels(config) }
+      const messages = this.recordBatchFailure(projectChannel, toQuery.length, e, now)
+      return { state: prevState ?? { prs: {} }, messages, channels: this.skipChannels(config) }
     }
     this.breakerReset(now)
     this.clearBatchFailure()
@@ -257,7 +257,7 @@ export class GitHubPrsPlugin extends GhBase {
       : new Map()
 
     const curState: PrPluginState = { prs: {} }
-    const taggedEvents: TaggedEvent[] = []
+    const messages: IrcMessage[] = []
     // Static (config) + dynamic (linked-issues from scrape). Each linked-issue
     // channel is slugged against its own repo (closures can cross repos).
     const channels = new Set<string>(this.desiredChannels(config))
@@ -271,7 +271,7 @@ export class GitHubPrsPlugin extends GhBase {
       // warns past the threshold; a throttle skip stays silent.
       if (!outcome || !outcome.ok) {
         if (outcome && !outcome.ok) {
-          taggedEvents.push(...this.recordEntryFailure(key, [projectChannel], recoveryCmd, outcome.reason, outcome.logDetail, now))
+          messages.push(...this.recordEntryFailure(key, [projectChannel], recoveryCmd, outcome.reason, outcome.logDetail, now))
         }
         if (prevPr) {
           curState.prs[key] = prevPr
@@ -313,7 +313,7 @@ export class GitHubPrsPlugin extends GhBase {
           const text = nonProjectChannels.length
             ? `routing PR ${key} events → ${nonProjectChannels.join(' ')} (no linked issue)`
             : `PR ${key} has no linked issues — routing events to ${projectChannel}. Add Closes #<issue> (or Fixes/Resolves) or specify #channels at watch time: ${event.url ?? ''}`
-          taggedEvents.push({ channels: [projectChannel], payload: { kind: 'oneline', text } })
+          messages.push({ channels: [projectChannel], text })
           continue
         }
         if (event.kind === 'pr_added_to_watch') {
@@ -327,22 +327,22 @@ export class GitHubPrsPlugin extends GhBase {
               entryChannels
             ).filter(ch => ch !== projectChannel)
             const routingStr = routingChannels.length ? routingChannels.join(', ') : projectChannel
-            taggedEvents.push({
+            messages.push({
               channels: [projectChannel],
-              payload: { kind: 'oneline', text: `now watching PR ${key} — routing events to ${routingStr}` },
+              text: `now watching PR ${key} — routing events to ${routingStr}`,
             })
           }
           continue
         }
         if (!shouldPush(event)) continue
-        taggedEvents.push({
+        messages.push({
           channels: this.resolveChannels(GitHubPrsPlugin.prEventChannels(config, project, event, projectChannel, snap.repo, routable, linearChannels, this.log), entryChannels),
-          payload: formatPayload(event),
+          text: formatMessage(event),
         })
       }
     }
 
-    taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state: curState, taggedEvents, channels: this.rememberChannels([...channels]) }
+    messages.push(...await this.observeRateLimit(projectChannel))
+    return { state: curState, messages, channels: this.rememberChannels([...channels]) }
   }
 }

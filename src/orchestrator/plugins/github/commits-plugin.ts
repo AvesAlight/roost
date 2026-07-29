@@ -15,7 +15,7 @@
 
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
-import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, IrcMessage } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal, shortSha } from '../_shared.js'
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
@@ -173,10 +173,10 @@ export class GitHubCommitsPlugin extends GhPluginBase {
 
     // Carry forward prior watermarks; mutate only keys touched this tick.
     const state: CommitsPluginState = { commits: { ...(prev?.commits ?? {}) } }
-    const taggedEvents: TaggedEvent[] = []
+    const messages: IrcMessage[] = []
 
     if (watched.length === 0) {
-      return { state, taggedEvents, channels: [] }
+      return { state, messages, channels: [] }
     }
 
     const now = Date.now()
@@ -199,7 +199,7 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       // Rate-limit discards this tick's partial work and preserves prev state.
       if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { commits: {} }, projectChannel, config, r.kind, r.retryAfterMs)
       if (!r.ok) {
-        taggedEvents.push(...r.events)
+        messages.push(...r.events)
         continue
       }
       const commits = r.value
@@ -239,16 +239,16 @@ export class GitHubCommitsPlugin extends GhPluginBase {
       // Reverse to chronological order so multi-commit batches read top-down.
       for (const commit of [...newCommits].reverse()) {
         if (!commit.sha) continue
-        taggedEvents.push({
+        messages.push({
           channels: [...channels],
-          payload: { kind: 'oneline', text: formatCommit(entry, commit, commit.sha) },
+          text: formatCommit(entry, commit, commit.sha),
         })
       }
       state.commits[key] = { last_sha: newest.sha }
     }
 
     this.breakerReset(now)
-    taggedEvents.push(...await this.observeRateLimit(projectChannel))
-    return { state, taggedEvents, channels: this.rememberChannels(this.desiredChannels(config)) }
+    messages.push(...await this.observeRateLimit(projectChannel))
+    return { state, messages, channels: this.rememberChannels(this.desiredChannels(config)) }
   }
 }

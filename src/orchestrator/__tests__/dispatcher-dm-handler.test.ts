@@ -43,7 +43,7 @@ class StubPlugin implements Plugin {
   }
   desiredChannels(): string[] { return [] }
   async runTick(): Promise<PluginTickResult> {
-    return { state: null, taggedEvents: [], channels: [] }
+    return { state: null, messages: [], channels: [] }
   }
   parseCommand(line: string): ParseResult | null {
     const tokens = line.split(/\s+/).filter(Boolean)
@@ -178,7 +178,7 @@ describe('parseCommand (plugin claims)', () => {
       readonly name = 'first'
       readonly grammarPriority = 100
       desiredChannels(): string[] { return [] }
-      async runTick(): Promise<PluginTickResult> { return { state: null, taggedEvents: [], channels: [] } }
+      async runTick(): Promise<PluginTickResult> { return { state: null, messages: [], channels: [] } }
       parseCommand(): ParseResult { return { kind: 'error', message: 'first-plugin malformed' } }
       handleCommand(): string | null { return null }
     }
@@ -408,7 +408,7 @@ describe('handleDm — routing', () => {
       readonly name = 'listish'
       desiredChannels(): string[] { return [] }
       async runTick(): Promise<PluginTickResult> {
-        return { state: null, taggedEvents: [], channels: [] }
+        return { state: null, messages: [], channels: [] }
       }
       parseCommand(line: string): ParseResult | null {
         const tokens = line.split(/\s+/).filter(Boolean)

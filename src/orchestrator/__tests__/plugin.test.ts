@@ -4,20 +4,20 @@ import {
   priorityOf,
   type Plugin,
   type PluginTickResult,
-  type TaggedEvent,
+  type IrcMessage,
   registerPlugin,
   unregisterPlugin,
   getPluginFactory,
 } from '../plugin.js'
 import { resolveRepoEntry, type OrchestratorConfig } from '../config.js'
-import { dispatchTaggedEvents } from '../dispatch.js'
+import { dispatchMessages } from '../dispatch.js'
 import type { RoostIrcClient } from '../../irc-client.js'
 
 class TestPlugin extends BasePlugin {
   readonly name = 'test'
   desiredChannels(): string[] { return [] }
   async runTick(): Promise<PluginTickResult> {
-    return { state: null, taggedEvents: [], channels: [] }
+    return { state: null, messages: [], channels: [] }
   }
   resolve(autoDetected: string[], entryChannels: string[]): string[] {
     return this.resolveChannels(autoDetected, entryChannels)
@@ -86,14 +86,14 @@ class StubPlugin extends BasePlugin {
     const slice = this.pluginConfig<StubPluginConfig>(config) ?? {}
     const prev = (prevState as StubPluginState | null) ?? { ticks: 0 }
     const rooms = slice.rooms ?? []
-    const taggedEvents: TaggedEvent[] = rooms.length
+    const messages: IrcMessage[] = rooms.length
       ? [{
           channels: this.resolveChannels(rooms, []),
-          // Plugin-owned event kind, never seen at the orchestrator level.
-          payload: { kind: 'oneline', text: `[stub_pulse] tick=${prev.ticks + 1}` },
+          // Plugin-owned message text, never seen at the orchestrator level.
+          text: `[stub_pulse] tick=${prev.ticks + 1}`,
         }]
       : []
-    return { state: { ticks: prev.ticks + 1 }, taggedEvents, channels: rooms }
+    return { state: { ticks: prev.ticks + 1 }, messages, channels: rooms }
   }
 }
 
@@ -121,12 +121,12 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
 
     const result = await plugin.runTick(config, null)
     expect((result.state as StubPluginState).ticks).toBe(1)
-    expect(result.taggedEvents).toHaveLength(1)
-    expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#demo-alpha', '#demo-beta'])
-    expect(result.taggedEvents[0]?.payload).toEqual({ kind: 'oneline', text: '[stub_pulse] tick=1' })
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0]?.channels.sort()).toEqual(['#demo-alpha', '#demo-beta'])
+    expect(result.messages[0]?.text).toBe('[stub_pulse] tick=1')
 
     // Real dispatch path: prove the orchestrator pipeline doesn't care about
-    // the stub's event kind — it just writes channels × payload.
+    // the stub's message content — it just writes channels × text.
     const sent: Array<{ target: string; text: string }> = []
     const client = {
       say: (target: string, text: string) => {
@@ -134,7 +134,7 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
         return { chunks: 1, mode: 'single' as const }
       },
     } as unknown as RoostIrcClient
-    await dispatchTaggedEvents(result.taggedEvents, client)
+    await dispatchMessages(result.messages, client)
     expect(sent.sort((a, b) => a.target.localeCompare(b.target))).toEqual([
       { target: '#demo-alpha', text: '[stub_pulse] tick=1' },
       { target: '#demo-beta', text: '[stub_pulse] tick=1' },
@@ -148,7 +148,7 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
     const t1 = await plugin.runTick(config, null)
     const t2 = await plugin.runTick(config, t1.state)
     expect((t2.state as StubPluginState).ticks).toBe(2)
-    expect(t2.taggedEvents[0]?.payload).toEqual({ kind: 'oneline', text: '[stub_pulse] tick=2' })
+    expect(t2.messages[0]?.text).toBe('[stub_pulse] tick=2')
   })
 
   it('built-ins register via side-effect import of registry.ts', async () => {
@@ -176,7 +176,7 @@ describe('priorityOf', () => {
   const base: Plugin = {
     name: 'p',
     desiredChannels: () => [],
-    runTick: async (): Promise<PluginTickResult> => ({ state: null, taggedEvents: [], channels: [] }),
+    runTick: async (): Promise<PluginTickResult> => ({ state: null, messages: [], channels: [] }),
   }
 
   it('returns 0 when no grammarPriority and no override', () => {

@@ -87,8 +87,8 @@ describe('observeRateLimitFromInfo — warning emission', () => {
     const { events } = observeRateLimitFromInfo(info(100, 60 * 60_000), seed, statics(), noop, '#proj', 'GH', now)
     expect(events).toHaveLength(1)
     expect(events[0]?.channels).toEqual(['#proj'])
-    expect((events[0]?.payload as { text: string }).text).toMatch(/rate limit warning/)
-    expect((events[0]?.payload as { text: string }).text).toContain('GH')
+    expect(events[0]?.text).toMatch(/rate limit warning/)
+    expect(events[0]?.text).toContain('GH')
   })
 
   it('uses tag in log line', () => {

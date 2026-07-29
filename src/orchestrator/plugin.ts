@@ -10,30 +10,20 @@ export interface PluginConfig {
   plugins?: Record<string, unknown>
 }
 
-// A `multiline_batch` carries several comment blocks destined for the same
-// channel set in one tick. The dispatcher renders it as a single IRC message
-// so a receiving agent sees every comment before replying to any of them.
-// Built by `batchConsecutiveMultiline` from a run of `multiline` events that
-// share a channel set — no plugin emits it directly.
-export interface MultilineBlock {
-  header: string
-  body: string
-  url: string
-}
-
-export type TaggedEventPayload =
-  | { kind: 'oneline'; text: string }
-  | { kind: 'multiline'; header: string; body: string; url: string }
-  | { kind: 'multiline_batch'; blocks: MultilineBlock[] }
-
-export interface TaggedEvent {
+// A uniform IRC message: fully rendered text plus the channel set it's
+// destined for. Plugins emit these per tick; the dispatcher batches same-
+// channel texts into one message per channel per tick so a receiving agent
+// sees everything destined for that channel before replying to any of it.
+// No payload-kind distinction — rendering lives upstream in the plugin, the
+// dispatcher only groups by channel and posts.
+export interface IrcMessage {
   channels: string[]
-  payload: TaggedEventPayload
+  text: string
 }
 
 export interface PluginTickResult {
   state: unknown
-  taggedEvents: TaggedEvent[]
+  messages: IrcMessage[]
   // Channels the plugin wants joined post-tick, including dynamic ones only
   // learnable after scraping (PR linked-issues). Excludes the project channel
   // — orchestrator unions that in. Boot path uses desiredChannels(config).
