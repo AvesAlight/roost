@@ -48,7 +48,7 @@ roost spawn <project>-apm --agent associate-pm --cache-ttl 1h --steer-compact --
   --ask-irc '#<project>-leads' --ask-target <project>-pm
 ```
 
-Pass the same `<human>` / `<gh-login>` values you parsed from your own initial prompt. If the prompt is missing them the APM will ask in `#<project>-leads` as a one-shot rescue. (`roost spawn` errors out if you pass `--model` alongside `--agent`; see `roost spawn --help`.) On boot the APM starts the dispatcher daemon if it isn't already running, then posts a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
+Pass the same `<human>` / `<gh-login>` values you parsed from your own initial prompt. If the prompt is missing them the APM will ask in `#<project>-leads` as a one-shot rescue. On boot the APM starts the dispatcher daemon if it isn't already running, then posts a hello in `#<project>-leads`. If the hello doesn't arrive within a minute, check the APM session.
 
 See `roost spawn --help` ("Agent class guidance") for the role→flag heuristic — what to pass with `--cache-ttl`, `--steer-compact`, and `--ask-irc` for each agent class.
 

@@ -48,7 +48,11 @@ roost --version | -v
 Defaults:
 
 - channels: `#roost`
-- model: `opus`
+- model: `opus`, unless `--agent` is set with no `--model`, in which case
+  the agent's frontmatter model applies. Combine `--model` with `--agent`
+  to run that agent under a different model than its frontmatter default
+  — everything else about the agent (tools, permission mode, system
+  prompt) still comes from the frontmatter.
 - permission mode: with `--agent`, the wrapper passes nothing and claude
   code reads `permissionMode:` natively from the agent frontmatter; with
   `--model` (or the default opus), the wrapper defaults to `auto` for fable,

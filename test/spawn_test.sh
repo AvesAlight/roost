@@ -246,6 +246,26 @@ else
 fi
 teardown
 
+# -- Test 12b: --agent + --model coexist ---------------------------------
+# --model overrides the agent's frontmatter model for this spawn; the
+# frontmatter still owns permission mode (echo shows (claude default)).
+
+setup
+mkdir -p "$TDIR/.claude/agents"
+printf -- '---\nname: comboagent\ndescription: x\nmodel: opus\npermissionMode: auto\n---\nbody\n' > "$TDIR/.claude/agents/comboagent.md"
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --agent comboagent --model sonnet --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if echo "$out" | grep -q "model: sonnet" \
+    && echo "$out" | grep -qF "permission-mode: (claude default)" \
+    && echo "$inner_cmd" | grep -qF -- '--model sonnet' \
+    && echo "$inner_cmd" | grep -qF -- '--agent comboagent'; then
+  ok "--agent + --model: both flags passed through, frontmatter still owns permission mode"
+else
+  fail "--agent + --model: both flags passed through, frontmatter still owns permission mode" "out=$out inner_cmd=$inner_cmd"
+fi
+teardown
+
 # -- Test 13: no --cache-ttl → banner shows (claude default) -----------------
 # Wrapper has no default; if the operator doesn't pass --cache-ttl, neither
 # env var is injected and claude-code's native cache behavior applies.

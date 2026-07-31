@@ -154,7 +154,14 @@ mixing inline \`--append-system-prompt\` with the file form.
 Options:
   -c, --channels CHANS       Comma-separated channels to auto-join.
                              Default: #roost
-  -m, --model MODEL          Override --model. Default: opus.
+  -m, --model MODEL          Override --model. Default: opus, unless
+                             --agent is set with no --model, in which case
+                             the agent's frontmatter model applies. Combine
+                             with --agent to run that agent under this
+                             model instead of its frontmatter default —
+                             everything else about the agent (tools,
+                             permission mode, system prompt) still comes
+                             from the frontmatter.
                              Use bare aliases (opus, sonnet, haiku) — full
                              ids (claude-opus-4-5 etc.) pin the session to
                              that exact dated variant instead of tracking
@@ -218,12 +225,11 @@ Options:
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --agent NAME               Run this session as a named agent. Forwards
                              --agent to claude, which loads the matching
-                             definition from agents/<NAME>.md (locks model
-                             and tool allowlist via the agent frontmatter).
-                             Mutually exclusive with --model: if both are
-                             passed spawn errors out, since the agent's
-                             frontmatter wins on model and the --model
-                             value would be silently ignored.
+                             definition from agents/<NAME>.md (locks tool
+                             allowlist and permission mode via the agent
+                             frontmatter). Model defaults to the
+                             frontmatter's model; pass --model alongside
+                             --agent to override it for this spawn only.
   --mcp-config PATH          Explicit mcp-config path. Not needed when the
                              roost plugin is installed (MCP auto-loads).
   -p, --prompt-file PATH     Paste contents into the TUI input + submit
@@ -668,7 +674,6 @@ cmd_spawn() {
   local nick=""
   local channels="#roost"
   local model=""
-  local model_explicit=0
   local session_name=""
   local agent=""
   local mcp_config=""
@@ -696,7 +701,7 @@ cmd_spawn() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -c|--channels)    channels="$2"; shift 2 ;;
-      -m|--model)       model="$2"; model_explicit=1; shift 2 ;;
+      -m|--model)       model="$2"; shift 2 ;;
       -s|--session)     session_name="$2"; shift 2 ;;
       --agent)          agent="$2"; shift 2 ;;
       --mcp-config)     mcp_config="$2"; shift 2 ;;
@@ -723,10 +728,6 @@ cmd_spawn() {
     esac
   done
   [ -z "${session_name}" ] && session_name="${SESSION_PREFIX}${nick}"
-  if [ "${model_explicit}" -eq 1 ] && [ -n "${agent}" ]; then
-    echo "error: --model and --agent are mutually exclusive — the agent's frontmatter wins on model, so --model would be silently ignored" >&2
-    exit 1
-  fi
   if [ -z "${model}" ] && [ -z "${agent}" ]; then
     model="opus"
   fi
