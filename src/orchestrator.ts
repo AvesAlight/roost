@@ -20,7 +20,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
-import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type IrcMessage } from './orchestrator/plugin.js'
+import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
@@ -31,7 +31,7 @@ import { RoostIrcClientImpl } from './irc-client-impl.js'
 const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
 
 interface TickResult {
-  messages: IrcMessage[]
+  messages: PluginMessage[]
   channels: string[]
 }
 
@@ -115,7 +115,7 @@ async function runOneTick(
     plugins: {},
   }
 
-  const allMessages: IrcMessage[] = []
+  const allMessages: PluginMessage[] = []
   const allChannels = new Set<string>()
 
   // Plugins share GH rate limits but no in-process state — parallel-safe.

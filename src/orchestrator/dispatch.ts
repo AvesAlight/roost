@@ -1,6 +1,6 @@
 import type { RoostIrcClient } from '../irc-client.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
-import type { IrcMessage } from './plugin.js'
+import type { PluginMessage } from './plugin.js'
 
 export async function waitForReady(
   client: RoostIrcClient,
@@ -53,7 +53,7 @@ export async function connectAndWait(
 //
 // Empty-text messages are skipped (a blank line is never a useful IRC post).
 // Channels are deduped per message via a Set so `[#a, #a]` posts once.
-export function groupMessagesByChannel(messages: IrcMessage[]): Map<string, string[]> {
+export function groupMessagesByChannel(messages: PluginMessage[]): Map<string, string[]> {
   const byChannel = new Map<string, string[]>()
   for (const msg of messages) {
     if (!msg.text) continue
@@ -78,7 +78,7 @@ export function groupMessagesByChannel(messages: IrcMessage[]): Map<string, stri
 // (blank-line separated) into a single IRC post so a receiving agent sees the
 // full tick's worth of context before replying.
 export async function dispatchMessages(
-  messages: IrcMessage[],
+  messages: PluginMessage[],
   client: RoostIrcClient
 ): Promise<void> {
   const failures: string[] = []

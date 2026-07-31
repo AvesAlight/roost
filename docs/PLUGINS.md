@@ -15,7 +15,7 @@ import {
   type Plugin,
   type PluginConfig,
   type PluginTickResult,
-  type IrcMessage,
+  type PluginMessage,
   type PluginFactory,
   type PluginLogger,
   type Command,
@@ -35,7 +35,7 @@ import {
 | `grammarPriority?` | Optional. Higher = parsed first when two plugins overlap. Default 0. Operator override: `config.plugin_priorities[name]` replaces this outright. |
 | `handleCommand?(merged, local, cmd)` | Optional. Receives `list`/`help` broadcasts + any command this plugin's own `parseCommand` claimed. Returns a reply or `null`. Return `"error: ..."` on failure. Don't throw. |
 
-The dispatcher writes each `IrcMessage`'s text to every channel in `message.channels`, batching same-channel texts into one IRC message per channel per tick. Your `runTick` returns fully-rendered text — the dispatcher does no formatting, only grouping.
+The dispatcher writes each `PluginMessage`'s text to every channel in `message.channels`, batching same-channel texts into one IRC message per channel per tick. Your `runTick` returns fully-rendered text — the dispatcher does no formatting, only grouping.
 
 ## DM grammar
 
@@ -148,7 +148,7 @@ From a fresh repo:
    }
    ```
 
-4. **Dry-run the dispatcher.** Prints `IrcMessage` JSON to stdout. No IRC, no state written.
+4. **Dry-run the dispatcher.** Prints `PluginMessage` JSON to stdout. No IRC, no state written.
 
    ```sh
    "$(roost root)/bin/dispatcher" --dry-run --config-dir .orchestrator
@@ -202,4 +202,4 @@ Both expose only `roost/plugin`. Deep imports may change.
 
 ## Versioning
 
-No compile-time API check yet. The seam types are `Plugin`, `BasePlugin`, `IrcMessage`, and `PluginTickResult`. Plugins emit fully-rendered `IrcMessage { channels, text }` values; the dispatcher groups by channel and posts — no payload-kind union, no `oneline`/`multiline` distinction. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.
+No compile-time API check yet. The seam types are `Plugin`, `BasePlugin`, `PluginMessage`, and `PluginTickResult`. Plugins emit fully-rendered `PluginMessage { channels, text }` values; the dispatcher groups by channel and posts — no payload-kind union, no `oneline`/`multiline` distinction. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.

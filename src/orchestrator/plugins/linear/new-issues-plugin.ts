@@ -12,7 +12,7 @@
 // remove-then-readd doesn't replay.
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
-import type { ParseResult, PluginTickResult, IrcMessage } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
@@ -176,7 +176,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       ? prevState as LinearNewIssuesPluginState
       : null
 
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
     const nextTeams: Record<string, string[]> = prev ? { ...prev.teams } : {}
 
     for (const entry of watchEntries) {
@@ -238,7 +238,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
     return { state, messages, channels: [] }
   }
 
-  private observeLinearRateLimit(projectChannel: string): IrcMessage[] {
+  private observeLinearRateLimit(projectChannel: string): PluginMessage[] {
     const info = this.client.getLastRateLimit()
     if (!info) return []
     const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearNewIssuesPlugin._statics, this.log, projectChannel, 'Linear')

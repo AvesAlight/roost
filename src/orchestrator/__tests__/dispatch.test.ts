@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'bun:test'
 import { groupMessagesByChannel, dispatchMessages } from '../dispatch.js'
-import type { IrcMessage } from '../plugin.js'
+import type { PluginMessage } from '../plugin.js'
 import type { RoostIrcClient } from '../../irc-client.js'
 
-function msg(channels: string[], text: string): IrcMessage {
+function msg(channels: string[], text: string): PluginMessage {
   return { channels, text }
 }
 

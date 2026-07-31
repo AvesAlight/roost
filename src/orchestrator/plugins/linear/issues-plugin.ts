@@ -7,7 +7,7 @@ import {
   type ParseResult,
   type PluginLogger,
   type PluginTickResult,
-  type IrcMessage,
+  type PluginMessage,
 } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerLinearId, type PerLinearIdCommand } from '../grammar.js'
@@ -177,7 +177,7 @@ export class LinearIssuesPlugin extends BasePlugin {
     }))
 
     const curState: LinearIssuePluginState = { issues: {} }
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
     for (const { key, next, events, entryChannels } of scraped) {
       curState.issues[key] = next
       for (const event of events) {
@@ -214,7 +214,7 @@ export class LinearIssuesPlugin extends BasePlugin {
   // End-of-tick threshold check — reads `getLastRateLimit()` from the client
   // (already populated by each successful call). Only called after a
   // watched-entry tick, so `getClient()` is guaranteed to have been seeded.
-  protected observeRateLimit(projectChannel: string): IrcMessage[] {
+  protected observeRateLimit(projectChannel: string): PluginMessage[] {
     const info = this.getClient().getLastRateLimit()
     if (!info) return []
     const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearIssuesPlugin._statics, this.log, projectChannel, 'Linear')

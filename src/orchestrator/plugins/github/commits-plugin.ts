@@ -15,7 +15,7 @@
 
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
-import type { ParseResult, PluginTickResult, IrcMessage } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal, shortSha } from '../_shared.js'
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
@@ -173,7 +173,7 @@ export class GitHubCommitsPlugin extends GhPluginBase {
 
     // Carry forward prior watermarks; mutate only keys touched this tick.
     const state: CommitsPluginState = { commits: { ...(prev?.commits ?? {}) } }
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
 
     if (watched.length === 0) {
       return { state, messages, channels: [] }

@@ -4,7 +4,7 @@ import {
   priorityOf,
   type Plugin,
   type PluginTickResult,
-  type IrcMessage,
+  type PluginMessage,
   registerPlugin,
   unregisterPlugin,
   getPluginFactory,
@@ -86,7 +86,7 @@ class StubPlugin extends BasePlugin {
     const slice = this.pluginConfig<StubPluginConfig>(config) ?? {}
     const prev = (prevState as StubPluginState | null) ?? { ticks: 0 }
     const rooms = slice.rooms ?? []
-    const messages: IrcMessage[] = rooms.length
+    const messages: PluginMessage[] = rooms.length
       ? [{
           channels: this.resolveChannels(rooms, []),
           // Plugin-owned message text, never seen at the orchestrator level.

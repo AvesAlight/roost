@@ -15,15 +15,17 @@ export interface PluginConfig {
 // channel texts into one message per channel per tick so a receiving agent
 // sees everything destined for that channel before replying to any of it.
 // No payload-kind distinction — rendering lives upstream in the plugin, the
-// dispatcher only groups by channel and posts.
-export interface IrcMessage {
+// dispatcher only groups by channel and posts. An empty `channels` array has
+// nowhere to go and is silently dropped by the dispatcher; an empty `text`
+// is skipped so no blank-line post goes out.
+export interface PluginMessage {
   channels: string[]
   text: string
 }
 
 export interface PluginTickResult {
   state: unknown
-  messages: IrcMessage[]
+  messages: PluginMessage[]
   // Channels the plugin wants joined post-tick, including dynamic ones only
   // learnable after scraping (PR linked-issues). Excludes the project channel
   // — orchestrator unions that in. Boot path uses desiredChannels(config).

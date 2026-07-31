@@ -2,7 +2,7 @@ import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig, WatchedEntry } from '../../config.js'
 import { assertEntryRepoMode, resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel } from '../../naming.js'
-import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type IrcMessage } from '../../plugin.js'
+import { BasePlugin, defaultPluginLogger, type ParseResult, type PluginLogger, type PluginTickResult, type PluginMessage } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerN, type PerNCommand } from '../grammar.js'
 import { GhClient, GhError, describeReadFailure, fetchRateLimit, isRateLimitError, rateLimitKind, type RateLimitSnapshot } from './github-api.js'
@@ -15,7 +15,7 @@ import { RateLimitBreaker, READ_FAILURE_THRESHOLD, SECONDARY_BACKOFF_SCHEDULE_MS
 export type ReadEntryResult<T> =
   | { ok: true; value: T }
   | { ok: false; rateLimited: true; kind: RateLimitKind; retryAfterMs?: number }
-  | { ok: false; rateLimited: false; events: IrcMessage[] }
+  | { ok: false; rateLimited: false; events: PluginMessage[] }
 
 // Shared base for plugins needing GhClient. GhBase extends this for watch-list
 // scaffolding; non-watching plugins (e.g. GitHubNewIssuesPlugin) extend directly.
@@ -98,7 +98,7 @@ export abstract class GhPluginBase extends BasePlugin {
     const schedule = kind === 'secondary' ? SECONDARY_BACKOFF_SCHEDULE_MS : BACKOFF_SCHEDULE_MS
     const exactMs = kind === 'secondary' ? retryAfterMs : undefined
     const window = GhPluginBase._breaker.trip(now, schedule, exactMs)
-    const messages: IrcMessage[] = window != null
+    const messages: PluginMessage[] = window != null
       ? [{ channels: [projectChannel], text: formatBackoffNotice(window, kind) }]
       : []
     return { state: prevState, messages, channels: this.skipChannels(config) }
@@ -201,7 +201,7 @@ export abstract class GhPluginBase extends BasePlugin {
     reason: string,
     logDetail: string,
     now: number,
-  ): IrcMessage[] {
+  ): PluginMessage[] {
     const fail = this._readFailures.get(key) ?? { consecutive: 0, warnedAt: 0, lastReadAt: 0 }
     fail.consecutive += 1
     fail.lastReadAt = now
@@ -224,7 +224,7 @@ export abstract class GhPluginBase extends BasePlugin {
   // the feed dark, without the N-entry flood a per-entry path would produce: the
   // note repeats at most once per cooldown, and a clean batch clears the gate
   // (clearBatchFailure) so the next outage warns immediately.
-  protected recordBatchFailure(projectChannel: string, entryCount: number, err: GhError, now: number): IrcMessage[] {
+  protected recordBatchFailure(projectChannel: string, entryCount: number, err: GhError, now: number): PluginMessage[] {
     this.log(`[${this.name}] batch read failed (${entryCount} entries): ${err.message}\n`)
     const warnedRecently = this._batchWarnedAt !== 0 && now - this._batchWarnedAt < WARN_COOLDOWN_MS
     if (warnedRecently) return []
@@ -245,7 +245,7 @@ export abstract class GhPluginBase extends BasePlugin {
   protected async observeRateLimit(
     projectChannel: string,
     _fetch: (log: PluginLogger) => Promise<RateLimitSnapshot | null> = fetchRateLimit,
-  ): Promise<IrcMessage[]> {
+  ): Promise<PluginMessage[]> {
     const snapshot = await _fetch(this.log)
     if (!snapshot) return []
     const core = observeRateLimitFromInfo(snapshot.core, this._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')

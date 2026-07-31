@@ -1,7 +1,7 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, issueChannel, resolveProjectChannel } from '../../naming.js'
-import type { PluginTickResult, IrcMessage } from '../../plugin.js'
+import type { PluginTickResult, PluginMessage } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { snapshotIssueFromNode } from './scraper.js'
 import { GhError, isRateLimitError, rateLimitKind, type BatchOutcome, type GhIssueNode } from './github-api.js'
@@ -91,7 +91,7 @@ export class GitHubIssuesPlugin extends GhBase {
     this.clearBatchFailure()
 
     const curState: IssuePluginState = { issues: {} }
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
     for (const { key, repo, number, entryChannels, recoveryCmd, prevIssue } of resolved) {
       const outcome = batch.get(key)
       // No outcome = throttled this tick; outcome.ok false = per-alias failure.

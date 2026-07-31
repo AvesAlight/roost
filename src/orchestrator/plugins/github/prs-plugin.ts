@@ -1,7 +1,7 @@
 import type { OrchestratorConfig } from '../../config.js'
 import { resolveRepoEntry } from '../../config.js'
 import { channelSlug, defaultProject, isMultiRepo, issueChannel, linearIssueChannel, resolveProjectChannel } from '../../naming.js'
-import type { PluginLogger, PluginTickResult, IrcMessage } from '../../plugin.js'
+import type { PluginLogger, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { GhBase } from './base.js'
 import { snapshotPrFromNode } from './scraper.js'
 import { GhError, isRateLimitError, rateLimitKind, type BatchOutcome, type GhPrNode } from './github-api.js'
@@ -257,7 +257,7 @@ export class GitHubPrsPlugin extends GhBase {
       : new Map()
 
     const curState: PrPluginState = { prs: {} }
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
     // Static (config) + dynamic (linked-issues from scrape). Each linked-issue
     // channel is slugged against its own repo (closures can cross repos).
     const channels = new Set<string>(this.desiredChannels(config))

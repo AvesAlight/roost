@@ -10,7 +10,7 @@
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
-import type { ParseResult, PluginTickResult, IrcMessage } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
@@ -147,7 +147,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       ? prevState as NewIssuesPluginState
       : null
 
-    const messages: IrcMessage[] = []
+    const messages: PluginMessage[] = []
     const nextRepos: Record<string, number[]> = prev ? { ...prev.repos } : {}
 
     for (const entry of watchEntries) {
