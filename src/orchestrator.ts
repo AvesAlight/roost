@@ -20,7 +20,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
-import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage } from './orchestrator/plugin.js'
+import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage, type PluginTickResult } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
@@ -102,11 +102,12 @@ function requireIrcConfig(config: OrchestratorConfig, mode: string): { nick: str
   return { nick, server: ircCfg.server ?? '127.0.0.1', port: ircCfg.port ?? 6667 }
 }
 
-async function runOneTick(
+export async function runOneTick(
   stateDir: string,
   config: OrchestratorConfig,
   plugins: Plugin[],
-  opts: { seed: boolean; dryRun: boolean }
+  opts: { seed: boolean; dryRun: boolean },
+  log: PluginLogger = defaultPluginLogger,
 ): Promise<TickResult> {
   const prev = opts.seed ? null : await loadState(stateDir)
   const curState: OrchestratorState = {
@@ -118,12 +119,25 @@ async function runOneTick(
   const allMessages: PluginMessage[] = []
   const allChannels = new Set<string>()
 
-  // Plugins share GH rate limits but no in-process state — parallel-safe.
+  // Plugins share GH rate limits but no in-process state — parallel-safe, so
+  // they still run concurrently. Each runTick is isolated so one plugin
+  // crashing can't reject the whole batch and drop every plugin's messages
+  // for the tick: a thrown plugin preserves its prevState, emits no messages,
+  // and is logged; siblings still dispatch. Mirrors bootChannels' per-plugin
+  // try/catch. A crashed plugin's config-static channels are still reconciled
+  // via desiredChannels (in bootChannels); only its scraped-dynamic channels
+  // for this tick are lost, which is moot since it couldn't scrape.
   const results = await Promise.all(
-    plugins.map(async plugin => ({
-      plugin,
-      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name)),
-    }))
+    plugins.map(async (plugin): Promise<{ plugin: Plugin; result: PluginTickResult }> => {
+      const prevState = getPluginState<unknown>(prev, plugin.name)
+      try {
+        return { plugin, result: await plugin.runTick(config, prevState) }
+      } catch (e) {
+        const detail = e instanceof Error ? e.stack ?? e.message : String(e)
+        log(`orchestrator: plugin ${plugin.name} tick crashed: ${detail}\n`)
+        return { plugin, result: { state: prevState, messages: [], channels: [] } }
+      }
+    })
   )
   for (const { plugin, result } of results) {
     curState.plugins[plugin.name] = result.state
@@ -217,7 +231,7 @@ async function runDaemon(stateDir: string): Promise<void> {
 
     let result: TickResult
     try {
-      result = await runOneTick(stateDir, config, plugins, tickOpts)
+      result = await runOneTick(stateDir, config, plugins, tickOpts, log)
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
@@ -277,7 +291,7 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const client = newIrcClient(nick, channels)
   await connectAndWait(client, { host: server, port, nick }, channels)
   try {
-    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false })
+    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false }, defaultPluginLogger)
     if (result.messages.length) {
       await dispatchMessages(result.messages, client)
       process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${result.messages.length} message(s)\n`)
@@ -317,7 +331,7 @@ async function main(): Promise<void> {
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,
-    })
+    }, defaultPluginLogger)
     console.log(JSON.stringify(result.messages, null, 2))
   } catch (e) {
     const tb = e instanceof Error ? e.stack ?? String(e) : String(e)
