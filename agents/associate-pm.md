@@ -106,7 +106,7 @@ On confirmation, for each issue N:
      --cwd <worktree-path> \
      --prompt 'issue=<N> milestone=<milestone> human=<human-nick> gh-login=<gh-login>'
    ```
-   (No `--model`/`--effort` on the reviewer spawn — `--model` is incompatible with `--agent`, and `reviewer.md`'s frontmatter already pins model + effort. The worker spawn keeps them because it doesn't use `--agent`; its model/effort are the PM's per-issue call. The reviewer shares the worker's worktree via `--cwd` — it reads the branch there but never edits.) If the PM named a cross-issue contract for this issue, append it to the reviewer's prompt after the required tokens (e.g. `... gh-login=<gh-login> consumes-contract-from=#<M>`) so it reviews with that lens.
+   (No `--model`/`--effort` on the reviewer spawn — `reviewer.md`'s frontmatter already pins model + effort, so there's nothing to override for the standard case. The worker spawn keeps them because it doesn't use `--agent`; its model/effort are the PM's per-issue call. The reviewer shares the worker's worktree via `--cwd` — it reads the branch there but never edits.) If the PM named a cross-issue contract for this issue, append it to the reviewer's prompt after the required tokens (e.g. `... gh-login=<gh-login> consumes-contract-from=#<M>`) so it reviews with that lens.
 4. Join `<issue-channel>` yourself.
 5. Snapshot PM + APM cumulative token usage so the cleanup post-mortem can diff per-issue:
    ```

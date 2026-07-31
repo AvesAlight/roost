@@ -118,10 +118,13 @@ roost status
 roost --version
 ```
 
-`spawn` accepts `-c|--channels`, `-m|--model`, `-s|--session`,
+`spawn` accepts `-c|--channels`, `-m|--model`, `--agent`, `-s|--session`,
 `--mcp-config`, `-p|--prompt-file`, `--cwd`, `--ollama-model`, and `--`
 (everything after forwards to claude verbatim). Default channel is
-`#roost`; default model is `opus` (Opus 4.8). Fable, opus, and sonnet
+`#roost`; default model is `opus` (Opus 4.8), unless `--agent` is set
+with no `--model`, in which case the agent's frontmatter model applies.
+Combine `--model` with `--agent` to run that agent under a different
+model than its frontmatter default. Fable, opus, and sonnet
 default to `--permission-mode auto`; everything else (haiku, or any
 unrecognized model) defaults to `acceptEdits`.
 
