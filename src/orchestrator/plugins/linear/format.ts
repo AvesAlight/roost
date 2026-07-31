@@ -9,8 +9,7 @@ import type {
 } from './diff.js'
 
 // linear_comment renders as three lines (header + body + url); the rest render
-// as a single line. The dispatcher no longer distinguishes — this branch just
-// picks the line shape.
+// as a single line.
 const COMMENT_KINDS: ReadonlySet<string> = new Set([
   'linear_comment',
 ])
@@ -74,7 +73,7 @@ export function formatLinearEvent(event: LinearEvent): string {
 
 // Render one Linear event as the text of an IRC message. linear_comment becomes
 // three lines (header + body + url); everything else is a single line from
-// formatLinearEvent. Byte-identical to the former multiline payload render.
+// formatLinearEvent.
 export function formatLinearMessage(event: LinearEvent): string {
   if (COMMENT_KINDS.has(event.kind)) {
     const ev = event as LinearCommentEvent

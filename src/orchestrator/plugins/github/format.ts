@@ -2,8 +2,7 @@ import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent,
 import { shortSha } from '../_shared.js'
 
 // Comment-style kinds render as three lines (header + body + url); the rest
-// render as a single line via formatEvent. The dispatcher no longer
-// distinguishes — this branch just picks the line shape.
+// render as a single line via formatEvent.
 const COMMENT_KINDS: ReadonlySet<string> = new Set([
   'pr_review_comment',
   'pr_conversation_comment',
@@ -133,8 +132,7 @@ export function formatEvent(event: OrchestratorEvent): string {
 
 // Render one event as the text of an IRC message. Comment-style kinds become
 // three lines (header + body + url); everything else is a single line from
-// formatEvent. The header/body/url line shape is byte-identical to the former
-// multiline payload render.
+// formatEvent.
 export function formatMessage(event: OrchestratorEvent): string {
   if (COMMENT_KINDS.has(event.kind)) {
     const ev = event as CommentEvent & { review_url?: string }
