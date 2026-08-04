@@ -1,8 +1,9 @@
 import type { OrchestratorEvent, CommentEvent, ReviewEvent, LabelEvent, CiEvent, StateChangeEvent, SeedEvent } from './diff.js'
-import type { TaggedEventPayload } from '../../plugin.js'
 import { shortSha } from '../_shared.js'
 
-const MULTILINE_COMMENT_KINDS: ReadonlySet<string> = new Set([
+// Comment-style kinds render as three lines (header + body + url); the rest
+// render as a single line via formatEvent.
+const COMMENT_KINDS: ReadonlySet<string> = new Set([
   'pr_review_comment',
   'pr_conversation_comment',
   'issue_comment',
@@ -129,16 +130,17 @@ export function formatEvent(event: OrchestratorEvent): string {
   return `[${kind}] ${JSON.stringify(event).slice(0, 280)}`
 }
 
-// Comment-style kinds → multiline (header + body + url); rest → oneline.
-export function formatPayload(event: OrchestratorEvent): TaggedEventPayload {
-  if (MULTILINE_COMMENT_KINDS.has(event.kind)) {
+// Render one event as the text of an IRC message. Comment-style kinds become
+// three lines (header + body + url); everything else is a single line from
+// formatEvent.
+export function formatMessage(event: OrchestratorEvent): string {
+  if (COMMENT_KINDS.has(event.kind)) {
     const ev = event as CommentEvent & { review_url?: string }
-    return {
-      kind: 'multiline',
-      header: formatCommentHeader(event),
-      body: ev.body ?? '',
-      url: ev.comment_url ?? ev.review_url ?? event.url ?? '',
-    }
+    return [
+      formatCommentHeader(event),
+      ev.body ?? '',
+      ev.comment_url ?? ev.review_url ?? event.url ?? '',
+    ].join('\n')
   }
-  return { kind: 'oneline', text: formatEvent(event) }
+  return formatEvent(event)
 }

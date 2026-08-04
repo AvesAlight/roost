@@ -12,7 +12,7 @@
 // remove-then-readd doesn't replay.
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
-import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
@@ -169,14 +169,14 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<LinearNewIssuesPluginConfig>(config) ?? {}
     const watchEntries = slice.watched ?? []
-    if (!watchEntries.length) return { state: prevState ?? { teams: {} }, taggedEvents: [], channels: [] }
+    if (!watchEntries.length) return { state: prevState ?? { teams: {} }, messages: [], channels: [] }
 
     // Re-seed cleanly from older shapes (no `teams` key).
     const prev = (prevState != null && typeof prevState === 'object' && 'teams' in prevState)
       ? prevState as LinearNewIssuesPluginState
       : null
 
-    const taggedEvents: TaggedEvent[] = []
+    const messages: PluginMessage[] = []
     const nextTeams: Record<string, string[]> = prev ? { ...prev.teams } : {}
 
     for (const entry of watchEntries) {
@@ -204,9 +204,9 @@ export class LinearNewIssuesPlugin extends BasePlugin {
           const reason = result.kind === 'team-not-found'
             ? `team ${team} not found`
             : `project "${linearProject}" not found in team ${team}`
-          taggedEvents.push({
+          messages.push({
             channels: [...announcementChannels],
-            payload: { kind: 'oneline', text: `[linear-new-issues] ${reason} — renamed or deleted? Unwatch with: \`${unwatchCmd}\`` },
+            text: `[linear-new-issues] ${reason} — renamed or deleted? Unwatch with: \`${unwatchCmd}\``,
           })
         }
         continue
@@ -222,9 +222,9 @@ export class LinearNewIssuesPlugin extends BasePlugin {
           .filter(i => !seen.has(i.identifier))
           .sort((a, b) => linearIdNum(a.identifier) - linearIdNum(b.identifier))
         for (const issue of newIssues) {
-          taggedEvents.push({
+          messages.push({
             channels: [...announcementChannels],
-            payload: { kind: 'oneline', text: formatNewLinearIssue(issue) },
+            text: formatNewLinearIssue(issue),
           })
         }
       }
@@ -233,12 +233,12 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       nextTeams[key] = [...seen].sort((a, b) => linearIdNum(a) - linearIdNum(b))
     }
 
-    taggedEvents.push(...this.observeLinearRateLimit(resolveProjectChannel(config)))
+    messages.push(...this.observeLinearRateLimit(resolveProjectChannel(config)))
     const state: LinearNewIssuesPluginState = { teams: nextTeams }
-    return { state, taggedEvents, channels: [] }
+    return { state, messages, channels: [] }
   }
 
-  private observeLinearRateLimit(projectChannel: string): TaggedEvent[] {
+  private observeLinearRateLimit(projectChannel: string): PluginMessage[] {
     const info = this.client.getLastRateLimit()
     if (!info) return []
     const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearNewIssuesPlugin._statics, this.log, projectChannel, 'Linear')

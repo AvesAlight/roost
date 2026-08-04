@@ -7,14 +7,14 @@ import {
   type ParseResult,
   type PluginLogger,
   type PluginTickResult,
-  type TaggedEvent,
+  type PluginMessage,
 } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerLinearId, type PerLinearIdCommand } from '../grammar.js'
 import { observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
 import { LinearClient } from './linear-api.js'
 import { LinearScraper } from './scraper.js'
-import { formatLinearPayload } from './format.js'
+import { formatLinearMessage } from './format.js'
 import { isTombstone, type LinearIssuePluginState, type LinearIssueState, type LinearWatchedEntry } from './types.js'
 
 interface LinearIssuesPluginConfig {
@@ -162,7 +162,7 @@ export class LinearIssuesPlugin extends BasePlugin {
 
     if (!watched.length) {
       // No watches → no client needed → no rate-limit telemetry either.
-      return { state: { issues: {} }, taggedEvents: [], channels: [] }
+      return { state: { issues: {} }, messages: [], channels: [] }
     }
 
     const client = this.getClient()
@@ -177,47 +177,44 @@ export class LinearIssuesPlugin extends BasePlugin {
     }))
 
     const curState: LinearIssuePluginState = { issues: {} }
-    const taggedEvents: TaggedEvent[] = []
+    const messages: PluginMessage[] = []
     for (const { key, next, events, entryChannels } of scraped) {
       curState.issues[key] = next
       for (const event of events) {
         if (event.kind === 'linear_issue_added_to_watch') {
           const issueChan = linearIssueChannel(project, key)
           const routingChannels = [issueChan, ...entryChannels].filter(ch => ch !== projectChannel)
-          taggedEvents.push({
+          messages.push({
             channels: [projectChannel],
-            payload: {
-              kind: 'oneline',
-              text: `now watching linear issue ${key} — routing events to ${routingChannels.join(', ')}`,
-            },
+            text: `now watching linear issue ${key} — routing events to ${routingChannels.join(', ')}`,
           })
           continue
         }
         if (event.kind === 'linear_issue_disappeared') {
           // Project-channel only — the per-issue channel will be orphaned and
           // the operator needs the heads-up where they read leads traffic.
-          taggedEvents.push({
+          messages.push({
             channels: [projectChannel],
-            payload: formatLinearPayload(event),
+            text: formatLinearMessage(event),
           })
           continue
         }
         const issueChan = linearIssueChannel(project, key)
-        taggedEvents.push({
+        messages.push({
           channels: this.resolveChannels([issueChan], entryChannels),
-          payload: formatLinearPayload(event),
+          text: formatLinearMessage(event),
         })
       }
     }
 
-    taggedEvents.push(...this.observeRateLimit(projectChannel))
-    return { state: curState, taggedEvents, channels: this.desiredChannels(config) }
+    messages.push(...this.observeRateLimit(projectChannel))
+    return { state: curState, messages, channels: this.desiredChannels(config) }
   }
 
   // End-of-tick threshold check — reads `getLastRateLimit()` from the client
   // (already populated by each successful call). Only called after a
   // watched-entry tick, so `getClient()` is guaranteed to have been seeded.
-  protected observeRateLimit(projectChannel: string): TaggedEvent[] {
+  protected observeRateLimit(projectChannel: string): PluginMessage[] {
     const info = this.getClient().getLastRateLimit()
     if (!info) return []
     const { events, history } = observeRateLimitFromInfo(info, this._rateLimitHistory, LinearIssuesPlugin._statics, this.log, projectChannel, 'Linear')

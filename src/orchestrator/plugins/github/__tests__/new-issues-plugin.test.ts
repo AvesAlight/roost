@@ -41,7 +41,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(1), issue(2), issue(3)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), null)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as NewIssuesPluginState).repos['org/repo']).toEqual([1, 2, 3])
     } finally { spy.mockRestore() }
   })
@@ -50,15 +50,9 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(1), issue(2), issue(3)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([1]))
-      expect(result.taggedEvents).toHaveLength(2)
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'new issue org/repo#2: Issue 2 — https://github.com/org/repo/issues/2',
-      })
-      expect(result.taggedEvents[1]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'new issue org/repo#3: Issue 3 — https://github.com/org/repo/issues/3',
-      })
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toBe('new issue org/repo#2: Issue 2 — https://github.com/org/repo/issues/2')
+      expect(result.messages[1]?.text).toBe('new issue org/repo#3: Issue 3 — https://github.com/org/repo/issues/3')
     } finally { spy.mockRestore() }
   })
 
@@ -66,7 +60,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(5)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -75,7 +69,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     try {
       const config = baseConfig({ plugins: { 'github-new-issues': { watched: [{ repo: 'org/repo', channels: ['#triage', '#leads'] }] } } })
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#triage', '#leads'])
+      expect(result.messages[0]?.channels).toEqual(['#triage', '#leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -83,8 +77,8 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(1), issue(2)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      result.taggedEvents[0]?.channels.push('#tampered')
-      expect(result.taggedEvents[1]?.channels).toEqual(['#proj-leads'])
+      result.messages[0]?.channels.push('#tampered')
+      expect(result.messages[1]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -92,7 +86,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(7, { labels: [{ name: 'bug' }, { name: 'priority:high' }] })])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      const text = result.messages[0]?.text
       expect(text).toBe('new issue org/repo#7: Issue 7 [bug, priority:high] — https://github.com/org/repo/issues/7')
     } finally { spy.mockRestore() }
   })
@@ -109,7 +103,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
     const spy = stubFetch([issue(1), issue(2)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([1, 2]))
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 
@@ -119,7 +113,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       plugins: { 'github-new-issues': { watched: [] } },
     }
     const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('no-ops when watched is absent', async () => {
@@ -128,15 +122,15 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       plugins: { 'github-new-issues': {} },
     }
     const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('orders announcements by issue number', async () => {
     const spy = stubFetch([issue(20), issue(5), issue(11)])
     try {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), prevState([]))
-      const numbers = result.taggedEvents.map(e =>
-        ((e.payload as { kind: 'oneline'; text: string }).text.match(/#(\d+)/)?.[1])
+      const numbers = result.messages.map(e =>
+        (e.text.match(/#(\d+)/)?.[1])
       )
       expect(numbers).toEqual(['5', '11', '20'])
     } finally { spy.mockRestore() }
@@ -182,9 +176,9 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       }
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, { repos: { 'org/a': [], 'org/b': [] } })
       expect(calls).toEqual(['org/a', 'org/b'])
-      expect(result.taggedEvents).toHaveLength(2)
-      expect((result.taggedEvents[0]?.payload as { text: string }).text).toContain('org/a#1')
-      expect((result.taggedEvents[1]?.payload as { text: string }).text).toContain('org/b#2')
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toContain('org/a#1')
+      expect(result.messages[1]?.text).toContain('org/b#2')
     } finally { spy.mockRestore() }
   })
 
@@ -208,7 +202,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(config, { repos: { 'org/a': [] } })
       // org/a should emit (prev known, issue 1 is new)
       // org/new should NOT emit (first observation)
-      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      const texts = result.messages.map(e => e.text)
       expect(texts.every(t => t.includes('org/a'))).toBe(true)
       expect(texts.some(t => t.includes('org/new'))).toBe(false)
       // org/new numbers should be seeded into state
@@ -237,7 +231,7 @@ describe('GitHubNewIssuesPlugin.runTick', () => {
       const oldState = { seen_issue_numbers: [1, 2, 3] }
       const result = await new GitHubNewIssuesPlugin('#proj-leads').runTick(baseConfig(), oldState)
       // Re-seeded: no events emitted
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as NewIssuesPluginState).repos['org/repo']).toEqual([1, 2])
     } finally { spy.mockRestore() }
   })

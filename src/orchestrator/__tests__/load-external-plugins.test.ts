@@ -30,7 +30,7 @@ import { registerPlugin, BasePlugin } from '${join(import.meta.dir, '..', 'plugi
 class P extends BasePlugin {
   name = '${pluginName}'
   desiredChannels() { return [] }
-  async runTick() { return { state: null, taggedEvents: [], channels: [] } }
+  async runTick() { return { state: null, messages: [], channels: [] } }
 }
 registerPlugin('${pluginName}', (dc) => new P(dc))
 `

@@ -2,7 +2,7 @@
 // computeRateLimitWarning is pure. observeRateLimitFromInfo logs via its PluginLogger arg
 // and mutates the caller-supplied RateLimitStatics handle.
 
-import type { PluginLogger, TaggedEvent } from '../plugin.js'
+import type { PluginLogger, PluginMessage } from '../plugin.js'
 
 export interface RateLimitInfo {
   remaining: number
@@ -68,7 +68,7 @@ export function observeRateLimitFromInfo(
   projectChannel: string,
   tag: string,
   now = Date.now(),
-): { events: TaggedEvent[]; history: Array<{ remaining: number; ts: number }> } {
+): { events: PluginMessage[]; history: Array<{ remaining: number; ts: number }> } {
   if (!info || typeof info.remaining !== 'number' || typeof info.limit !== 'number' || typeof info.resetAt !== 'number') {
     throw new Error('observeRateLimitFromInfo: info must be a valid RateLimitInfo')
   }
@@ -94,7 +94,7 @@ export function observeRateLimitFromInfo(
 
   statics.warnedAt = now
   return {
-    events: [{ channels: [projectChannel], payload: { kind: 'oneline', text: warning } }],
+    events: [{ channels: [projectChannel], text: warning }],
     history: updatedHistory,
   }
 }

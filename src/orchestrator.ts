@@ -19,8 +19,8 @@ import {
   type OrchestratorState,
 } from './orchestrator/config.js'
 
-import { dispatchTaggedEvents, connectAndWait } from './orchestrator/dispatch.js'
-import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type TaggedEvent } from './orchestrator/plugin.js'
+import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
+import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage, type PluginTickResult } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
@@ -31,7 +31,7 @@ import { RoostIrcClientImpl } from './irc-client-impl.js'
 const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
 
 interface TickResult {
-  taggedEvents: TaggedEvent[]
+  messages: PluginMessage[]
   channels: string[]
 }
 
@@ -102,11 +102,12 @@ function requireIrcConfig(config: OrchestratorConfig, mode: string): { nick: str
   return { nick, server: ircCfg.server ?? '127.0.0.1', port: ircCfg.port ?? 6667 }
 }
 
-async function runOneTick(
+export async function runOneTick(
   stateDir: string,
   config: OrchestratorConfig,
   plugins: Plugin[],
-  opts: { seed: boolean; dryRun: boolean }
+  opts: { seed: boolean; dryRun: boolean },
+  log: PluginLogger = defaultPluginLogger,
 ): Promise<TickResult> {
   const prev = opts.seed ? null : await loadState(stateDir)
   const curState: OrchestratorState = {
@@ -115,19 +116,32 @@ async function runOneTick(
     plugins: {},
   }
 
-  const allTagged: TaggedEvent[] = []
+  const allMessages: PluginMessage[] = []
   const allChannels = new Set<string>()
 
-  // Plugins share GH rate limits but no in-process state — parallel-safe.
+  // Plugins share GH rate limits but no in-process state — parallel-safe, so
+  // they still run concurrently. Each runTick is isolated so one plugin
+  // crashing can't reject the whole batch and drop every plugin's messages
+  // for the tick: a thrown plugin preserves its prevState, emits no messages,
+  // and is logged; siblings still dispatch. Mirrors bootChannels' per-plugin
+  // try/catch. A crashed plugin's config-static channels are still reconciled
+  // via desiredChannels (in bootChannels); only its scraped-dynamic channels
+  // for this tick are lost, which is moot since it couldn't scrape.
   const results = await Promise.all(
-    plugins.map(async plugin => ({
-      plugin,
-      result: await plugin.runTick(config, getPluginState<unknown>(prev, plugin.name)),
-    }))
+    plugins.map(async (plugin): Promise<{ plugin: Plugin; result: PluginTickResult }> => {
+      const prevState = getPluginState<unknown>(prev, plugin.name)
+      try {
+        return { plugin, result: await plugin.runTick(config, prevState) }
+      } catch (e) {
+        const detail = e instanceof Error ? e.stack ?? e.message : String(e)
+        log(`orchestrator: plugin ${plugin.name} tick crashed: ${detail}\n`)
+        return { plugin, result: { state: prevState, messages: [], channels: [] } }
+      }
+    })
   )
   for (const { plugin, result } of results) {
     curState.plugins[plugin.name] = result.state
-    allTagged.push(...result.taggedEvents)
+    allMessages.push(...result.messages)
     for (const c of result.channels) allChannels.add(c)
   }
 
@@ -137,7 +151,7 @@ async function runOneTick(
     await clearLastError(stateDir)
   }
 
-  return { taggedEvents: allTagged, channels: [...allChannels] }
+  return { messages: allMessages, channels: [...allChannels] }
 }
 
 async function runDaemon(stateDir: string): Promise<void> {
@@ -217,14 +231,14 @@ async function runDaemon(stateDir: string): Promise<void> {
 
     let result: TickResult
     try {
-      result = await runOneTick(stateDir, config, plugins, tickOpts)
+      result = await runOneTick(stateDir, config, plugins, tickOpts, log)
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
       trySay(projectChannel, `[dispatcher_error] ${msg}`)
       // Fall back to the config-only channel view so a transient GH/scrape
       // blip doesn't part every #issue-N until the next success.
-      result = { taggedEvents: [], channels: bootChannels(plugins, config, projectChannel, log) }
+      result = { messages: [], channels: bootChannels(plugins, config, projectChannel, log) }
     }
 
     // Reconcile IRC membership against plugins' desired set, then snapshot.
@@ -248,10 +262,10 @@ async function runDaemon(stateDir: string): Promise<void> {
       log(`orchestrator[daemon]: joined-channels snapshot failed: ${e}\n`)
     }
 
-    if (result.taggedEvents.length) {
+    if (result.messages.length) {
       try {
-        await dispatchTaggedEvents(result.taggedEvents, client)
-        log(`orchestrator[daemon]: tick dispatched ${result.taggedEvents.length} event(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
+        await dispatchMessages(result.messages, client)
+        log(`orchestrator[daemon]: tick dispatched ${result.messages.length} message(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
       } catch (e) {
         log(`orchestrator[daemon]: dispatch error: ${e}\n`)
         trySay(projectChannel, `[dispatcher_error] dispatch: ${e}`)
@@ -277,12 +291,12 @@ async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const client = newIrcClient(nick, channels)
   await connectAndWait(client, { host: server, port, nick }, channels)
   try {
-    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false })
-    if (result.taggedEvents.length) {
-      await dispatchTaggedEvents(result.taggedEvents, client)
-      process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${result.taggedEvents.length} event(s)\n`)
+    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false }, defaultPluginLogger)
+    if (result.messages.length) {
+      await dispatchMessages(result.messages, client)
+      process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${result.messages.length} message(s)\n`)
     } else {
-      process.stderr.write('orchestrator[--dispatch-irc]: no events to dispatch\n')
+      process.stderr.write('orchestrator[--dispatch-irc]: no messages to dispatch\n')
     }
   } finally {
     client.quit()
@@ -317,8 +331,8 @@ async function main(): Promise<void> {
     const result = await runOneTick(stateDir, config, plugins, {
       seed: values['seed'] as boolean,
       dryRun: values['dry-run'] as boolean,
-    })
-    console.log(JSON.stringify(result.taggedEvents, null, 2))
+    }, defaultPluginLogger)
+    console.log(JSON.stringify(result.messages, null, 2))
   } catch (e) {
     const tb = e instanceof Error ? e.stack ?? String(e) : String(e)
     process.stderr.write(tb + '\n')

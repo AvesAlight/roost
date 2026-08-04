@@ -1,18 +1,10 @@
 import { describe, it, expect } from 'bun:test'
-import { batchConsecutiveMultiline, dispatchTaggedEvents } from '../dispatch.js'
-import type { TaggedEvent, TaggedEventPayload } from '../plugin.js'
+import { groupMessagesByChannel, dispatchMessages } from '../dispatch.js'
+import type { PluginMessage } from '../plugin.js'
 import type { RoostIrcClient } from '../../irc-client.js'
 
-// Build a `multiline` TaggedEvent for tests. Single channel by default.
-function ml(channels: string[], header: string, body = '', url = 'u'): TaggedEvent {
-  return {
-    channels,
-    payload: { kind: 'multiline', header, body, url } as TaggedEventPayload,
-  }
-}
-
-function oneline(channels: string[], text: string): TaggedEvent {
-  return { channels, payload: { kind: 'oneline', text } as TaggedEventPayload }
+function msg(channels: string[], text: string): PluginMessage {
+  return { channels, text }
 }
 
 // Capture say() calls with a minimal RoostIrcClient stub.
@@ -27,95 +19,97 @@ function captureClient(): { client: RoostIrcClient; sent: Array<{ target: string
   return { client, sent }
 }
 
-describe('batchConsecutiveMultiline', () => {
-  it('merges consecutive multilines with the same channel set into one batch', () => {
-    const events = [
-      ml(['#a'], 'h1', 'b1', 'u1'),
-      ml(['#a'], 'h2', 'b2', 'u2'),
-      ml(['#a'], 'h3', 'b3', 'u3'),
+describe('groupMessagesByChannel', () => {
+  it('groups all messages for one channel into a single bucket, in emission order', () => {
+    const messages = [
+      msg(['#a'], 'one'),
+      msg(['#a'], 'two'),
+      msg(['#a'], 'three'),
     ]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(1)
-    expect(out[0]!.payload.kind).toBe('multiline_batch')
-    if (out[0]!.payload.kind === 'multiline_batch') {
-      expect(out[0]!.payload.blocks).toEqual([
-        { header: 'h1', body: 'b1', url: 'u1' },
-        { header: 'h2', body: 'b2', url: 'u2' },
-        { header: 'h3', body: 'b3', url: 'u3' },
-      ])
-      expect(out[0]!.channels).toEqual(['#a'])
-    }
+    const out = groupMessagesByChannel(messages)
+    expect([...out.entries()]).toEqual([['#a', ['one', 'two', 'three']]])
   })
 
-  it('wraps a singleton multiline run as a one-block batch', () => {
-    const events = [ml(['#a'], 'h1', 'b1', 'u1')]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(1)
-    expect(out[0]!.payload.kind).toBe('multiline_batch')
-    if (out[0]!.payload.kind === 'multiline_batch') {
-      expect(out[0]!.payload.blocks).toEqual([{ header: 'h1', body: 'b1', url: 'u1' }])
-      expect(out[0]!.channels).toEqual(['#a'])
-    }
+  it('delivers a multi-channel message to every channel it targets', () => {
+    const out = groupMessagesByChannel([msg(['#a', '#b'], 'shared')])
+    expect(out.get('#a')).toEqual(['shared'])
+    expect(out.get('#b')).toEqual(['shared'])
   })
 
-  it('compares channel sets as a sorted set, not array order', () => {
-    const events = [ml(['#a', '#b'], 'h1'), ml(['#b', '#a'], 'h2')]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(1)
-    expect(out[0]!.payload.kind).toBe('multiline_batch')
-  })
-
-  it('splits runs when channel sets differ', () => {
-    const events = [ml(['#a'], 'h1'), ml(['#b'], 'h2'), ml(['#a'], 'h3')]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(3)
-    expect(out.every(e => e.payload.kind === 'multiline_batch')).toBe(true)
-  })
-
-  it('breaks the run when an oneline event intervenes', () => {
-    const events = [ml(['#a'], 'h1'), oneline(['#a'], 'CI: ok'), ml(['#a'], 'h2')]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(3)
-    // The two multilines are NOT merged across the intervening oneline.
-    expect(out[0]!.payload.kind).toBe('multiline_batch')
-    expect(out[1]!.payload.kind).toBe('oneline')
-    expect(out[2]!.payload.kind).toBe('multiline_batch')
-  })
-
-  it('merges cross-PR comments that share a channel set, headers disambiguating', () => {
-    const events = [
-      ml(['#proj'], 'PR org/r#5 comment by alice:'),
-      ml(['#proj'], 'PR org/r#6 comment by bob:'),
+  it('merges messages into per-channel buckets regardless of intervening other-channel messages', () => {
+    // #a's two messages stay in one bucket even with an intervening #b message.
+    const messages = [
+      msg(['#a'], 'a1'),
+      msg(['#b'], 'b1'),
+      msg(['#a'], 'a2'),
     ]
-    const out = batchConsecutiveMultiline(events)
-    expect(out).toHaveLength(1)
-    if (out[0]!.payload.kind === 'multiline_batch') {
-      expect(out[0]!.payload.blocks.map(b => b.header)).toEqual([
-        'PR org/r#5 comment by alice:',
-        'PR org/r#6 comment by bob:',
-      ])
-    }
+    const out = groupMessagesByChannel(messages)
+    expect(out.get('#a')).toEqual(['a1', 'a2'])
+    expect(out.get('#b')).toEqual(['b1'])
   })
 
-  it('passes oneline events through untouched', () => {
-    const events = [oneline(['#a'], 'x'), oneline(['#b'], 'y')]
-    expect(batchConsecutiveMultiline(events)).toEqual(events)
+  it('merges a multi-channel message into each target channel alongside channel-only messages', () => {
+    // {#a,#b} and {#a} share channel #a — both land in #a's bucket.
+    const messages = [
+      msg(['#a', '#b'], 'both'),
+      msg(['#a'], 'a-only'),
+    ]
+    const out = groupMessagesByChannel(messages)
+    expect(out.get('#a')).toEqual(['both', 'a-only'])
+    expect(out.get('#b')).toEqual(['both'])
+  })
+
+  it('preserves within-channel order as emission order across plugins', () => {
+    // runOneTick concatenates all plugins' messages; cross-plugin merges land
+    // here. A GitHub then a Linear message to #a arrive in that order.
+    const messages = [
+      msg(['#a'], 'github-comment'),
+      msg(['#a'], 'linear-comment'),
+    ]
+    const out = groupMessagesByChannel(messages)
+    expect(out.get('#a')).toEqual(['github-comment', 'linear-comment'])
+  })
+
+  it('skips empty-text messages (no blank-line posts)', () => {
+    const out = groupMessagesByChannel([
+      msg(['#a'], ''),
+      msg(['#a'], 'real'),
+    ])
+    expect(out.get('#a')).toEqual(['real'])
+  })
+
+  it('drops a channel entirely when its only message is empty', () => {
+    expect(groupMessagesByChannel([msg(['#a'], '')]).has('#a')).toBe(false)
+  })
+
+  it('dedups channels within a single message so [#a, #a] posts once', () => {
+    const out = groupMessagesByChannel([msg(['#a', '#a'], 'x')])
+    expect(out.get('#a')).toEqual(['x'])
+  })
+
+  it('insertion-orders channels by first message that touched them', () => {
+    const out = groupMessagesByChannel([
+      msg(['#z'], '1'),
+      msg(['#a'], '2'),
+      msg(['#z'], '3'),
+    ])
+    expect([...out.keys()]).toEqual(['#z', '#a'])
   })
 
   it('handles an empty list', () => {
-    expect(batchConsecutiveMultiline([])).toEqual([])
+    expect([...groupMessagesByChannel([]).entries()]).toEqual([])
   })
 })
 
-describe('dispatchTaggedEvents batching', () => {
-  it('renders a multiline_batch as one say per target, blocks joined by a blank line', async () => {
-    const events = [
-      ml(['#a', '#b'], 'h1', 'b1', 'u1'),
-      ml(['#b', '#a'], 'h2', 'b2', 'u2'),
+describe('dispatchMessages', () => {
+  it('posts one message per channel, texts joined by a blank line', async () => {
+    const messages = [
+      msg(['#a', '#b'], 'h1\nb1\nu1'),
+      msg(['#b', '#a'], 'h2\nb2\nu2'),
     ]
     const { client, sent } = captureClient()
-    await dispatchTaggedEvents(events, client)
-    // One message per target (order preserved from the first event's channels).
+    await dispatchMessages(messages, client)
+    // One message per channel; #a first (insertion order from the first message).
     expect(sent).toEqual([
       { target: '#a', text: 'h1\nb1\nu1\n\nh2\nb2\nu2' },
       { target: '#b', text: 'h1\nb1\nu1\n\nh2\nb2\nu2' },
@@ -123,37 +117,49 @@ describe('dispatchTaggedEvents batching', () => {
   })
 
   it('acceptance: N comments on one PR in one tick arrive as a single IRC message', async () => {
-    // A realistic diffPr output for one PR: two review comments, a review
-    // (empty summary body), and a conversation comment — all route to the same
-    // channel. One say() per target; blocks joined by a blank line.
+    // A realistic one-PR tick: two review comments, a review (empty body), and a
+    // conversation comment — all route to the same channel. One say() per channel.
     const blocks = [
-      ['PR org/r#1 comment by alice at src/a.ts:12:', 'fix this', 'https://gh/c1'],
-      ['PR org/r#1 comment by alice at src/b.ts:4:', 'also this', 'https://gh/c2'],
-      ['PR org/r#1 review by alice (COMMENT):', '', 'https://gh/r1'],
-      ['PR org/r#1 comment by bob:', 'lgtm', 'https://gh/c3'],
+      'PR org/r#1 comment by alice at src/a.ts:12:\nfix this\nhttps://gh/c1',
+      'PR org/r#1 comment by alice at src/b.ts:4:\nalso this\nhttps://gh/c2',
+      'PR org/r#1 review by alice (COMMENT):\n\nhttps://gh/r1',
+      'PR org/r#1 comment by bob:\nlgtm\nhttps://gh/c3',
     ]
-    const events = blocks.map(([h, b, u]) => ml(['#issue-5'], h, b, u))
+    const messages = blocks.map(t => msg(['#issue-1'], t))
     const { client, sent } = captureClient()
-    await dispatchTaggedEvents(events, client)
+    await dispatchMessages(messages, client)
     expect(sent).toHaveLength(1)
-    expect(sent[0]!.target).toBe('#issue-5')
-    expect(sent[0]!.text).toBe(blocks.map(b => b.join('\n')).join('\n\n'))
+    expect(sent[0]!.target).toBe('#issue-1')
+    expect(sent[0]!.text).toBe(blocks.join('\n\n'))
   })
 
-  it('does not batch when channels differ', async () => {
-    const events = [ml(['#a'], 'h1', 'b1', 'u1'), ml(['#b'], 'h2', 'b2', 'u2')]
+  it('posts separate messages when channels differ', async () => {
+    const messages = [msg(['#a'], 'x'), msg(['#b'], 'y')]
     const { client, sent } = captureClient()
-    await dispatchTaggedEvents(events, client)
+    await dispatchMessages(messages, client)
     expect(sent).toEqual([
-      { target: '#a', text: 'h1\nb1\nu1' },
-      { target: '#b', text: 'h2\nb2\nu2' },
+      { target: '#a', text: 'x' },
+      { target: '#b', text: 'y' },
     ])
   })
 
-  it('preserves oneline rendering for oneline events', async () => {
-    const events = [oneline(['#a'], 'PR org/r#1 CI: PENDING → SUCCESS (abc123)')]
+  it('merges cross-PR comments that share a channel into one message', async () => {
+    // Two PRs routing to one leads channel merge into one message (headers
+    // disambiguate).
+    const messages = [
+      msg(['#proj'], 'PR org/r#5 comment by alice:\nbody1\nu1'),
+      msg(['#proj'], 'PR org/r#6 comment by bob:\nbody2\nu2'),
+    ]
     const { client, sent } = captureClient()
-    await dispatchTaggedEvents(events, client)
-    expect(sent).toEqual([{ target: '#a', text: 'PR org/r#1 CI: PENDING → SUCCESS (abc123)' }])
+    await dispatchMessages(messages, client)
+    expect(sent).toEqual([
+      { target: '#proj', text: 'PR org/r#5 comment by alice:\nbody1\nu1\n\nPR org/r#6 comment by bob:\nbody2\nu2' },
+    ])
+  })
+
+  it('does not post anything for an empty-text message', async () => {
+    const { client, sent } = captureClient()
+    await dispatchMessages([msg(['#a'], '')], client)
+    expect(sent).toEqual([])
   })
 })

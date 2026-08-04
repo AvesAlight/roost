@@ -10,7 +10,7 @@
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import { assertEntryRepoMode } from '../../config.js'
-import type { ParseResult, PluginTickResult, TaggedEvent } from '../../plugin.js'
+import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerRepo, type PerRepoCommand } from '../grammar.js'
@@ -136,7 +136,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
   async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<NewIssuesPluginConfig>(config) ?? {}
     const watchEntries = slice.watched ?? []
-    if (!watchEntries.length) return { state: prevState ?? { repos: {} }, taggedEvents: [], channels: [] }
+    if (!watchEntries.length) return { state: prevState ?? { repos: {} }, messages: [], channels: [] }
 
     const projectChannel = resolveProjectChannel(config)
     const now = Date.now()
@@ -147,7 +147,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       ? prevState as NewIssuesPluginState
       : null
 
-    const taggedEvents: TaggedEvent[] = []
+    const messages: PluginMessage[] = []
     const nextRepos: Record<string, number[]> = prev ? { ...prev.repos } : {}
 
     for (const entry of watchEntries) {
@@ -167,7 +167,7 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
       // the next clean tick re-reads and announces what's genuinely new.
       if (!r.ok && r.rateLimited) return this.breakerTripResult(now, prevState ?? { repos: {} }, projectChannel, config, r.kind, r.retryAfterMs)
       if (!r.ok) {
-        taggedEvents.push(...r.events)
+        messages.push(...r.events)
         continue
       }
       const issues = r.value
@@ -185,10 +185,10 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
           .filter(i => i.number != null && !seen.has(i.number))
           .sort((a, b) => (a.number ?? 0) - (b.number ?? 0))
         for (const issue of newIssues) {
-          taggedEvents.push({
+          messages.push({
             // Per-event copy so a downstream mutation can't leak across siblings.
             channels: [...announcementChannels],
-            payload: { kind: 'oneline', text: formatNewIssue(repo, issue) },
+            text: formatNewIssue(repo, issue),
           })
         }
       }
@@ -199,12 +199,12 @@ export class GitHubNewIssuesPlugin extends GhPluginBase {
 
     this.breakerReset(now)
     const state: NewIssuesPluginState = { repos: nextRepos }
-    taggedEvents.push(...await this.observeRateLimit(projectChannel))
+    messages.push(...await this.observeRateLimit(projectChannel))
     // [] (not rememberChannels): membership is config-static (per-entry channels
     // join at boot, project channel unioned by the orchestrator), so there's
     // nothing dynamic to replay — skipChannels falls back to desiredChannels
     // while the breaker is open.
-    return { state, taggedEvents, channels: [] }
+    return { state, messages, channels: [] }
   }
 }
 

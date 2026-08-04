@@ -104,9 +104,9 @@ describe('GitHubPrsPlugin.runTick', () => {
         },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
-      expect(result.taggedEvents[0]?.payload.kind).toBe('multiline')
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[0]?.text).toContain('\n')
       expect(result.channels).toContain('#proj-issue-14')
       expect(result.channels).toContain('#extra')
     } finally { spy.mockRestore() }
@@ -139,13 +139,13 @@ describe('GitHubPrsPlugin.runTick', () => {
         },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(2)
+      expect(result.messages).toHaveLength(2)
       // framing line ships first (oneline), routed to the linked-issue channel unioned with entry
-      expect(result.taggedEvents[0]?.payload.kind).toBe('oneline')
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[0]?.text).not.toContain('\n')
+      expect(result.messages[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
       // the pre-watch comment routes identically to a live comment
-      expect(result.taggedEvents[1]?.payload.kind).toBe('multiline')
-      expect(result.taggedEvents[1]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[1]?.text).toContain('\n')
+      expect(result.messages[1]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
     } finally { spy.mockRestore() }
   })
 
@@ -184,8 +184,8 @@ describe('GitHubPrsPlugin.runTick', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toContain('#proj-leads')
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toContain('#proj-leads')
     } finally { spy.mockRestore() }
   })
 
@@ -202,7 +202,7 @@ describe('GitHubPrsPlugin.runTick', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 
@@ -220,12 +220,9 @@ describe('GitHubPrsPlugin.runTick', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'now watching PR org/repo#25 — routing events to #proj-issue-7, #proj-issue-14',
-      })
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.text).toBe('now watching PR org/repo#25 — routing events to #proj-issue-7, #proj-issue-14')
     } finally { spy.mockRestore() }
   })
 
@@ -243,9 +240,9 @@ describe('GitHubPrsPlugin.runTick', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      const text = result.messages[0]?.text
       expect(text).toContain('#proj-issue-7')
       expect(text).toContain('#extra')
     } finally { spy.mockRestore() }
@@ -270,8 +267,8 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -291,8 +288,8 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-576'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-576'])
     } finally { spy.mockRestore() }
   })
 
@@ -311,8 +308,8 @@ describe('GitHubPrsPlugin.runTick — routing when no linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-576'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-576'])
     } finally { spy.mockRestore() }
   })
 })
@@ -334,9 +331,9 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      const text = result.messages[0]?.text
       expect(text).toContain('org/repo#25')
       expect(text).toContain('#proj-leads')
       expect(text).not.toContain('won\'t be routed')
@@ -357,9 +354,9 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#proj-issue-576'] }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      const text = result.messages[0]?.text
       expect(text).toContain('org/repo#25')
       expect(text).toContain('#proj-issue-576')
       expect(text).not.toContain('won\'t be routed')
@@ -380,8 +377,8 @@ describe('GitHubPrsPlugin.runTick — pr_no_linked_issues notification', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#some-channel'] }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      expect(result.taggedEvents[0]?.channels).not.toContain('#some-channel')
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.channels).not.toContain('#some-channel')
     } finally { spy.mockRestore() }
   })
 })
@@ -443,7 +440,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       const result = await plugin(stubFromMap({
         'C-1': [attachment('https://github.com/avesalight/roost/pull/9')],
       })).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels).toContain('#proj-issue-c-1')
+      expect(result.messages[0]?.channels).toContain('#proj-issue-c-1')
     } finally { spy.mockRestore() }
   })
 
@@ -470,8 +467,8 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       const result = await plugin(stubFromMap({
         'C-758': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-c-758'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-c-758'])
       expect(result.channels).toContain('#proj-issue-c-758')
     } finally { spy.mockRestore() }
   })
@@ -496,7 +493,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       }
       const result = await plugin(queryFn).runTick(cfg, { prs: {} })
       expect(calls).toBe(0)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
+      expect(result.messages[0]?.channels).toEqual(['#proj'])
       expect(result.channels).not.toContain('#proj-issue-c-758')
     } finally { spy.mockRestore() }
   })
@@ -525,11 +522,11 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         ? { nodes: [{ identifier: 'C-758', attachments: { nodes: [attachment('https://github.com/org/repo/pull/25')] } }], hasNextPage: false }
         : { nodes: [{ identifier: 'C-758', attachments: { nodes: [] } }], hasNextPage: false })
       const tick1 = await p.runTick(cfg, { prs: {} })
-      expect(tick1.taggedEvents[0]?.channels).toContain('#proj-issue-c-758')
+      expect(tick1.messages[0]?.channels).toContain('#proj-issue-c-758')
       attached = false
       const tick2 = await p.runTick(cfg, tick1.state)
-      expect(tick2.taggedEvents[0]?.channels).not.toContain('#proj-issue-c-758')
-      expect(tick2.taggedEvents[0]?.channels).toEqual(['#proj'])
+      expect(tick2.messages[0]?.channels).not.toContain('#proj-issue-c-758')
+      expect(tick2.messages[0]?.channels).toEqual(['#proj'])
     } finally { spy.mockRestore() }
   })
 
@@ -615,7 +612,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         'C-1': [attachment('https://github.com/org/repo/pull/25')],
         'C-2': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual([
+      expect(result.messages[0]?.channels.sort()).toEqual([
         '#proj-issue-c-1', '#proj-issue-c-2',
       ])
     } finally { spy.mockRestore() }
@@ -639,8 +636,8 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       const result = await plugin(stubFromMap({
         'C-758': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      const text = result.messages[0]?.text
       expect(text).toContain('#proj-issue-c-758')
     } finally { spy.mockRestore() }
   })
@@ -663,7 +660,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       const result = await plugin(stubFromMap({
         'C-758': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
-      const warn = result.taggedEvents.find(e => (e.payload as { kind: string }).kind === 'oneline')
+      const warn = result.messages.find(e => !e.text.includes('\n'))
       expect(warn?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
@@ -686,7 +683,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
       const result = await plugin(stubFromMap({
         'C-758': [attachment('https://github.com/org/repo/pull/25')],
       })).runTick(cfg, { prs: {} })
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      const text = result.messages[0]?.text
       expect(text).toContain('#proj-issue-c-758')
       expect(text).not.toContain('#proj-leads')
     } finally { spy.mockRestore() }
@@ -726,7 +723,7 @@ describe('GitHubPrsPlugin.runTick — Linear attachment cross-link', () => {
         },
       }
       const result = await plugin(async () => { throw new Error('linear down') }).runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
+      expect(result.messages[0]?.channels).toEqual(['#proj'])
     } finally { spy.mockRestore() }
   })
 })
@@ -747,12 +744,9 @@ describe('GitHubIssuesPlugin.runTick', () => {
         plugins: { 'github-issues': { watched: [{ number: 50 }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'now watching issue org/repo#50 — routing events to #proj-issue-50',
-      })
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.text).toBe('now watching issue org/repo#50 — routing events to #proj-issue-50')
     } finally { spy.mockRestore() }
   })
 
@@ -769,9 +763,9 @@ describe('GitHubIssuesPlugin.runTick', () => {
         plugins: { 'github-issues': { watched: [{ number: 50, channels: ['#extra'] }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      const text = result.messages[0]?.text
       expect(text).toContain('#proj-issue-50')
       expect(text).toContain('#extra')
     } finally { spy.mockRestore() }
@@ -798,8 +792,8 @@ describe('GitHubIssuesPlugin.runTick', () => {
         },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#leads', '#proj-issue-50'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels.sort()).toEqual(['#leads', '#proj-issue-50'])
     } finally { spy.mockRestore() }
   })
 
@@ -826,8 +820,8 @@ describe('GitHubIssuesPlugin.runTick', () => {
         },
       }
       const result = await new GitHubIssuesPlugin('#proj', (m) => { logs.push(m) }).runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-repo-issue-50'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-repo-issue-50'])
       expect(logs.some(l => l.includes('org/my.tool#6') && l.includes('cannot derive slug'))).toBe(true)
       // No prior snapshot for the bad entry (first-ever tick) → skip leaves
       // its state key unset rather than advancing to the new snapshot, so
@@ -851,7 +845,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
         plugins: { 'github-issues': { watched: [{ number: 6, repo: 'org/my.tool' }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: { 'org/my.tool#6': prev } })
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect(result.state).toEqual({ issues: { 'org/my.tool#6': prev } })
     } finally { spy.mockRestore() }
   })
@@ -973,8 +967,8 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-foo-issue-14'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-foo-issue-14'])
     } finally { spy.mockRestore() }
   })
 
@@ -994,8 +988,8 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
         plugins: { 'github-issues': { watched: [{ number: 50, repo: 'org/bar' }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-bar-issue-50'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-bar-issue-50'])
     } finally { spy.mockRestore() }
   })
 
@@ -1015,8 +1009,8 @@ describe('multi-repo runTick — slug-aware channel routing', () => {
         plugins: { 'github-issues': { watched: [{ number: 50, repo: 'org/main' }] } },
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-50'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-50'])
     } finally { spy.mockRestore() }
   })
 })
@@ -1040,8 +1034,8 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-bar-issue-14'])
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-bar-issue-14'])
       expect(result.channels).toContain('#proj-bar-issue-14')
     } finally { spy.mockRestore() }
   })
@@ -1064,7 +1058,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents[0]?.channels.sort()).toEqual(['#proj-bar-issue-14', '#proj-foo-issue-7'])
+      expect(result.messages[0]?.channels.sort()).toEqual(['#proj-bar-issue-14', '#proj-foo-issue-7'])
     } finally { spy.mockRestore() }
   })
 
@@ -1088,7 +1082,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       }
       const result = await new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).runTick(cfg, { prs: {} })
       // Foreign repo dropped → all linked issues dropped → falls back to defaultChannel.
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj'])
+      expect(result.messages[0]?.channels).toEqual(['#proj'])
       // The cross-repo channel must not appear in the desired-channel set.
       expect(result.channels).not.toContain('#proj-issue-14')
       // Operator-visible stderr warning naming both sides + the remediation.
@@ -1118,7 +1112,7 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       // Same-repo issue routes normally; cross-repo dropped.
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-issue-7'])
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-7'])
     } finally { spy.mockRestore() }
   })
 
@@ -1152,8 +1146,8 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj-leads').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      expect(result.messages).toHaveLength(1)
+      const text = result.messages[0]?.text
       expect(text).toContain('#proj-leads')
       expect(text).not.toMatch(/routing events to\s*$/)
     } finally { spy.mockRestore() }
@@ -1174,12 +1168,9 @@ describe('GitHubPrsPlugin.runTick — cross-repo linked issues', () => {
         plugins: { 'github-prs': { watched: [{ number: 25, repo: 'org/foo' }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toHaveLength(1)
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: 'now watching PR org/foo#25 — routing events to #proj-bar-issue-14',
-      })
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.text).toBe('now watching PR org/foo#25 — routing events to #proj-bar-issue-14')
     } finally { spy.mockRestore() }
   })
 
@@ -1723,8 +1714,8 @@ describe('assertRepoMode — GitHubNewIssuesPlugin', () => {
 })
 
 describe('GhPluginBase.observeRateLimit integration', () => {
-  it('merges observeRateLimit warning events into runTick taggedEvents', async () => {
-    const warningEvent = { channels: ['#proj-leads'], payload: { kind: 'oneline' as const, text: 'rate limit warning' } }
+  it('merges observeRateLimit warning events into runTick messages', async () => {
+    const warningEvent = { channels: ['#proj-leads'], text: 'rate limit warning' }
     const scrapeSpy = stubPr({ snap: fakePrSnap(), events: [] })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const observeSpy = spyOn(GhPluginBase.prototype as any, 'observeRateLimit').mockResolvedValue([warningEvent])
@@ -1734,7 +1725,7 @@ describe('GhPluginBase.observeRateLimit integration', () => {
         plugins: { 'github-prs': { watched: [{ number: 25 }] } },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
-      expect(result.taggedEvents).toContainEqual(warningEvent)
+      expect(result.messages).toContainEqual(warningEvent)
     } finally {
       scrapeSpy.mockRestore()
       observeSpy.mockRestore()
@@ -1784,7 +1775,7 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
     // Now 100 remaining, reset in 60 min. 4900 consumed in 160s → very high rate → warns.
     const result = await observe(plugin, 100, 60 * 60_000)
     expect(result).toHaveLength(1)
-    expect(result[0].payload.text).toMatch(/rate limit warning/)
+    expect(result[0].text).toMatch(/rate limit warning/)
   })
 
   it('uses oldest entry as anchor, diluting mid-window bursts', async () => {
@@ -1855,7 +1846,7 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
     expect(result).toHaveLength(1)
-    expect((result[0].payload as { text: string }).text).toContain('GH-GraphQL')
+    expect(result[0].text).toContain('GH-GraphQL')
   })
 
   it('both budgets can warn in the same tick when both cooldowns are clear', async () => {
@@ -1872,7 +1863,7 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
     expect(result).toHaveLength(2)
-    const texts: string[] = result.map((e: { payload: { text: string } }) => e.payload.text)
+    const texts: string[] = result.map((e: { text: string }) => e.text)
     expect(texts.some(t => t.includes('GH-GraphQL'))).toBe(true)
     expect(texts.some(t => t.includes('GH ') && !t.includes('GH-GraphQL'))).toBe(true)
   })

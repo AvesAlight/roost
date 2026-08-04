@@ -66,7 +66,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), null)
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as LinearNewIssuesPluginState).teams['C']).toEqual(['C-1', 'C-2', 'C-3'])
     } finally { spy.mockRestore() }
   })
@@ -76,15 +76,9 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState(['C-1']))
-      expect(result.taggedEvents).toHaveLength(2)
-      expect(result.taggedEvents[0]?.payload).toEqual({
-        kind: 'oneline',
-        text: `new linear issue C-2: Issue C-2 — https://linear.app/test/issue/c-2/issue-C-2`,
-      })
-      expect(result.taggedEvents[1]?.payload).toEqual({
-        kind: 'oneline',
-        text: `new linear issue C-3: Issue C-3 — https://linear.app/test/issue/c-3/issue-C-3`,
-      })
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toBe(`new linear issue C-2: Issue C-2 — https://linear.app/test/issue/c-2/issue-C-2`)
+      expect(result.messages[1]?.text).toBe(`new linear issue C-3: Issue C-3 — https://linear.app/test/issue/c-3/issue-C-3`)
     } finally { spy.mockRestore() }
   })
 
@@ -93,7 +87,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#proj-leads'])
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -103,7 +97,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const { plugin } = makePlugin()
       const config = baseConfig({ plugins: { 'linear-new-issues': { watched: [{ team: 'C', channels: ['#triage', '#leads'] }] } } })
       const result = await plugin.runTick(config, prevState([]))
-      expect(result.taggedEvents[0]?.channels).toEqual(['#triage', '#leads'])
+      expect(result.messages[0]?.channels).toEqual(['#triage', '#leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -112,8 +106,8 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      result.taggedEvents[0]?.channels.push('#tampered')
-      expect(result.taggedEvents[1]?.channels).toEqual(['#proj-leads'])
+      result.messages[0]?.channels.push('#tampered')
+      expect(result.messages[1]?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -122,7 +116,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      const text = (result.taggedEvents[0]?.payload as { kind: 'oneline'; text: string }).text
+      const text = result.messages[0]?.text
       expect(text).toContain('[bug, Tooling]')
     } finally { spy.mockRestore() }
   })
@@ -141,7 +135,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState(['C-1', 'C-2']))
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
     } finally { spy.mockRestore() }
   })
 
@@ -152,7 +146,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     }
     const { plugin } = makePlugin()
     const result = await plugin.runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('no-ops when watched is absent', async () => {
@@ -162,7 +156,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     }
     const { plugin } = makePlugin()
     const result = await plugin.runTick(config, null)
-    expect(result.taggedEvents).toHaveLength(0)
+    expect(result.messages).toHaveLength(0)
   })
 
   it('orders announcements by issue number (numeric, not lex — C-5 before C-11 before C-20)', async () => {
@@ -170,8 +164,8 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      const identifiers = result.taggedEvents.map(e =>
-        ((e.payload as { kind: 'oneline'; text: string }).text.match(/new linear issue (\S+):/)?.[1])
+      const identifiers = result.messages.map(e =>
+        (e.text.match(/new linear issue (\S+):/)?.[1])
       )
       expect(identifiers).toEqual(['C-5', 'C-11', 'C-20'])
     } finally { spy.mockRestore() }
@@ -215,9 +209,9 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(config, { teams: { C: [], MAR: [] } })
       expect(calls).toEqual(['C', 'MAR'])
-      expect(result.taggedEvents).toHaveLength(2)
-      expect((result.taggedEvents[0]?.payload as { text: string }).text).toContain('C-1')
-      expect((result.taggedEvents[1]?.payload as { text: string }).text).toContain('MAR-2')
+      expect(result.messages).toHaveLength(2)
+      expect(result.messages[0]?.text).toContain('C-1')
+      expect(result.messages[1]?.text).toContain('MAR-2')
     } finally { spy.mockRestore() }
   })
 
@@ -237,7 +231,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const { plugin } = makePlugin()
       // prev state only has C — MAR is brand new
       const result = await plugin.runTick(config, { teams: { C: [] } })
-      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      const texts = result.messages.map(e => e.text)
       expect(texts.every(t => t.includes('C-1'))).toBe(true)
       expect(texts.some(t => t.includes('MAR'))).toBe(false)
       expect((result.state as LinearNewIssuesPluginState).teams['MAR']).toEqual(['MAR-10', 'MAR-11'])
@@ -264,7 +258,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
       const oldState = { seen_identifiers: ['C-1', 'C-2', 'C-3'] }
       const result = await plugin.runTick(baseConfig(), oldState)
       // Re-seeded: no events emitted
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect((result.state as LinearNewIssuesPluginState).teams['C']).toEqual(['C-1', 'C-2'])
     } finally { spy.mockRestore() }
   })
@@ -276,7 +270,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     try {
       const plugin = new LinearNewIssuesPlugin('#proj-leads', (msg) => { logs.push(msg) }, errClient)
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      expect(result.taggedEvents).toHaveLength(0)
+      expect(result.messages).toHaveLength(0)
       expect(logs.some(l => l.includes('network error'))).toBe(true)
     } finally { spy.mockRestore() }
   })
@@ -313,7 +307,7 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
       }
       const { plugin } = makePlugin()
       const result = await plugin.runTick(config, { teams: { C: ['C-1'], 'C::SDK 4.3.14': ['C-1'] } })
-      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      const texts = result.messages.map(e => e.text)
       expect(texts.some(t => t.includes('C-2'))).toBe(true)
       expect(texts.some(t => t.includes('C-3'))).toBe(true)
       const state = result.state as LinearNewIssuesPluginState
@@ -344,7 +338,7 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
       }
       const { plugin } = makePlugin()
       const result = await plugin.runTick(config, { teams: { 'C::X': ['C-1'], 'C::Y': [] } })
-      const texts = result.taggedEvents.map(e => (e.payload as { text: string }).text)
+      const texts = result.messages.map(e => e.text)
       expect(texts.some(t => t.includes('C-2'))).toBe(true)
       expect(texts.some(t => t.includes('C-10'))).toBe(true)
       const state = result.state as LinearNewIssuesPluginState
@@ -362,9 +356,9 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
       }
       const { plugin } = makePlugin()
       const result = await plugin.runTick(config, null)
-      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings = result.messages.filter(e => e.text?.includes('not found'))
       expect(warnings).toHaveLength(1)
-      const text = (warnings[0]?.payload as { text: string }).text
+      const text = warnings[0]?.text
       expect(text).toContain('project "Nope" not found in team C')
       expect(text).toContain('unwatch linear-team C project:"Nope"')
     } finally { spy.mockRestore() }
@@ -385,7 +379,7 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
       }
       const { plugin } = makePlugin()
       const result = await plugin.runTick(config, null)
-      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings = result.messages.filter(e => e.text?.includes('not found'))
       expect(warnings).toHaveLength(2)
     } finally { spy.mockRestore() }
   })
@@ -399,12 +393,12 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), null)
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('not found')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('not found')
       )
       expect(warnings).toHaveLength(1)
-      expect((warnings[0]?.payload as { text: string }).text).toContain('team C not found')
-      expect((warnings[0]?.payload as { text: string }).text).toContain('unwatch linear-team C')
+      expect(warnings[0]?.text).toContain('team C not found')
+      expect(warnings[0]?.text).toContain('unwatch linear-team C')
     } finally { spy.mockRestore() }
   })
 
@@ -413,11 +407,11 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState(['C-1', 'C-2']))
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('not found')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('not found')
       )
       expect(warnings).toHaveLength(1)
-      expect((warnings[0]?.payload as { text: string }).text).toContain('team C not found')
+      expect(warnings[0]?.text).toContain('team C not found')
     } finally { spy.mockRestore() }
   })
 
@@ -426,8 +420,8 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), null)
-      const warning = result.taggedEvents.find(e =>
-        (e.payload as { text?: string }).text?.includes('not found')
+      const warning = result.messages.find(e =>
+        e.text?.includes('not found')
       )
       expect(warning?.channels).toEqual(['#proj-leads'])
     } finally { spy.mockRestore() }
@@ -439,8 +433,8 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
       const { plugin } = makePlugin()
       const config = baseConfig({ plugins: { 'linear-new-issues': { watched: [{ team: 'C', channels: ['#triage', '#leads'] }] } } })
       const result = await plugin.runTick(config, null)
-      const warning = result.taggedEvents.find(e =>
-        (e.payload as { text?: string }).text?.includes('not found')
+      const warning = result.messages.find(e =>
+        e.text?.includes('not found')
       )
       expect(warning?.channels).toEqual(['#triage', '#leads'])
     } finally { spy.mockRestore() }
@@ -452,8 +446,8 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
       const { plugin } = makePlugin()
       const result1 = await plugin.runTick(baseConfig(), null)
       const result2 = await plugin.runTick(baseConfig(), null)
-      const warnings1 = result1.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
-      const warnings2 = result2.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings1 = result1.messages.filter(e => e.text?.includes('not found'))
+      const warnings2 = result2.messages.filter(e => e.text?.includes('not found'))
       expect(warnings1).toHaveLength(1)
       expect(warnings2).toHaveLength(0)
     } finally { spy.mockRestore() }
@@ -471,10 +465,10 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'team-not-found' })
     try {
       const result = await plugin.runTick(config, null)
-      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings = result.messages.filter(e => e.text?.includes('not found'))
       // C is suppressed, MAR should still warn
       expect(warnings).toHaveLength(1)
-      expect((warnings[0]?.payload as { text: string }).text).toContain('team MAR')
+      expect(warnings[0]?.text).toContain('team MAR')
     } finally { spy.mockRestore() }
   })
 
@@ -486,7 +480,7 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(plugin as any)._notFoundWarnedAt.set('C', Date.now() - WARN_COOLDOWN_MS - 1)
       const result = await plugin.runTick(baseConfig(), null)
-      const warnings = result.taggedEvents.filter(e => (e.payload as { text?: string }).text?.includes('not found'))
+      const warnings = result.messages.filter(e => e.text?.includes('not found'))
       expect(warnings).toHaveLength(1)
     } finally { spy.mockRestore() }
   })
@@ -506,8 +500,8 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
     try {
       const { plugin } = makePlugin()
       const result = await plugin.runTick(baseConfig(), prevState(['C-1']))
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('not found')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('not found')
       )
       expect(warnings).toHaveLength(0)
     } finally { spy.mockRestore() }
@@ -547,12 +541,12 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
     const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('rate limit warning')
       )
       expect(warnings).toHaveLength(1)
       expect(warnings[0]?.channels).toEqual(['#proj-leads'])
-      expect((warnings[0]?.payload as { text: string }).text).toContain('Linear')
+      expect(warnings[0]?.text).toContain('Linear')
     } finally {
       rlSpy.mockRestore()
       fetchSpy.mockRestore()
@@ -569,8 +563,8 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
     const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('rate limit warning')
       )
       expect(warnings).toHaveLength(0)
     } finally {
@@ -593,8 +587,8 @@ describe('LinearNewIssuesPlugin.observeLinearRateLimit — warning emission', ()
     const fetchSpy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
     try {
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      const warnings = result.taggedEvents.filter(e =>
-        (e.payload as { text?: string }).text?.includes('rate limit warning')
+      const warnings = result.messages.filter(e =>
+        e.text?.includes('rate limit warning')
       )
       expect(warnings).toHaveLength(0)
     } finally {
