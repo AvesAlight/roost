@@ -14,10 +14,10 @@ export interface PluginConfig {
 // destined for. Plugins emit these per tick; the dispatcher batches same-
 // channel texts into one message per channel per tick so a receiving agent
 // sees everything destined for that channel before replying to any of it.
-// No payload-kind distinction — rendering lives upstream in the plugin, the
-// dispatcher only groups by channel and posts. An empty `channels` array has
-// nowhere to go and is silently dropped by the dispatcher; an empty `text`
-// is skipped so no blank-line post goes out.
+// Rendering lives upstream in the plugin; the dispatcher only groups by
+// channel and posts. An empty `channels` array has nowhere to go and is
+// silently dropped; an empty `text` is skipped so no blank-line post goes
+// out.
 export interface PluginMessage {
   channels: string[]
   text: string
@@ -46,7 +46,7 @@ export interface Plugin {
   // Config-only channel view at boot, before first tick. Excludes the project
   // channel — orchestrator unions that in.
   desiredChannels(config: OrchestratorConfig): string[]
-  // Per tick: next state slice, tagged events, and the live channel set
+  // Per tick: next state slice, messages, and the live channel set
   // (post-scrape, including dynamic discoveries). `prevState === null` signals seed.
   runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
   // Try to claim a single watch/unwatch DM line. The dispatcher iterates

@@ -37,8 +37,7 @@ describe('groupMessagesByChannel', () => {
   })
 
   it('merges messages into per-channel buckets regardless of intervening other-channel messages', () => {
-    // The former channel-set / consecutive-run keying would split #a's two
-    // messages here. Per-channel grouping keeps them together.
+    // #a's two messages stay in one bucket even with an intervening #b message.
     const messages = [
       msg(['#a'], 'a1'),
       msg(['#b'], 'b1'),
@@ -50,8 +49,7 @@ describe('groupMessagesByChannel', () => {
   })
 
   it('merges a multi-channel message into each target channel alongside channel-only messages', () => {
-    // {#a,#b} and {#a} share channel #a — per-channel grouping merges them in #a.
-    // Channel-set keying would have split #a into two posts.
+    // {#a,#b} and {#a} share channel #a — both land in #a's bucket.
     const messages = [
       msg(['#a', '#b'], 'both'),
       msg(['#a'], 'a-only'),
@@ -146,9 +144,8 @@ describe('dispatchMessages', () => {
   })
 
   it('merges cross-PR comments that share a channel into one message', async () => {
-    // Two PRs routing to one leads channel: per-channel grouping merges them
-    // (headers disambiguate), where channel-set keying would have merged them
-    // too — but only when consecutive. The uniform seam always merges.
+    // Two PRs routing to one leads channel merge into one message (headers
+    // disambiguate).
     const messages = [
       msg(['#proj'], 'PR org/r#5 comment by alice:\nbody1\nu1'),
       msg(['#proj'], 'PR org/r#6 comment by bob:\nbody2\nu2'),

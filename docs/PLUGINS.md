@@ -202,4 +202,4 @@ Both expose only `roost/plugin`. Deep imports may change.
 
 ## Versioning
 
-No compile-time API check yet. The seam types are `Plugin`, `BasePlugin`, `PluginMessage`, and `PluginTickResult`. Plugins emit fully-rendered `PluginMessage { channels, text }` values; the dispatcher groups by channel and posts — no payload-kind union, no `oneline`/`multiline` distinction. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.
+No compile-time API check yet. The seam types are `Plugin`, `BasePlugin`, `PluginMessage`, and `PluginTickResult`. Plugins emit fully-rendered `PluginMessage { channels, text }` values; the dispatcher groups by channel and posts. Pin a tag if you need stability. A `requires` field may land once a second external plugin exists.

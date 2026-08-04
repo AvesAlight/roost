@@ -34,17 +34,15 @@ export async function connectAndWait(
 }
 
 // One IRC message per channel per tick. Plugins emit uniform `{channels, text}`
-// messages; this groups them by individual channel (not channel-set), appending
-// each message's text to every channel it targets, in emission order. The
-// dispatcher then posts one joined message per channel.
+// messages; this groups them by individual channel, appending each message's
+// text to every channel it targets, in emission order. The dispatcher then
+// posts one joined message per channel.
 //
-// Per-individual-channel (not per-channel-set) is deliberate: an event routed to
-// {#issue, #linear} shares its text with both channels, and each channel sees
-// one message with everything destined for it — no splits. Channel-set keying
-// was an artifact of the oneline/multiline batching era; the uniform seam drops
-// it. Within a channel, order follows the order plugins emitted messages
-// (runOneTick concatenates all plugins' messages, so cross-plugin merges land
-// here too — a GitHub + Linear message to one channel arrive as one message).
+// An event routed to {#issue, #linear} shares its text with both channels, and
+// each channel sees one message with everything destined for it. Within a
+// channel, order follows the order plugins emitted messages (runOneTick
+// concatenates all plugins' messages, so cross-plugin merges land here too —
+// a GitHub + Linear message to one channel arrive as one message).
 //
 // Post order across channels is the Map's insertion order — the first message
 // that touched a channel claims its slot. Channels are independent audiences, so
