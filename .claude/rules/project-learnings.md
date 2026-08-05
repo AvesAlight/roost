@@ -46,6 +46,21 @@ Patching only the enumerated sites leaves the defect adjacent — the reviewer n
 
 The key question: is the spelling literally what the operator or reader sees, or is it a template field they replace before use? Substitution targets (`<your-nick>`, `<project>`, `<I>`) substitute away — drift is real but not blocking, a followup is enough. Literal-verbatim surfaces (flag names like `--ask-irc`, channel pattern shape like `#<project>-leads`, CLI structure the operator copies directly) → strict corollary, promote to blocker. Concrete: `<answerer>` vs `<your-nick>` drift in #553 is substitution-target → followup (#557). A drift in `--ask-irc` spelling across surfaces would be literal-verbatim → blocker.
 
+## 2026-08-05: A step that reads state is not verified until someone has run it on the target platform and looked at the output, not the exit code (from #707 / C-1395)
+
+Reading a runbook step and agreeing it looks right is not verification. A command can exit 0, print plausible-looking output, and still silently fail to do the one thing the prose claims it does — and that failure mode is invisible to a reader by construction, because looking complete is exactly what it does.
+
+C-1395 (linear-new-issues announcing old issues as "new") ran six for six on this, each fix carrying the same "looks complete, isn't" shape as the bug it was fixing, and each one caught only by someone actually running it on the box that mattered:
+
+1. The root cause itself: an unpaginated Linear query, defaulting to `first: 50`, silently only ever seeing part of the team's open issues.
+2. An initial fix that patched one `not-found` guard branch but missed its unconditional-return sibling three lines below — same shape, different branch.
+3. A runbook step assuming the reader's cwd, when `.orchestrator/` lives wherever the dispatcher was launched from.
+4. A discovery command whose output, if empty, silently became a relative path (`dirname ""` → `.`) instead of failing — the exact cwd trap re-entering through the fix for it.
+5. A single-dispatcher assumption (`abort if more than one pid`) on a box that had two dispatchers running.
+6. `pgrep -af` on macOS/BSD: `-a` there means "include ancestors," not "show full args" like GNU pgrep. The command exits 0 and returns plausible bare PIDs — it just silently omits the one field the step tells the operator to read. Four independent reviewers ran it before anyone noticed the output didn't match the prose.
+
+Operational corollary: when a runbook, doc, or agent-facing step claims to read live state (a process list, a file, a config value), the review bar is "I ran this on the actual platform and inspected the output," not "the shape looks right." Read-through catches shape; only execution catches a step that succeeds while doing something else.
+
 ## 2026-07-01: Permbot/permission changes require live parity testing against the native TUI (from #598)
 
 Any change to classifyBash or the permission-prompt relay needs an empirical pass against the native TUI before merge — spawn a bare agent with no --perm-irc, and confirm via tool_use→tool_result gap which commands actually hold. We require absolute parity with default TUI holds, no more and no less. The #598 fix (a regex narrowing) initially cited a control command as a "hold" that turned out to be a different over-fire (cd-compound), not a real hold — only checking against the bare TUI caught it. Cross-ref §#449 (verify external-system behavior empirically) / §#591 (a recovery probe must start from the actual failure state).
