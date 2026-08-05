@@ -45,7 +45,7 @@ interface LinearNewIssuesPluginConfig {
 
 export interface LinearNewIssuesPluginState {
   teams: Record<string, string[]>
-  // Keys that have completed the pagination-fix migration tick (see runTick).
+  // Keys that have completed the paginated re-seed (see runTick).
   // A key absent from this list — including every key in state written before
   // this field existed — gets one silent re-seed tick instead of a diff
   // against its (possibly window-truncated) `teams[key]`, so the first tick
@@ -231,7 +231,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       const issues = result.issues
 
       // First observation of this watch (or full re-seed), or a key that
-      // hasn't been through the pagination-fix migration tick yet: capture
+      // hasn't been through the paginated re-seed yet: capture
       // without emitting. `seen` still unions with `prev.teams[key]` in every
       // case below — only the announce is gated, not the accumulation (see
       // `paginatedKeys` doc-comment).

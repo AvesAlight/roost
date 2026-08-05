@@ -299,10 +299,8 @@ function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
 }
 
 // Linear's GraphQL connections default to `first: 50` when the arg is
-// omitted — the root cause this file used to have: an unpaginated
-// `issues { nodes {...} } }` silently truncated a team's open-issue set to
-// the first 50 in arbitrary order. Both queries below take `first`/`after`
-// and `fetchTeamOpenIssues` walks `pageInfo` until exhausted.
+// omitted, so both queries below pass `first`/`after` explicitly and
+// `fetchTeamOpenIssues` walks `pageInfo` until exhausted.
 const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
@@ -314,13 +312,8 @@ const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: S
   }
 }`
 
-// Project-scoped variant — fetches the project-existence check and the
-// filtered issue list off the same team node in the same round trip as the
-// unscoped query, so a scoped watch costs no extra round trips *per page*
-// than an unscoped one. It still pages the same as the unscoped query when
-// the team/project has more than one page of open issues — the "one call"
-// property is about not needing a second query for the project-existence
-// check, not about the connection being unpaginated.
+// Project-scoped variant — the project-existence check rides the same round
+// trip as each issue page, and the connection pages like the unscoped query.
 const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
@@ -335,12 +328,14 @@ const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: S
   }
 }`
 
-// Linear's per-page max, matching `ATTACHMENT_PAGE_SIZE` in linear-link.ts.
-// Team C sits at 74 open issues today, so `first: TEAM_ISSUES_PAGE_SIZE`
-// alone (one page) resolves the reported symptom; the cursor loop below is
-// durability past 250 issues, not something exercised by production traffic
-// at current scale.
+// Linear's per-page max; matches `ATTACHMENT_PAGE_SIZE` in linear-link.ts.
 const TEAM_ISSUES_PAGE_SIZE = 250
+
+// Backstop against a stuck/repeating cursor spinning a dispatcher tick
+// forever against the API. `fetchTeamOpenIssues` warns and stops paginating
+// if this is exceeded — 100 pages at TEAM_ISSUES_PAGE_SIZE is 25,000 issues,
+// far past any real team.
+export const MAX_ISSUE_PAGES = 100
 
 // Result of `fetchTeamOpenIssues`. `team-not-found`/`project-not-found` are
 // distinct so callers can emit the right "renamed or deleted?" warning text —
@@ -439,17 +434,37 @@ export class LinearClient {
 
     const allNodes: unknown[] = []
     let after: string | undefined
-    for (;;) {
+    for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
       const data = (await this.graphql(query, { ...baseVars, first: TEAM_ISSUES_PAGE_SIZE, after })) as {
         teams?: { nodes?: TeamNode[] }
       } | undefined | null
       const teamNode = data?.teams?.nodes?.[0]
-      if (!teamNode) return { kind: 'team-not-found' }
+      if (!teamNode) {
+        // Only trust an absent team node on the first page. Mid-walk it's a
+        // transient anomaly, not a renamed/deleted team — treating it as
+        // `team-not-found` here would both discard the pages already
+        // collected and tell an operator to unwatch a healthy team.
+        if (page === 0) return { kind: 'team-not-found' }
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query lost the team node mid-pagination (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
       if (linearProject && (teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
       allNodes.push(...(teamNode.issues?.nodes ?? []))
       const pageInfo = teamNode.issues?.pageInfo
-      if (!pageInfo?.hasNextPage || !pageInfo.endCursor) break
+      if (!pageInfo?.hasNextPage) break
+      if (!pageInfo.endCursor) {
+        // `hasNextPage: true` with no cursor to follow it — the same silent-
+        // truncation shape as the original bug (an incomplete issue set that
+        // looks complete). Warn loudly rather than return a partial set
+        // unremarked; see linear-link.ts's ATTACHMENT_PAGE_SIZE warn for the
+        // house pattern.
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query returned hasNextPage=true with no endCursor (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
       after = pageInfo.endCursor
+      if (page === MAX_ISSUE_PAGES - 1) {
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query exceeded ${MAX_ISSUE_PAGES} pages — stopping with a partial result.\n`)
+      }
     }
     return { kind: 'ok', issues: parseIssueNodes(allNodes) }
   }

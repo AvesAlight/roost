@@ -55,7 +55,7 @@ function stubRateLimit() {
 }
 
 // `paginatedKeys: [team]` marks this key as already through the
-// pagination-fix migration tick, so callers get normal steady-state diffing.
+// paginated re-seed, so callers get normal steady-state diffing.
 // The migration behavior itself (an unmigrated key) has its own dedicated
 // tests below.
 function prevState(identifiers: string[], team = 'C'): LinearNewIssuesPluginState {
