@@ -491,10 +491,32 @@ describe('LinearClient.fetchTeamOpenIssues', () => {
     expect(h.logs.some(l => l.includes('WARN') && l.includes('hasNextPage=true with no endCursor'))).toBe(true)
   })
 
+  it('only trusts an empty projects list as project-not-found on the first page', async () => {
+    const h = harness()
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls++
+      if (calls === 1) {
+        return new Response(okBody({
+          teams: { nodes: [{ projects: { nodes: [{ id: 'p1' }] }, issues: { nodes: [rawIssue('C-1')], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } } }] },
+        }), { status: 200, headers: OK_HEADERS })
+      }
+      // Projects list comes back empty mid-walk — a transient anomaly, not a renamed project.
+      return new Response(okBody({
+        teams: { nodes: [{ projects: { nodes: [] }, issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } }] },
+      }), { status: 200, headers: OK_HEADERS })
+    }) as unknown as typeof fetch
+
+    const result = await new LinearClient('k', h.log, { sleep: h.sleep, fetch: fetchImpl }).fetchTeamOpenIssues('C', 'Some Project')
+    // Not project-not-found — that would tell an operator to unwatch a healthy project.
+    expect(result.kind === 'ok' ? result.issues.map(i => i.identifier) : []).toEqual(['C-1'])
+    expect(h.logs.some(l => l.includes('WARN') && l.includes('lost the project mid-pagination'))).toBe(true)
+  })
+
   it('only trusts an absent team node as team-not-found on the first page', async () => {
     const h = harness()
     let calls = 0
-    const fetchImpl = (async (_url: string | URL | Request, _init?: RequestInit) => {
+    const fetchImpl = (async () => {
       calls++
       if (calls === 1) {
         return new Response(okBody({
@@ -503,7 +525,7 @@ describe('LinearClient.fetchTeamOpenIssues', () => {
       }
       // Team node vanishes mid-walk — a transient anomaly, not a renamed team.
       return new Response(okBody({ teams: { nodes: [] } }), { status: 200, headers: OK_HEADERS })
-    }) as typeof fetch
+    }) as unknown as typeof fetch
 
     const result = await new LinearClient('k', h.log, { sleep: h.sleep, fetch: fetchImpl }).fetchTeamOpenIssues('C')
     // Not team-not-found — that would tell an operator to unwatch a healthy team.
@@ -514,13 +536,13 @@ describe('LinearClient.fetchTeamOpenIssues', () => {
   it('stops after MAX_ISSUE_PAGES on a stuck/repeating cursor and warns', async () => {
     const h = harness()
     let calls = 0
-    const fetchImpl = (async (_url: string | URL | Request, _init?: RequestInit) => {
+    const fetchImpl = (async () => {
       calls++
       // Always claims another page with the same cursor — a stuck loop.
       return new Response(okBody({
         teams: { nodes: [{ issues: { nodes: [rawIssue(`C-${calls}`)], pageInfo: { hasNextPage: true, endCursor: 'same-cursor' } } }] },
       }), { status: 200, headers: OK_HEADERS })
-    }) as typeof fetch
+    }) as unknown as typeof fetch
 
     const result = await new LinearClient('k', h.log, { sleep: h.sleep, fetch: fetchImpl }).fetchTeamOpenIssues('C')
     expect(result.kind).toBe('ok')

@@ -439,16 +439,21 @@ export class LinearClient {
         teams?: { nodes?: TeamNode[] }
       } | undefined | null
       const teamNode = data?.teams?.nodes?.[0]
+      // A not-found verdict is only trustworthy on the first page — mid-walk,
+      // a vanished team node or an empty projects list is a transient
+      // anomaly, not a renamed/deleted team or project. Treating it as
+      // not-found there would both discard the pages already collected and
+      // tell an operator to unwatch something healthy.
       if (!teamNode) {
-        // Only trust an absent team node on the first page. Mid-walk it's a
-        // transient anomaly, not a renamed/deleted team — treating it as
-        // `team-not-found` here would both discard the pages already
-        // collected and tell an operator to unwatch a healthy team.
         if (page === 0) return { kind: 'team-not-found' }
         this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query lost the team node mid-pagination (page ${page + 1}) — stopping with a partial result.\n`)
         break
       }
-      if (linearProject && (teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
+      if (linearProject && (teamNode.projects?.nodes ?? []).length === 0) {
+        if (page === 0) return { kind: 'project-not-found' }
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" project "${linearProject}" query lost the project mid-pagination (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
       allNodes.push(...(teamNode.issues?.nodes ?? []))
       const pageInfo = teamNode.issues?.pageInfo
       if (!pageInfo?.hasNextPage) break
