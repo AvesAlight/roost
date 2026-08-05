@@ -298,31 +298,44 @@ function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
   return Array.isArray(nodes)
 }
 
-const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!) {
+// Linear's GraphQL connections default to `first: 50` when the arg is
+// omitted, so both queries below pass `first`/`after` explicitly and
+// `fetchTeamOpenIssues` walks `pageInfo` until exhausted.
+const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
-      issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }) {
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: $first, after: $after) {
         nodes { id identifier title labels { nodes { name } } url }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`
 
-// Project-scoped variant — fetches the project-existence check and the
-// filtered issue list off the same team node in one round trip, so a scoped
-// watch costs the same one API call per tick as an unscoped one.
-const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!) {
+// Project-scoped variant — the project-existence check rides the same round
+// trip as each issue page, and the connection pages like the unscoped query.
+const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
       projects(filter: { name: { eq: $projectName } }) {
         nodes { id }
       }
-      issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }) {
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }, first: $first, after: $after) {
         nodes { id identifier title labels { nodes { name } } url }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`
+
+// Linear's per-page max; matches `ATTACHMENT_PAGE_SIZE` in linear-link.ts.
+const TEAM_ISSUES_PAGE_SIZE = 250
+
+// Backstop against a stuck/repeating cursor spinning a dispatcher tick
+// forever against the API. `fetchTeamOpenIssues` warns and stops paginating
+// if this is exceeded — 100 pages at TEAM_ISSUES_PAGE_SIZE is 25,000 issues,
+// far past any real team.
+export const MAX_ISSUE_PAGES = 100
 
 // Result of `fetchTeamOpenIssues`. `team-not-found`/`project-not-found` are
 // distinct so callers can emit the right "renamed or deleted?" warning text —
@@ -415,21 +428,50 @@ export class LinearClient {
   // an otherwise-valid team; `ok` (possibly with an empty `issues` array)
   // covers everything resolving cleanly.
   async fetchTeamOpenIssues(teamKey: string, linearProject?: string): Promise<FetchTeamIssuesResult> {
-    if (linearProject) {
-      const data = (await this.graphql(TEAM_PROJECT_OPEN_ISSUES_QUERY, { teamKey, projectName: linearProject })) as {
-        teams?: { nodes?: Array<{ projects?: { nodes?: unknown[] }; issues?: { nodes?: unknown[] } }> }
+    type TeamNode = { projects?: { nodes?: unknown[] }; issues?: { nodes?: unknown[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } } }
+    const query = linearProject ? TEAM_PROJECT_OPEN_ISSUES_QUERY : TEAM_OPEN_ISSUES_QUERY
+    const baseVars: Record<string, unknown> = linearProject ? { teamKey, projectName: linearProject } : { teamKey }
+
+    const allNodes: unknown[] = []
+    let after: string | undefined
+    for (let page = 0; page < MAX_ISSUE_PAGES; page++) {
+      const data = (await this.graphql(query, { ...baseVars, first: TEAM_ISSUES_PAGE_SIZE, after })) as {
+        teams?: { nodes?: TeamNode[] }
       } | undefined | null
       const teamNode = data?.teams?.nodes?.[0]
-      if (!teamNode) return { kind: 'team-not-found' }
-      if ((teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
-      return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
+      // A not-found verdict is only trustworthy on the first page — mid-walk,
+      // a vanished team node or an empty projects list is a transient
+      // anomaly, not a renamed/deleted team or project. Treating it as
+      // not-found there would both discard the pages already collected and
+      // tell an operator to unwatch something healthy.
+      if (!teamNode) {
+        if (page === 0) return { kind: 'team-not-found' }
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query lost the team node mid-pagination (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
+      if (linearProject && (teamNode.projects?.nodes ?? []).length === 0) {
+        if (page === 0) return { kind: 'project-not-found' }
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" project "${linearProject}" query lost the project mid-pagination (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
+      allNodes.push(...(teamNode.issues?.nodes ?? []))
+      const pageInfo = teamNode.issues?.pageInfo
+      if (!pageInfo?.hasNextPage) break
+      if (!pageInfo.endCursor) {
+        // `hasNextPage: true` with no cursor to follow it — the same silent-
+        // truncation shape as the original bug (an incomplete issue set that
+        // looks complete). Warn loudly rather than return a partial set
+        // unremarked; see linear-link.ts's ATTACHMENT_PAGE_SIZE warn for the
+        // house pattern.
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query returned hasNextPage=true with no endCursor (page ${page + 1}) — stopping with a partial result.\n`)
+        break
+      }
+      after = pageInfo.endCursor
+      if (page === MAX_ISSUE_PAGES - 1) {
+        this.log(`[linear-new-issues] WARN: team "${teamKey}" issues query exceeded ${MAX_ISSUE_PAGES} pages — stopping with a partial result.\n`)
+      }
     }
-    const data = (await this.graphql(TEAM_OPEN_ISSUES_QUERY, { teamKey })) as {
-      teams?: { nodes?: Array<{ issues?: { nodes?: unknown[] } }> }
-    } | undefined | null
-    const teamNode = data?.teams?.nodes?.[0]
-    if (!teamNode) return { kind: 'team-not-found' }
-    return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
+    return { kind: 'ok', issues: parseIssueNodes(allNodes) }
   }
 
   // Boot probe: confirms auth + identifies the workspace and teams. Throws
