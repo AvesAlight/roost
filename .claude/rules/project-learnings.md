@@ -49,3 +49,11 @@ The key question: is the spelling literally what the operator or reader sees, or
 ## 2026-07-01: Permbot/permission changes require live parity testing against the native TUI (from #598)
 
 Any change to classifyBash or the permission-prompt relay needs an empirical pass against the native TUI before merge — spawn a bare agent with no --perm-irc, and confirm via tool_use→tool_result gap which commands actually hold. We require absolute parity with default TUI holds, no more and no less. The #598 fix (a regex narrowing) initially cited a control command as a "hold" that turned out to be a different over-fire (cd-compound), not a real hold — only checking against the bare TUI caught it. Cross-ref §#449 (verify external-system behavior empirically) / §#591 (a recovery probe must start from the actual failure state).
+
+## 2026-08-05: An invented taxonomy can hide a missing fact, not just make prose hard to read (from C-1289)
+
+In the worker's own words: "the invented taxonomy didn't just make the doc hard to read, it hid a missing table, because everything had to be either 'consent' or 'deliverability' and `push_opt_outs` fit neither label I'd invented."
+
+The doc had forced every fact into one of two invented categories. A fact that belonged to neither wasn't dropped by a visible decision — it was invisible, because there was no bucket to put it in and so it never got looked for. The survey missed an entire table (`push_opt_outs`, already gating sends) not because nobody read the code, but because the taxonomy set up in advance had no slot for what that code did.
+
+Operational corollary: when a review catches a wrong framing (see PR review round on C-1289), don't stop at correcting the specific wrong sentence — check whether the categories the doc invented could have excluded a fact entirely. Premature structure is a stronger failure mode than a wrong claim: a wrong claim is falsifiable once someone reads it, a hidden fact is invisible until someone happens to look outside the taxonomy.
