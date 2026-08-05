@@ -54,12 +54,8 @@ function stubRateLimit() {
   afterAll(() => { spy.mockRestore() })
 }
 
-// `paginatedKeys: [team]` marks this key as already through the
-// paginated re-seed, so callers get normal steady-state diffing.
-// The migration behavior itself (an unmigrated key) has its own dedicated
-// tests below.
 function prevState(identifiers: string[], team = 'C'): LinearNewIssuesPluginState {
-  return { teams: { [team]: [...identifiers].sort() }, paginatedKeys: [team] }
+  return { teams: { [team]: [...identifiers].sort() } }
 }
 
 describe('LinearNewIssuesPlugin.runTick', () => {
@@ -143,51 +139,6 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('migration tick: an already-watched key missing paginatedKeys captures silently and marks migrated', async () => {
-    // Simulates the deploy transition: prev state predates the pagination fix
-    // (no `paginatedKeys` field), so its seen-set may be a window-truncated
-    // subset. C-40 stands in for an older issue that only becomes visible
-    // once the query is fully paginated — it must not announce this tick.
-    const spy = stubFetch([issue('C-1'), issue('C-2'), issue('C-40')])
-    try {
-      const { plugin } = makePlugin()
-      const prev: LinearNewIssuesPluginState = { teams: { C: ['C-1', 'C-2'] } } // no paginatedKeys
-      const result = await plugin.runTick(baseConfig(), prev)
-      expect(result.messages).toHaveLength(0)
-      const state = result.state as LinearNewIssuesPluginState
-      expect(state.teams['C']).toEqual(['C-1', 'C-2', 'C-40'])
-      expect(state.paginatedKeys).toEqual(['C'])
-    } finally { spy.mockRestore() }
-  })
-
-  it('migration tick only swallows the current fetch, not future ticks — a genuinely new issue announces next time', async () => {
-    const spy = stubFetch([issue('C-1'), issue('C-40')])
-    try {
-      const { plugin } = makePlugin()
-      const migrationTick = await plugin.runTick(baseConfig(), { teams: { C: ['C-1'] } })
-      expect(migrationTick.messages).toHaveLength(0)
-      spy.mockRestore()
-
-      const spy2 = stubFetch([issue('C-1'), issue('C-40'), issue('C-41')])
-      const nextTick = await plugin.runTick(baseConfig(), migrationTick.state)
-      const texts = nextTick.messages.map(e => e.text)
-      expect(texts.some(t => t.includes('C-41'))).toBe(true)
-      expect(texts.some(t => t.includes('C-40'))).toBe(false)
-      spy2.mockRestore()
-    } finally { /* both spies restored above */ }
-  })
-
-  it('a key already marked migrated diffs normally even with a window-shaped seen-set', async () => {
-    const spy = stubFetch([issue('C-1'), issue('C-2'), issue('C-40')])
-    try {
-      const { plugin } = makePlugin()
-      const prev: LinearNewIssuesPluginState = { teams: { C: ['C-1', 'C-2'] }, paginatedKeys: ['C'] }
-      const result = await plugin.runTick(baseConfig(), prev)
-      const texts = result.messages.map(e => e.text)
-      expect(texts.some(t => t.includes('C-40'))).toBe(true)
-    } finally { spy.mockRestore() }
-  })
-
   it('no-ops when watched list is empty', async () => {
     const config: OrchestratorConfig = {
       project: 'proj',
@@ -256,7 +207,7 @@ describe('LinearNewIssuesPlugin.runTick', () => {
         },
       }
       const { plugin } = makePlugin()
-      const result = await plugin.runTick(config, { teams: { C: [], MAR: [] }, paginatedKeys: ['C', 'MAR'] })
+      const result = await plugin.runTick(config, { teams: { C: [], MAR: [] } })
       expect(calls).toEqual(['C', 'MAR'])
       expect(result.messages).toHaveLength(2)
       expect(result.messages[0]?.text).toContain('C-1')
@@ -355,7 +306,7 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
         plugins: { 'linear-new-issues': { watched: [{ team: 'C' }, { team: 'C', linearProject: 'SDK 4.3.14' }] } },
       }
       const { plugin } = makePlugin()
-      const result = await plugin.runTick(config, { teams: { C: ['C-1'], 'C::SDK 4.3.14': ['C-1'] }, paginatedKeys: ['C', 'C::SDK 4.3.14'] })
+      const result = await plugin.runTick(config, { teams: { C: ['C-1'], 'C::SDK 4.3.14': ['C-1'] } })
       const texts = result.messages.map(e => e.text)
       expect(texts.some(t => t.includes('C-2'))).toBe(true)
       expect(texts.some(t => t.includes('C-3'))).toBe(true)
@@ -386,7 +337,7 @@ describe('LinearNewIssuesPlugin.runTick — project-scoped watches', () => {
         },
       }
       const { plugin } = makePlugin()
-      const result = await plugin.runTick(config, { teams: { 'C::X': ['C-1'], 'C::Y': [] }, paginatedKeys: ['C::X', 'C::Y'] })
+      const result = await plugin.runTick(config, { teams: { 'C::X': ['C-1'], 'C::Y': [] } })
       const texts = result.messages.map(e => e.text)
       expect(texts.some(t => t.includes('C-2'))).toBe(true)
       expect(texts.some(t => t.includes('C-10'))).toBe(true)
