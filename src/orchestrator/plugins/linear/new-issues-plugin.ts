@@ -5,11 +5,12 @@
 // DM grammar: claims target=`linear-team` — `watch linear-team <TEAM>
 // [project:"<NAME>"] [#chan ...]`. Team key must match `^[A-Z]+$`.
 //
-// State slice: `{ teams: Record<string, string[]> }`, keyed by
-// `entryKey(team, linearProject)` — bare team key when unscoped, `team::project`
-// when scoped. Seeding (`prev===null`) and first-observation of a new watch
-// entry both capture without emitting. Removed entries are carried forward so
-// remove-then-readd doesn't replay.
+// State slice: `{ teams: Record<string, string[]>, paginatedKeys?: string[] }`,
+// keyed by `entryKey(team, linearProject)` — bare team key when unscoped,
+// `team::project` when scoped. Seeding (`prev===null`), first-observation of
+// a new watch entry, and a key not yet in `paginatedKeys` all capture without
+// emitting (see `paginatedKeys` doc-comment for why the last case exists).
+// Removed entries are carried forward so remove-then-readd doesn't replay.
 import type { Command } from '../../dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from '../../config.js'
 import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
@@ -44,6 +45,21 @@ interface LinearNewIssuesPluginConfig {
 
 export interface LinearNewIssuesPluginState {
   teams: Record<string, string[]>
+  // Keys that have completed the pagination-fix migration tick (see runTick).
+  // A key absent from this list — including every key in state written before
+  // this field existed — gets one silent re-seed tick instead of a diff
+  // against its (possibly window-truncated) `teams[key]`, so the first tick
+  // against the now-fully-paginated query doesn't announce a flood of
+  // previously-invisible-but-not-actually-new issues.
+  //
+  // Rejected alternative: renaming the state key (e.g. `teams` → `teams_v2`)
+  // so the absent key falls through the existing first-observation path for
+  // free. That's wrong, not just more code: it drops the historical seen-ids
+  // instead of unioning with them, so an issue that was closed (and thus
+  // already in `teams[key]`) and later reopens would look unseen and
+  // re-announce. `paginatedKeys` gates the *announce* only — `seen` below
+  // still always seeds from `prev.teams[key]` and the union is what's persisted.
+  paginatedKeys?: string[]
 }
 
 export class LinearNewIssuesPlugin extends BasePlugin {
@@ -178,6 +194,7 @@ export class LinearNewIssuesPlugin extends BasePlugin {
 
     const messages: PluginMessage[] = []
     const nextTeams: Record<string, string[]> = prev ? { ...prev.teams } : {}
+    const migratedKeys = new Set<string>(prev?.paginatedKeys ?? [])
 
     for (const entry of watchEntries) {
       const { team, linearProject, channels } = entry
@@ -213,8 +230,12 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       }
       const issues = result.issues
 
-      // First observation of this watch (or full re-seed): capture without emitting.
-      const isFirstForKey = prev === null || prev.teams[key] === undefined
+      // First observation of this watch (or full re-seed), or a key that
+      // hasn't been through the pagination-fix migration tick yet: capture
+      // without emitting. `seen` still unions with `prev.teams[key]` in every
+      // case below — only the announce is gated, not the accumulation (see
+      // `paginatedKeys` doc-comment).
+      const isFirstForKey = prev === null || prev.teams[key] === undefined || !migratedKeys.has(key)
       const seen = new Set<string>(prev?.teams[key] ?? [])
 
       if (!isFirstForKey) {
@@ -231,10 +252,11 @@ export class LinearNewIssuesPlugin extends BasePlugin {
 
       for (const i of issues) seen.add(i.identifier)
       nextTeams[key] = [...seen].sort((a, b) => linearIdNum(a) - linearIdNum(b))
+      migratedKeys.add(key)
     }
 
     messages.push(...this.observeLinearRateLimit(resolveProjectChannel(config)))
-    const state: LinearNewIssuesPluginState = { teams: nextTeams }
+    const state: LinearNewIssuesPluginState = { teams: nextTeams, paginatedKeys: [...migratedKeys].sort() }
     return { state, messages, channels: [] }
   }
 

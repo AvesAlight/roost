@@ -298,31 +298,49 @@ function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
   return Array.isArray(nodes)
 }
 
-const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!) {
+// Linear's GraphQL connections default to `first: 50` when the arg is
+// omitted — the root cause this file used to have: an unpaginated
+// `issues { nodes {...} } }` silently truncated a team's open-issue set to
+// the first 50 in arbitrary order. Both queries below take `first`/`after`
+// and `fetchTeamOpenIssues` walks `pageInfo` until exhausted.
+const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
-      issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }) {
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: $first, after: $after) {
         nodes { id identifier title labels { nodes { name } } url }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`
 
 // Project-scoped variant — fetches the project-existence check and the
-// filtered issue list off the same team node in one round trip, so a scoped
-// watch costs the same one API call per tick as an unscoped one.
-const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!) {
+// filtered issue list off the same team node in the same round trip as the
+// unscoped query, so a scoped watch costs no extra round trips *per page*
+// than an unscoped one. It still pages the same as the unscoped query when
+// the team/project has more than one page of open issues — the "one call"
+// property is about not needing a second query for the project-existence
+// check, not about the connection being unpaginated.
+const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }) {
     nodes {
       projects(filter: { name: { eq: $projectName } }) {
         nodes { id }
       }
-      issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }) {
+      issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }, first: $first, after: $after) {
         nodes { id identifier title labels { nodes { name } } url }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`
+
+// Linear's per-page max, matching `ATTACHMENT_PAGE_SIZE` in linear-link.ts.
+// Team C sits at 74 open issues today, so `first: TEAM_ISSUES_PAGE_SIZE`
+// alone (one page) resolves the reported symptom; the cursor loop below is
+// durability past 250 issues, not something exercised by production traffic
+// at current scale.
+const TEAM_ISSUES_PAGE_SIZE = 250
 
 // Result of `fetchTeamOpenIssues`. `team-not-found`/`project-not-found` are
 // distinct so callers can emit the right "renamed or deleted?" warning text —
@@ -415,21 +433,25 @@ export class LinearClient {
   // an otherwise-valid team; `ok` (possibly with an empty `issues` array)
   // covers everything resolving cleanly.
   async fetchTeamOpenIssues(teamKey: string, linearProject?: string): Promise<FetchTeamIssuesResult> {
-    if (linearProject) {
-      const data = (await this.graphql(TEAM_PROJECT_OPEN_ISSUES_QUERY, { teamKey, projectName: linearProject })) as {
-        teams?: { nodes?: Array<{ projects?: { nodes?: unknown[] }; issues?: { nodes?: unknown[] } }> }
+    type TeamNode = { projects?: { nodes?: unknown[] }; issues?: { nodes?: unknown[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } } }
+    const query = linearProject ? TEAM_PROJECT_OPEN_ISSUES_QUERY : TEAM_OPEN_ISSUES_QUERY
+    const baseVars: Record<string, unknown> = linearProject ? { teamKey, projectName: linearProject } : { teamKey }
+
+    const allNodes: unknown[] = []
+    let after: string | undefined
+    for (;;) {
+      const data = (await this.graphql(query, { ...baseVars, first: TEAM_ISSUES_PAGE_SIZE, after })) as {
+        teams?: { nodes?: TeamNode[] }
       } | undefined | null
       const teamNode = data?.teams?.nodes?.[0]
       if (!teamNode) return { kind: 'team-not-found' }
-      if ((teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
-      return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
+      if (linearProject && (teamNode.projects?.nodes ?? []).length === 0) return { kind: 'project-not-found' }
+      allNodes.push(...(teamNode.issues?.nodes ?? []))
+      const pageInfo = teamNode.issues?.pageInfo
+      if (!pageInfo?.hasNextPage || !pageInfo.endCursor) break
+      after = pageInfo.endCursor
     }
-    const data = (await this.graphql(TEAM_OPEN_ISSUES_QUERY, { teamKey })) as {
-      teams?: { nodes?: Array<{ issues?: { nodes?: unknown[] } }> }
-    } | undefined | null
-    const teamNode = data?.teams?.nodes?.[0]
-    if (!teamNode) return { kind: 'team-not-found' }
-    return { kind: 'ok', issues: parseIssueNodes(teamNode.issues?.nodes ?? []) }
+    return { kind: 'ok', issues: parseIssueNodes(allNodes) }
   }
 
   // Boot probe: confirms auth + identifies the workspace and teams. Throws
