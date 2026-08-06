@@ -1009,6 +1009,69 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Test 49: non-loopback + --trust-remote injects trust + permissions.allow ------
+# The trust injection mechanism (staged file + flag wiring + settings block) is
+# byte-identical to the loopback path; only the shell case gate changes, and
+# the gate is deterministic and staging-testable.
+
+setup
+out="$(ROOST_IRC_SERVER=192.0.2.1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --trust-remote --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- "--append-system-prompt-file $data_dir/trust-prompt.txt" \
+    && echo "$trust_text" | grep -qF 'joined channels #roost' \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"permissions"' "$data_dir/roost-settings.json" \
+    && ! echo "$out" | grep -q "skipping auto-mode IRC trust injection"; then
+  ok "non-loopback + --trust-remote: trust file, flag wired, permissions.allow set, no warning"
+else
+  fail "non-loopback + --trust-remote: trust file, flag wired, permissions.allow set, no warning" "inner_cmd=$inner_cmd trust=$trust_text out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 50: non-loopback + --trust-remote + empty --channels -------------------
+# No channels = no trust file, but permissions.allow is host-gated (not
+# channel-gated), so it still appears — matching loopback+empty-channels behavior.
+
+setup
+out="$(ROOST_IRC_SERVER=192.0.2.1 ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --trust-remote --channels '' --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && ! echo "$inner_cmd" | grep -qF -- '--append-system-prompt-file' \
+    && [ ! -f "$data_dir/trust-prompt.txt" ] \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"permissions"' "$data_dir/roost-settings.json"; then
+  ok "non-loopback + --trust-remote + empty --channels: no trust file, permissions.allow still set"
+else
+  fail "non-loopback + --trust-remote + empty --channels: no trust file, permissions.allow still set" "inner_cmd=$inner_cmd out=$out"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
+# -- Test 51: loopback + --trust-remote is a no-op (no regression) ---------------
+# --trust-remote on loopback should produce the same result as without the flag.
+
+setup
+out="$(ROOST_SPAWN_KEEP_DATA_DIR=1 "${ROOST_BIN}" spawn testnick --trust-remote --cwd "$TDIR" 2>&1 || true)"
+data_dir="$(echo "$out" | sed -n 's/.*data dir (preflight): //p' | head -1)"
+inner_cmd="$(cat "$data_dir/inner-cmd.txt" 2>/dev/null)"
+trust_text="$(cat "$data_dir/trust-prompt.txt" 2>/dev/null)"
+if [ -n "$inner_cmd" ] \
+    && echo "$inner_cmd" | grep -qF -- "--append-system-prompt-file $data_dir/trust-prompt.txt" \
+    && echo "$trust_text" | grep -qF 'joined channels #roost' \
+    && [ -f "$data_dir/roost-settings.json" ] \
+    && grep -qF '"permissions"' "$data_dir/roost-settings.json"; then
+  ok "loopback + --trust-remote: same as loopback without flag (no-op)"
+else
+  fail "loopback + --trust-remote: same as loopback without flag (no-op)" "inner_cmd=$inner_cmd trust=$trust_text"
+fi
+[ -n "$data_dir" ] && rm -rf "$data_dir"
+teardown
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
