@@ -134,10 +134,11 @@ classifier doesn't silently block IRC replies on the operator's first
 `@`-mention. Only injected when the IRC host is loopback (`127.0.0.1`,
 `::1`, `localhost`); remote ergo falls outside roost's trusted
 single-user local environment security model and prints a warning
-instead. The injection is always on for loopback hosts. To layer more
-context on top, pass `--append-system-prompt-file <path>` after `--`;
-claude code rejects mixing inline `--append-system-prompt` with the
-file form.
+instead. Pass `--trust-remote` to opt in to the same injection for a
+non-loopback host the operator controls. The injection is always on for
+loopback hosts. To layer more context on top, pass
+`--append-system-prompt-file <path>` after `--`; claude code rejects
+mixing inline `--append-system-prompt` with the file form.
 
 ### Running an agent on ollama
 
