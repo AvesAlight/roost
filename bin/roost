@@ -146,8 +146,10 @@ channels as legitimate user-instruction sources, so the auto-mode
 classifier doesn't silently block IRC replies on the operator's first
 @-mention. Only injected when the IRC host is loopback (127.0.0.1, ::1,
 localhost); remote ergo falls outside roost's trusted single-user local
-environment security model and prints a warning instead. The injection
-is always on for loopback hosts. To layer more context on top, pass
+environment security model and prints a warning instead. Pass
+\`--trust-remote\` to opt in to the same injection for a non-loopback
+host the operator controls. The injection is always on for loopback
+hosts. To layer more context on top, pass
 \`--append-system-prompt-file <path>\` after \`--\`; claude code rejects
 mixing inline \`--append-system-prompt\` with the file form.
 
@@ -203,6 +205,13 @@ Options:
                              var is injected and claude-code's native
                              cache behavior applies. See "Agent class
                              guidance" below for which value to pick.
+  --trust-remote             Opt in to IRC trust injection for non-loopback
+                             IRC hosts. By default, the trust statement and
+                             MCP permissions.allow are only injected for
+                             loopback hosts (127.0.0.1, ::1, localhost).
+                             Pass this flag when the operator controls the
+                             remote ergo instance and considers it a trusted
+                             single-user local environment equivalent.
   --steer-compact            Opt in to roost's auto-compact intercept.
                              Wires a PreCompact hook that, on
                              \`trigger=auto\`, blocks the directive-less
@@ -688,6 +697,7 @@ cmd_spawn() {
   local permission_mode=""
   local cache_ttl=""
   local steer_compact=0
+  local trust_remote=0
   local ollama_model=""
   local extra_args=()
 
@@ -716,6 +726,7 @@ cmd_spawn() {
       --permission-mode) permission_mode="$2"; shift 2 ;;
       --cache-ttl)      cache_ttl="$2"; shift 2 ;;
       --steer-compact)  steer_compact=1; shift ;;
+      --trust-remote)   trust_remote=1; shift ;;
       --ollama-model)   ollama_model="$2"; shift 2 ;;
 
       --)               shift; extra_args=("$@"); break ;;
@@ -968,15 +979,20 @@ cmd_spawn() {
     pretooluse_hook_json=",\"PreToolUse\":[${_ptu_joined}]"
   fi
   # Allow roost-irc MCP tools without a permission prompt on loopback sessions
-  # (same gate as trust injection below). Remote ergo doesn't get the allow.
+  # (same gate as trust injection below). Non-loopback hosts get the allow
+  # when --trust-remote is passed.
   # "permissions" is the only top-level key added here alongside "hooks"; keep
   # it that way to avoid duplicate-key collisions in the written JSON.
   local permissions_json=""
-  case "${IRC_HOST}" in
-    127.0.0.1|::1|localhost)
-      permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
-      ;;
-  esac
+  if [ "${trust_remote}" -eq 1 ]; then
+    permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
+  else
+    case "${IRC_HOST}" in
+      127.0.0.1|::1|localhost)
+        permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
+        ;;
+    esac
+  fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
   printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}${permissions_json}}" > "${ROOST_SETTINGS}"
   # Test seam: ROOST_SPAWN_KEEP_DATA_DIR=1 echoes the data-dir path early and
@@ -1065,11 +1081,12 @@ cmd_spawn() {
   # are effectively the operator's voice, but auto mode does not know that
   # without being told and the silent block lands the operator's first
   # @-mention in the tmux pane instead of on IRC. Gated on loopback IRC_HOST
-  # because the trust assumption only holds for local ergo; skipped when no
-  # channels were requested. The text names the *requested* --channels rather
-  # than the actually-joined set; failed JOINs aren't detected here and the
-  # classifier still trusts those channel names, which is acceptable under
-  # the trusted single-user local environment assumption.
+  # by default; pass --trust-remote to opt in for a non-loopback host the
+  # operator controls. Skipped when no channels were requested. The text
+  # names the *requested* --channels rather than the actually-joined set;
+  # failed JOINs aren't detected here and the classifier still trusts those
+  # channel names, which is acceptable under the trusted single-user local
+  # environment assumption.
   #
   # The trust text is staged to a file and passed via --append-system-prompt-file
   # rather than --append-system-prompt to sidestep shell-quoting landmines:
@@ -1081,18 +1098,26 @@ cmd_spawn() {
   local trust_flag=""
   local _channels_for_trust
   _channels_for_trust="$(printf '%s' "${channels}" | tr -d '[:space:]')"
-  case "${IRC_HOST}" in
-    127.0.0.1|::1|localhost)
-      if [ -n "${_channels_for_trust}" ]; then
-        local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
-        printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
-        trust_flag=" --append-system-prompt-file ${_trust_file}"
-      fi
-      ;;
-    *)
-      echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
-      ;;
-  esac
+  if [ "${trust_remote}" -eq 1 ]; then
+    if [ -n "${_channels_for_trust}" ]; then
+      local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
+      printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
+      trust_flag=" --append-system-prompt-file ${_trust_file}"
+    fi
+  else
+    case "${IRC_HOST}" in
+      127.0.0.1|::1|localhost)
+        if [ -n "${_channels_for_trust}" ]; then
+          local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
+          printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
+          trust_flag=" --append-system-prompt-file ${_trust_file}"
+        fi
+        ;;
+      *)
+        echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
+        ;;
+    esac
+  fi
   # Launcher prefix: `claude` against Anthropic by default, or
   # `ollama launch claude --model <tag> --` when --ollama-model is set. The
   # roost args below pass through ollama's `--` separator verbatim and
