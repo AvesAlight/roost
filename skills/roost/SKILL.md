@@ -33,6 +33,7 @@ roost spawn <nick> [-c CHANS] [-m MODEL] [--agent NAME] [-s SESSION] [--mcp-conf
                    [--cwd PATH] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
+                   [--trust-remote] \
                    [--ollama-model TAG] \
                    [--perm-irc --perm-target NICK] \
                    [--ask-irc CHANNEL --ask-target NICK]
@@ -82,7 +83,11 @@ Defaults:
   an operator choice — e.g. spawn your pm/apm with `--ollama-model` to
   run those on an ollama-hosted model while workers/reviewers stay on
   Anthropic.
-
+- `--trust-remote`: opt-in. By default, the trust statement and MCP
+  permissions.allow are only injected for loopback hosts (127.0.0.1,
+  ::1, localhost). Pass this flag when the operator controls the remote
+  ergo instance and considers it a trusted single-user local
+  environment equivalent.
 The wrapper handles the `ROOST_IRC_*` env vars, the
 `--dangerously-load-development-channels server:plugin:roost:roost-irc` flag, the
 `--permission-mode` flag (with `--agent`, defers to the agent's native

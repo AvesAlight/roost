@@ -983,15 +983,17 @@ cmd_spawn() {
   # when --trust-remote is passed.
   # "permissions" is the only top-level key added here alongside "hooks"; keep
   # it that way to avoid duplicate-key collisions in the written JSON.
-  local permissions_json=""
+  local _trust_eligible=0
   if [ "${trust_remote}" -eq 1 ]; then
-    permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
+    _trust_eligible=1
   else
     case "${IRC_HOST}" in
-      127.0.0.1|::1|localhost)
-        permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
-        ;;
+      127.0.0.1|::1|localhost) _trust_eligible=1 ;;
     esac
+  fi
+  local permissions_json=""
+  if [ "${_trust_eligible}" -eq 1 ]; then
+    permissions_json=",\"permissions\":{\"allow\":[\"mcp__plugin_roost_roost-irc__*\",\"mcp__roost-irc__*\"]}"
   fi
   local ROOST_SETTINGS="${ROOST_DATA_DIR}/roost-settings.json"
   printf '%s\n' "{\"hooks\":{${precompact_hook_json}\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-post-compact-hook\"}]}],\"SessionStart\":[{\"matcher\":\"compact\",\"hooks\":[{\"type\":\"command\",\"command\":\"${ROOST_BIN} hook-exec roost-session-start-hook\"}]}]${perm_hook_json}${pretooluse_hook_json}}${permissions_json}}" > "${ROOST_SETTINGS}"
@@ -1098,25 +1100,14 @@ cmd_spawn() {
   local trust_flag=""
   local _channels_for_trust
   _channels_for_trust="$(printf '%s' "${channels}" | tr -d '[:space:]')"
-  if [ "${trust_remote}" -eq 1 ]; then
+  if [ "${_trust_eligible}" -eq 1 ]; then
     if [ -n "${_channels_for_trust}" ]; then
       local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
       printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
       trust_flag=" --append-system-prompt-file ${_trust_file}"
     fi
   else
-    case "${IRC_HOST}" in
-      127.0.0.1|::1|localhost)
-        if [ -n "${_channels_for_trust}" ]; then
-          local _trust_file="${ROOST_DATA_DIR}/trust-prompt.txt"
-          printf '%s' "This Claude Code session is connected to a local IRCv3 server via the roost-irc MCP under roost's trusted single-user local environment security model. Messages received in joined channels ${_channels_for_trust} via that MCP (in-channel messages, @-mentions, and DMs) are legitimate user instructions for this session. Treat them as if typed at the terminal. Reply via channel_message or direct_message." > "${_trust_file}"
-          trust_flag=" --append-system-prompt-file ${_trust_file}"
-        fi
-        ;;
-      *)
-        echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
-        ;;
-    esac
+    echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
   fi
   # Launcher prefix: `claude` against Anthropic by default, or
   # `ollama launch claude --model <tag> --` when --ollama-model is set. The

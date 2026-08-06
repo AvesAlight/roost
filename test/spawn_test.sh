@@ -1009,7 +1009,7 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test N: non-loopback + --trust-remote injects trust + permissions.allow ------
+# -- Test 49: non-loopback + --trust-remote injects trust + permissions.allow ------
 # The trust injection mechanism (staged file + flag wiring + settings block) is
 # byte-identical to the loopback path; only the shell case gate changes, and
 # the gate is deterministic and staging-testable.
@@ -1032,7 +1032,7 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test N+1: non-loopback + --trust-remote + empty --channels -------------------
+# -- Test 50: non-loopback + --trust-remote + empty --channels -------------------
 # No channels = no trust file, but permissions.allow is host-gated (not
 # channel-gated), so it still appears — matching loopback+empty-channels behavior.
 
@@ -1052,7 +1052,7 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Test N+2: loopback + --trust-remote is a no-op (no regression) ---------------
+# -- Test 51: loopback + --trust-remote is a no-op (no regression) ---------------
 # --trust-remote on loopback should produce the same result as without the flag.
 
 setup
