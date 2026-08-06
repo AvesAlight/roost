@@ -142,9 +142,11 @@ same resolved mode (peeking at agent frontmatter locally when needed) to
 skip wiring itself for modes that never block on bash — see --perm-irc below.
 
 Spawn also injects \`--append-system-prompt-file\` naming the joined
-channels as legitimate user-instruction sources, so the auto-mode
-classifier doesn't silently block IRC replies on the operator's first
-@-mention. Only injected when the IRC host is loopback (127.0.0.1, ::1,
+channels as legitimate user-instruction sources, so that under
+\`--permission-mode auto\` the model will issue consequential tool calls
+(Bash, Edit) in response to IRC messages rather than treating them as
+untrusted external data (channel_message posting itself is not blocked).
+Only injected when the IRC host is loopback (127.0.0.1, ::1,
 localhost); remote ergo falls outside roost's trusted single-user local
 environment security model and prints a warning instead. Pass
 \`--trust-remote\` to opt in to the same injection for a non-loopback
@@ -1081,8 +1083,11 @@ cmd_spawn() {
   # Roost's security model assumes a trusted single-user local environment
   # (see README, Security model), so messages arriving on the joined channels
   # are effectively the operator's voice, but auto mode does not know that
-  # without being told and the silent block lands the operator's first
-  # @-mention in the tmux pane instead of on IRC. Gated on loopback IRC_HOST
+  # without being told. The load-bearing effect is at the consequential-tool
+  # *issuance* layer: without this clause the model treats IRC as untrusted
+  # peer chatter and declines to issue Bash/Edit calls in response, so
+  # IRC-driven work can't start; channel_message posting itself is not
+  # blocked. Gated on loopback IRC_HOST
   # by default; pass --trust-remote to opt in for a non-loopback host the
   # operator controls. Skipped when no channels were requested. The text
   # names the *requested* --channels rather than the actually-joined set;
@@ -1107,7 +1112,7 @@ cmd_spawn() {
       trust_flag=" --append-system-prompt-file ${_trust_file}"
     fi
   else
-    echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent may silently refuse to post on IRC. Workaround: attach and type the trust statement, or pass --permission-mode acceptEdits." >&2
+    echo "  warning: IRC host '${IRC_HOST}' is not loopback; skipping auto-mode IRC trust injection. Under --permission-mode auto the agent treats IRC messages as untrusted and declines to issue consequential tool calls (Bash, Edit) in response, so IRC-driven work won't start (channel_message posting is not blocked). Workaround: --trust-remote to opt in to the injection for this host, attach and type the trust statement, or --permission-mode acceptEdits." >&2
   fi
   # Launcher prefix: `claude` against Anthropic by default, or
   # `ollama launch claude --model <tag> --` when --ollama-model is set. The

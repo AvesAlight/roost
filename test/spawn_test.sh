@@ -464,8 +464,9 @@ fi
 teardown
 
 # -- Test 21: loopback IRC host stages trust file + wires --append-system-prompt-file ---
-# Default channels (#roost), default host (127.0.0.1) — auto-mode classifier
-# would otherwise block IRC outbound on the operator's first @-mention.
+# Default channels (#roost), default host (127.0.0.1) — without it the
+# auto-mode model treats IRC as untrusted and won't issue consequential
+# tool calls (Bash, Edit) in response, so IRC-driven work can't start.
 # Trust text goes through a file (not an inline flag value) to sidestep zsh
 # extended_glob expanding the `#` in `#roost` to a "no matches" glob error
 # before claude ever runs.

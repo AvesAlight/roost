@@ -853,13 +853,18 @@ decision: it is the one thing the session cannot verify about itself.
    peer context and tool-specific risk framing moderate it, and the
    contradicting per-message untrusted-data wrapper keeps it in tension.
 
-**Held code/comment edits.** The comment at bin/roost:1062-1072 and the
-warning at :1093 frame the injection's purpose as preventing a refusal to
-*post*. The live behavior says its real purpose is enabling
+**Rephrased in this PR.** The comment (bin/roost:1082-1090) and the
+warning at :1115 framed the injection's purpose as preventing a refusal
+to *post*; live behavior says its real purpose is enabling
 consequential-tool *issuance* (bounded by the classifier, which is
-itself permeable). Rephrasing both to name issuance is warranted, but is
-held for #701 (the `_trust_eligible` refactor on a nearby branch) to
-merge first, then fresh main is pulled before touching those lines.
+itself permeable). Both are rephrased to name issuance. The refuted
+posting-framing sentence lived in four surfaces — the --help paragraph
+(bin/roost:144-152), the comment block, the warning, and a verbatim
+mirror in README.md:130-138 — past the §#422 three-surface threshold,
+and the --help/README pair is literal-verbatim operator-facing text, so
+the rephrase canonicalizes the new framing across all four in this PR
+rather than splitting off a followup. A test comment carrying the same
+refuted framing was swept too.
 
 **Method note:** this took 18 throwaway probe spawns across two cohorts
 to separate trust-layer issuance from classifier-layer gating and to
