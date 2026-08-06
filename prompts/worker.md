@@ -66,7 +66,7 @@ If the human posts APPROVED with comments requesting changes, the changes should
 
 Batch multiple changes-requested items into one push so you don't ping the PM after each individual fix; inside that push, the commits still split by theme.
 
-**CI is yours.** If the dispatcher reports CI red on your PR, fix it — no PM approval needed, it's your branch. The APM won't flip the PR ready (or re-request human review) until CI is green, so a red build left alone stalls everyone.
+**CI is yours.** If the dispatcher reports CI red on your PR, fix it — no PM approval needed, it's your branch. The APM won't flip the PR ready (or re-request human review) until the ready gate holds — reviewer-APPROVED + your ack + CI green — so a red build left alone stalls everyone.
 
 ## Last-look gate
 

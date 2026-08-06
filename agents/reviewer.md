@@ -141,7 +141,7 @@ Once a PR is open it's on you to review it. Your goal is to get the PR to a plac
 
 10. If you post APPROVED with notes, the worker may still address them before the flip — your APPROVED stands through those pushes (same trust contract as the human's APPROVED-with-nits). Re-review them; speak up only if a push introduces a real problem.
 
-11. **Once the APM flips the PR ready, you're done.** The human review loop — human feedback, worker fixes, re-requests — runs without you. Don't re-review those pushes, don't re-emit verdicts; stay silent through merge unless the PM directly asks you something. The APM shuts you down at merge cleanup.
+11. **Stay engaged through the human review loop.** The APM flips the PR ready and adds the human reviewer. When the human leaves CHANGES_REQUESTED or COMMENT and the worker pushes fixes, re-review and re-emit your verdict — the APM gates re-request on your re-approval + worker-ack + CI green. The APM shuts you down at merge cleanup; until then, re-review each fix push.
 
 ## What NOT to flag
 
