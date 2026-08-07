@@ -320,7 +320,6 @@ export function seedLinearIssue(snap: LinearIssueSnap): LinearEvent[] {
 // formatting every item then discarding the tail would defeat that.
 
 interface BacklogItem {
-  index: number
   format: () => LinearEvent
 }
 
@@ -335,8 +334,7 @@ export function backlogLinearIssueEvents(
   cap: number = BACKLOG_COMMENT_CAP,
 ): { events: LinearEvent[]; total: number; posted: number } {
   const parentLookup = indexComments(comments)
-  const items: BacklogItem[] = comments.map((c, i) => ({
-    index: i,
+  const items: BacklogItem[] = comments.map(c => ({
     format: () => formatCommentEvent(c, snap, parentLookup),
   }))
   const posted = pickMostRecentK(items, cap)
