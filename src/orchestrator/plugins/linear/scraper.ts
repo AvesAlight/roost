@@ -11,6 +11,7 @@ import type { LinearIssueSnap, LinearIssueState } from './types.js'
 import { isTombstone } from './types.js'
 import { LinearError } from './linear-api.js'
 import {
+  backlogLinearIssueEvents,
   buildLinearSnap,
   diffLinearIssue,
   disappearedLinearIssue,
@@ -18,6 +19,7 @@ import {
   selectGithubAttachments,
   type RawLinearIssue,
   type LinearEvent,
+  type LinearSeedEvent,
   type ScrapeContext,
 } from './diff.js'
 
@@ -115,7 +117,24 @@ export class LinearScraper {
     }
 
     if (prev === undefined) return { next: snap, events: [] }
-    if (prev === null) return { next: snap, events: seedLinearIssue(snap) }
+    if (prev === null) {
+      // New to watch list — emit the added-to-watch notice, then dump any
+      // pre-watch comments as real comment events framed by a BACKLOG line.
+      const events = seedLinearIssue(snap)
+      const backlog = backlogLinearIssueEvents(snap, ctx.comments)
+      if (backlog.total > 0) {
+        events.push({
+          kind: 'linear_issue_has_existing_comments',
+          identifier: snap.identifier,
+          url: snap.url ?? '',
+          title: snap.title ?? '',
+          backlog_total: backlog.total,
+          backlog_posted: backlog.posted,
+        } as LinearSeedEvent)
+        events.push(...backlog.events)
+      }
+      return { next: snap, events }
+    }
     // Tombstone branch handled above — prev is a LinearIssueSnap here.
     return { next: snap, events: diffLinearIssue(prev as LinearIssueSnap, snap, ctx) }
   }

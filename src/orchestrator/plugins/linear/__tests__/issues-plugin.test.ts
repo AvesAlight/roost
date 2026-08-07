@@ -150,6 +150,13 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
     expect(backlog).toBeDefined()
     expect(backlog?.channels).toEqual(['#proj-issue-c-758'])
 
+    // The pre-watch comment is relayed as a real comment event, routed to the
+    // same per-issue channel as the framing line.
+    const comment = result.messages.find(e =>
+      e.text.includes('comment by a:'))
+    expect(comment).toBeDefined()
+    expect(comment?.channels).toEqual(['#proj-issue-c-758'])
+
     const state = result.state as LinearIssuePluginState
     expect(isTombstone(state.issues['C-758'])).toBe(false)
   })

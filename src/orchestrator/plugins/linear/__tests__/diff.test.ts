@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import type { LinearIssueSnap } from '../types.js'
 import {
+  backlogLinearIssueEvents,
   buildLinearSnap,
   diffLinearIssue,
   parseGithubPrUrl,
@@ -13,7 +14,6 @@ import {
   type LinearCommentEvent,
   type LinearThreadReplyEvent,
   type LinearGithubPrLinkedEvent,
-  type LinearSeedEvent,
 } from '../diff.js'
 
 function baseSnap(overrides: Partial<LinearIssueSnap> = {}): LinearIssueSnap {
@@ -232,14 +232,60 @@ describe('diffLinearIssue — github PR linked', () => {
 // ---- seedLinearIssue -----------------------------------------------------
 
 describe('seedLinearIssue', () => {
-  it('emits added_to_watch with no comments', () => {
-    const events = seedLinearIssue(baseSnap())
+  it('emits added_to_watch only — backlog dump is built separately', () => {
+    const events = seedLinearIssue(baseSnap({ seen_comment_ids: ['c1', 'c2', 'c3'] }))
     expect(events.map(e => e.kind)).toEqual(['linear_issue_added_to_watch'])
   })
+})
 
-  it('emits has_existing_comments when backlog present', () => {
-    const events = seedLinearIssue(baseSnap({ seen_comment_ids: ['c1', 'c2', 'c3'] }))
-    const backlog = events.find(e => e.kind === 'linear_issue_has_existing_comments') as LinearSeedEvent | undefined
-    expect(backlog?.comment_count).toBe(3)
+// ---- backlogLinearIssueEvents ---------------------------------------------
+
+describe('backlogLinearIssueEvents', () => {
+  it('emits comment events in API array order, not id-sort', () => {
+    // UUIDs that sort lexicographically opposite to creation order — the dump
+    // must follow the array (creation) order, not the id order.
+    const comments: RawLinearComment[] = [
+      { id: 'z-uuid', body: 'oldest', user: { name: 'alice' }, parent: null },
+      { id: 'a-uuid', body: 'newest', user: { name: 'bob' }, parent: null },
+    ]
+    const { events } = backlogLinearIssueEvents(baseSnap(), comments)
+    const bodies = events.map(e => (e as LinearCommentEvent).body)
+    expect(bodies).toEqual(['oldest', 'newest'])
+  })
+
+  it('emits thread replies as linear_thread_reply with parent context', () => {
+    const comments: RawLinearComment[] = [
+      { id: 'c1', body: 'parent', user: { name: 'bob' }, parent: null },
+      { id: 'c2', body: 'reply', user: { name: 'alice' }, parent: { id: 'c1' } },
+    ]
+    const { events } = backlogLinearIssueEvents(baseSnap(), comments)
+    const reply = events.find(e => e.kind === 'linear_thread_reply') as LinearThreadReplyEvent | undefined
+    expect(reply).toBeDefined()
+    expect(reply?.author).toBe('alice')
+    expect(reply?.parent_author).toBe('bob')
+    expect(reply?.comment_url).toMatch(/#comment-c2$/)
+  })
+
+  it('caps at BACKLOG_COMMENT_CAP, keeping the most recent K', () => {
+    const comments: RawLinearComment[] = Array.from({ length: 25 }, (_, i) => ({
+      id: `c${i}`,
+      body: `comment ${i}`,
+      user: null,
+      parent: null,
+    }))
+    const { events, total, posted } = backlogLinearIssueEvents(baseSnap(), comments, 20)
+    expect(total).toBe(25)
+    expect(posted).toBe(20)
+    // Most recent K = the last 20 in array order.
+    const bodies = events.map(e => (e as LinearCommentEvent).body)
+    expect(bodies[0]).toBe('comment 5')
+    expect(bodies[bodies.length - 1]).toBe('comment 24')
+  })
+
+  it('returns empty when there are no comments', () => {
+    const { events, total, posted } = backlogLinearIssueEvents(baseSnap(), [])
+    expect(events).toEqual([])
+    expect(total).toBe(0)
+    expect(posted).toBe(0)
   })
 })

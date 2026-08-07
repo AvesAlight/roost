@@ -96,20 +96,37 @@ describe('LinearScraper.scrapeIssue', () => {
     expect(r.events.map(e => e.kind)).toEqual(['linear_issue_added_to_watch'])
   })
 
-  it('new-to-watch with pre-existing comments emits backlog seed', async () => {
+  it('new-to-watch with pre-existing comments emits backlog framing + real comment events', async () => {
     const s = new LinearScraper(mockClient(rawIssue({
       comments: { nodes: [
-        { id: 'c1', body: 'old', user: null, parent: null },
-        { id: 'c2', body: 'old', user: null, parent: null },
+        { id: 'c1', body: 'old', user: { name: 'alice' }, parent: null },
+        { id: 'c2', body: 'old', user: { name: 'bob' }, parent: null },
       ] },
     })))
     const r = await s.scrapeIssue('C-758', null)
     expect(r.events.map(e => e.kind)).toEqual([
       'linear_issue_added_to_watch',
       'linear_issue_has_existing_comments',
+      'linear_comment',
+      'linear_comment',
     ])
     const backlog = r.events.find(e => e.kind === 'linear_issue_has_existing_comments') as LinearSeedEvent
-    expect(backlog.comment_count).toBe(2)
+    expect(backlog.backlog_total).toBe(2)
+    expect(backlog.backlog_posted).toBe(2)
+    // The "scan manually" count-only line is gone — real comment events follow.
+    expect(r.events.some(e => e.kind === 'linear_comment')).toBe(true)
+  })
+
+  it('new-to-watch backlog preserves API array order, not id-sort', async () => {
+    const s = new LinearScraper(mockClient(rawIssue({
+      comments: { nodes: [
+        { id: 'z-uuid', body: 'oldest', user: { name: 'alice' }, parent: null },
+        { id: 'a-uuid', body: 'newest', user: { name: 'bob' }, parent: null },
+      ] },
+    })))
+    const r = await s.scrapeIssue('C-758', null)
+    const commentEvents = r.events.filter(e => e.kind === 'linear_comment')
+    expect(commentEvents.map(e => (e as { body: string }).body)).toEqual(['oldest', 'newest'])
   })
 
   it('normal diff: emits change events vs. prev snap', async () => {

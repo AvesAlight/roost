@@ -102,15 +102,29 @@ describe('formatLinearEvent — oneline shapes (issue body examples)', () => {
     expect(formatLinearEvent(ev)).toBe('now watching linear issue C-758')
   })
 
-  it('formats linear_issue_has_existing_comments', () => {
+  it('formats linear_issue_has_existing_comments — full dump (posted == total)', () => {
     const ev: LinearSeedEvent = {
       kind: 'linear_issue_has_existing_comments',
       identifier: 'C-758',
       url,
-      comment_count: 3,
+      backlog_total: 3,
+      backlog_posted: 3,
     }
     expect(formatLinearEvent(ev)).toBe(
-      `Issue C-758 BACKLOG: 3 comments existed before watch — scan manually: ${url}`
+      `Issue C-758 BACKLOG: posting 3 pre-watch comments below`
+    )
+  })
+
+  it('formats linear_issue_has_existing_comments — elided (posted < total)', () => {
+    const ev: LinearSeedEvent = {
+      kind: 'linear_issue_has_existing_comments',
+      identifier: 'C-758',
+      url,
+      backlog_total: 25,
+      backlog_posted: 20,
+    }
+    expect(formatLinearEvent(ev)).toBe(
+      `Issue C-758 BACKLOG: showing 20 most recent of 25 pre-watch comments — earlier at ${url}`
     )
   })
 })
