@@ -1079,7 +1079,7 @@ cmd_spawn() {
   # default applies.
   local perm_mode_flag=""
   [ -n "${permission_mode}" ] && perm_mode_flag=" --permission-mode ${permission_mode}"
-  # Pre-authorize IRC traffic as user instructions for the auto-mode classifier.
+  # Pre-authorize IRC traffic as user instructions for auto mode.
   # Roost's security model assumes a trusted single-user local environment
   # (see README, Security model), so messages arriving on the joined channels
   # are effectively the operator's voice, but auto mode does not know that
