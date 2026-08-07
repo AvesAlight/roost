@@ -55,7 +55,10 @@ export interface LinearSeedEvent extends BaseLinearEvent {
     | 'linear_issue_added_to_watch'
     | 'linear_issue_has_existing_comments'
     | 'linear_issue_disappeared'
-  comment_count?: number
+  // Backlog dump framing: total pre-watch comments found, and how many were
+  // actually posted (total > posted means the rest were elided by the cap).
+  backlog_total?: number
+  backlog_posted?: number
 }
 
 export type LinearEvent =
@@ -70,6 +73,14 @@ export type LinearEvent =
 // All linear events currently reach IRC — there's no equivalent of the github
 // filter (skip-noisy labels, skip non-terminal CI). Drop the wrapper for now;
 // if a future event needs gating, add it back with the predicate inline.
+
+// Most pre-watch comments to post inline when a Linear issue is newly watched.
+// Backlog is a one-time dump at watch time, so this only bites on large
+// pre-watch histories; the typical linkback case (a handful of comments)
+// always posts in full. When elided, the most recent K are kept (the
+// actionable tail of an active thread) and the framing line points to the
+// URL for earlier history.
+export const BACKLOG_COMMENT_CAP = 20
 
 // ---- GraphQL shape -------------------------------------------------------
 
@@ -284,16 +295,52 @@ export function diffLinearIssue(
 }
 
 // Seed events emitted when a snap is new to the watch list (prevSnap === null).
+// The backlog dump (pre-watch comments) is built separately by
+// `backlogLinearIssueEvents` and appended by the scraper, which holds the raw
+// comment bodies — this function only emits the added-to-watch notice.
 export function seedLinearIssue(snap: LinearIssueSnap): LinearEvent[] {
   const base = commentBase(snap)
-  const events: LinearEvent[] = [{ kind: 'linear_issue_added_to_watch', ...base }]
-  // Count top-level only — threaded replies are tracked but not surfaced in
-  // the seed line (mirrors github's count-by-primary-feed convention).
-  const topLevelCount = snap.seen_comment_ids.length
-  if (topLevelCount > 0) {
-    events.push({ kind: 'linear_issue_has_existing_comments', ...base, comment_count: topLevelCount } as LinearSeedEvent)
-  }
-  return events
+  return [{ kind: 'linear_issue_added_to_watch', ...base }]
+}
+
+// ---- Backlog dump (newly-watched issue) ------------------------------------
+//
+// When a Linear issue is first watched, pre-watch comments already exist.
+// These builders emit the actual items as the same event kinds the live diff
+// uses, so they route and render identically to fresh comments.
+//
+// Ordering: Linear comment ids are UUIDs, not monotonic like GitHub
+// databaseIds, so id-sort is meaningless. `ctx.comments` arrives in creation
+// order from the API, so the dump iterates that array order and the
+// most-recent-K cap slices the tail of it. This is a deliberate deviation
+// from the github backlog's id-merge (which relies on monotonic ids).
+//
+// Formatting is deferred to a thunk per item so only the kept K are formatted
+// — the cap exists to bound the work for a large pre-watch history, and
+// formatting every item then discarding the tail would defeat that.
+
+interface BacklogItem {
+  index: number
+  format: () => LinearEvent
+}
+
+function pickMostRecentK(items: BacklogItem[], cap: number): BacklogItem[] {
+  const start = Math.max(0, items.length - cap)
+  return items.slice(start)
+}
+
+export function backlogLinearIssueEvents(
+  snap: LinearIssueSnap,
+  comments: RawLinearComment[],
+  cap: number = BACKLOG_COMMENT_CAP,
+): { events: LinearEvent[]; total: number; posted: number } {
+  const parentLookup = indexComments(comments)
+  const items: BacklogItem[] = comments.map((c, i) => ({
+    index: i,
+    format: () => formatCommentEvent(c, snap, parentLookup),
+  }))
+  const posted = pickMostRecentK(items, cap)
+  return { events: posted.map(i => i.format()), total: items.length, posted: posted.length }
 }
 
 export function disappearedLinearIssue(identifier: string): LinearSeedEvent {

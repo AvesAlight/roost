@@ -52,7 +52,12 @@ function formatAddedToWatch(ev: LinearSeedEvent): string {
 }
 
 function formatBacklogSeed(ev: LinearSeedEvent): string {
-  return `Issue ${ev.identifier} BACKLOG: ${ev.comment_count ?? 0} comments existed before watch — scan manually: ${ev.url ?? ''}`
+  const total = ev.backlog_total ?? 0
+  const posted = ev.backlog_posted ?? total
+  if (posted < total) {
+    return `Issue ${ev.identifier} BACKLOG: showing ${posted} most recent of ${total} pre-watch comments — earlier at ${ev.url ?? ''}`
+  }
+  return `Issue ${ev.identifier} BACKLOG: posting ${total} pre-watch comments below`
 }
 
 function formatCommentHeader(ev: LinearCommentEvent): string {
