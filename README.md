@@ -129,9 +129,11 @@ default to `--permission-mode auto`; everything else (haiku, or any
 unrecognized model) defaults to `acceptEdits`.
 
 `spawn` also injects `--append-system-prompt-file` naming the joined
-channels as legitimate user-instruction sources, so the auto-mode
-classifier doesn't silently block IRC replies on the operator's first
-`@`-mention. Only injected when the IRC host is loopback (`127.0.0.1`,
+channels as legitimate user-instruction sources, so that under
+`--permission-mode auto` the model will issue consequential tool calls
+(Bash, Edit) in response to IRC messages rather than treating them as
+untrusted external data (channel_message posting itself is not blocked).
+Only injected when the IRC host is loopback (`127.0.0.1`,
 `::1`, `localhost`); remote ergo falls outside roost's trusted
 single-user local environment security model and prints a warning
 instead. Pass `--trust-remote` to opt in to the same injection for a
