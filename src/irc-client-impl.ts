@@ -27,11 +27,11 @@ import type {
 // and use it purely to gate the explicit CHATHISTORY LATEST query.
 //
 // Consequence for limit accounting: ergo records membership changes into channel
-// history as HistServ-synthesized PRIVMSGs, and those rows consume the CHATHISTORY
-// limit like any other, and we filter them out via HISTORY_SERVICE_SENDERS — so a
+// history as HistServ-synthesized PRIVMSGs. Those rows consume the CHATHISTORY limit
+// like any other row. We then filter them out via HISTORY_SERVICE_SENDERS. So a
 // caller asking for N messages on a channel with membership churn gets fewer than N
-// back, sometimes zero. The server honors the limit; we shrink the result after the
-// fact. sendChathistoryQuery compensates by over-fetching and slicing.
+// back, sometimes zero. The server honors the limit exactly. We are the ones who
+// shrink the result. sendChathistoryQuery compensates by over-fetching and slicing.
 const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
@@ -778,14 +778,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       const msgs = this.parseChathistoryBatch(event.commands, target, { applyJoinFilters: false })
       // A short reply on its own is ambiguous — the channel may simply be that
       // small. What isn't ambiguous is the server returning fewer messages than we
-      // already hold locally for the same channel: the over-fetch window provably
-      // failed to reach back as far as the ring does. That's the case worth paging
-      // for, so say it out loud rather than silently handing back less.
+      // already hold locally for the same channel: the fetch window provably failed
+      // to reach back as far as the ring does. That's the case worth paging for, so
+      // say it out loud rather than silently handing back less.
+      //
+      // Reports what was observed, not why. Service rows crowding the window is the
+      // expected cause and the reason for the over-fetch, but this code can't see
+      // them — they're filtered before it counts — so it doesn't claim them.
       const ringDepth = Math.min(this.getHistory(key, limit).length, limit)
       if (msgs.length < ringDepth) {
         this.emitSystem(
           'chathistory-short',
-          `[roost] channel_history for ${target}: server returned ${msgs.length} of ${limit} requested (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally — service rows are consuming the fetch window`,
+          `[roost] channel_history for ${target}: server returned ${msgs.length} messages for a limit of ${limit} (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally — answering from the local ring instead`,
         )
       }
       resolve(msgs.slice(-limit))
