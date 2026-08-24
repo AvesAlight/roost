@@ -26,29 +26,20 @@ import type {
 // recovery path) relies on. We detect availability from the CAP LS list instead
 // and use it purely to gate the explicit CHATHISTORY LATEST query.
 //
-// Consequence for limit accounting: ergo records membership changes into channel
-// history as HistServ-synthesized PRIVMSGs. Those rows consume the CHATHISTORY limit
-// like any other row. We then filter them out via HISTORY_SERVICE_SENDERS. So a
-// caller asking for N messages on a channel with membership churn gets fewer than N
-// back, sometimes zero. The server honors the limit exactly. We are the ones who
-// shrink the result. sendChathistoryQuery compensates by over-fetching and slicing.
+// Limit accounting: ergo stores membership changes as HistServ PRIVMSGs, which
+// consume the CHATHISTORY limit and are then filtered out by HISTORY_SERVICE_SENDERS.
+// The server honors the limit; we shrink the result. Hence the over-fetch below.
 const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
 const BATCH_TYPE_CHATHISTORY = 'chathistory'
 
-// Multiplier applied to a caller's channel_history limit before it goes on the wire,
-// to absorb the service rows we filter out of the reply (see the CAP_CHATHISTORY
-// comment). The floor keeps small limits from over-fetching too little to matter;
-// both are clamped to whatever the server allows via ISUPPORT.
+// Over-fetch headroom for the filtered service rows.
 const CHATHISTORY_OVERFETCH_FACTOR = 8
 const CHATHISTORY_OVERFETCH_FLOOR = 50
-// Fallback when the server doesn't advertise a CHATHISTORY ISUPPORT token.
 const CHATHISTORY_DEFAULT_MAX = 100
 
-// How far apart our own send-time record and the server's replay of the same message
-// may sit and still be treated as one message. Generous: it only has to cover the
-// round trip, and the cost of being too tight is a duplicate ring entry per rejoin.
+// Gap allowed between our send-time record of a message and the server's replay of it.
 const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 
 // Server-side service senders that synthesize PRIVMSGs into channel history for
@@ -98,8 +89,6 @@ interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[]
 interface ChathistoryResolver {
   resolve: (msgs: IrcMessage[] | null) => void
   timer: ReturnType<typeof setTimeout>
-  /** What the caller asked for. The wire request over-fetches past this; the batch
-   *  handler slices back down and reports if even the over-fetch came up short. */
   limit: number
 }
 
@@ -248,16 +237,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return { chunks: wireLines.length, mode: 'multiline' }
   }
 
-  // Our own outbound messages never come back to us: handleMessage drops self, and we
-  // don't negotiate echo-message. Without this the local ring is a record of what
-  // everyone *else* said, which makes the fallback path useless for the thing agents
-  // actually call channel_history for — reconstructing a conversation after compaction,
-  // when their own posts are gone from context too.
-  //
-  // Recorded as historical so the unread counter doesn't tick for our own words. The
-  // timestamp is ours, not the server's, so when the server later replays the same
-  // message emitAutoReplayBatch matches it on sender+text within a short window
-  // rather than on the exact-timestamp fingerprint.
+  // Our own messages never come back to us: handleMessage drops self and we don't
+  // negotiate echo-message. Timestamp is ours, not the server's — see
+  // ringHasNearDuplicate.
   private recordOwnMessage(target: string, text: string): void {
     const msg: IrcMessage = {
       channel: target.toLowerCase(),
@@ -329,15 +311,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     })
   }
 
-  // Server-side cap on a single CHATHISTORY request, from the ISUPPORT token.
   private chathistoryServerMax(): number {
     const raw = this.irc.network?.supports?.('CHATHISTORY')
     const n = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     return Number.isFinite(n) && n > 0 ? n : CHATHISTORY_DEFAULT_MAX
   }
 
-  // What we actually ask the server for, given what the caller wants. Over-fetch so
-  // the service rows we filter don't starve the reply; never exceed the server max.
   private chathistoryWireLimit(limit: number): number {
     const want = Math.max(limit * CHATHISTORY_OVERFETCH_FACTOR, CHATHISTORY_OVERFETCH_FLOOR)
     return Math.min(want, this.chathistoryServerMax())
@@ -395,10 +374,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     while (set.size > this.historySize) set.delete(set.values().next().value!)
   }
 
-  // Same sender and text, close enough in time to be the same message seen twice —
-  // once as our own outbound record, once as the server's replay of it. Deliberately
-  // coarse: an agent posting identical text twice inside the window collapses to one
-  // ring entry, which is a better failure than a duplicate on every rejoin.
+  // Matched on sender+text since our timestamp and the server's differ. Coarse:
+  // identical text twice inside the window collapses to one entry.
   private ringHasNearDuplicate(msg: IrcMessage, windowMs = OWN_MESSAGE_DEDUPE_WINDOW_MS): boolean {
     const buf = this.history.get(msg.channel)
     if (!buf) return false
@@ -568,9 +545,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     }
     const why = this.chathistoryDisabled ? ' (disabled via config)' : ''
     this.log(`${CAP_CHATHISTORY} not advertised${why} — channel_history falls back to local ring`)
-    // Degrading to the ring is only visible on stderr otherwise, which no agent
-    // reads — and a fallback that looks identical to success is the defect. Same
-    // shape parseMultilineCap already uses for draft/multiline.
+    // A silent degrade to the ring is indistinguishable from success.
     if (!this.chathistoryDisabled) {
       this.emitSystem('cap-missing', `${CAP_CHATHISTORY} cap not advertised by server — channel_history is limited to this session's local ring`)
     }
@@ -776,17 +751,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       if (list.length === 0) this.chathistoryResolvers.delete(key)
       clearTimeout(timer)
       const msgs = this.parseChathistoryBatch(event.commands, target, { applyJoinFilters: false })
-      // A short reply on its own is ambiguous — the channel may simply be that
-      // small. What isn't ambiguous is the server returning fewer messages than we
-      // already hold locally for the same channel: the fetch window provably failed
-      // to reach back as far as the ring does. That's the case worth paging for, so
-      // say it out loud rather than silently handing back less.
-      //
-      // Reports what was observed, and only that. Service rows crowding the window is
-      // the expected cause and the reason for the over-fetch, but this code can't see
-      // them — they're filtered before it counts. It also says nothing about which
-      // source answers the call: that's irc-server's choice, and it falls back to the
-      // ring only when the server returns nothing at all.
+      // A short reply alone is ambiguous; returning less than the ring holds is not.
       const ringDepth = Math.min(this.getHistory(key, limit).length, limit)
       if (msgs.length < ringDepth) {
         this.emitSystem(
@@ -804,11 +769,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private emitAutoReplayBatch(commands: BatchCommand[], target: string): void {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
-      // Our own messages are already in the ring — say() put them there at send time,
-      // under our clock rather than the server's, so the exact-timestamp fingerprint
-      // can't be trusted to match. Match on sender+text within a short window instead.
-      // The notification fires either way: an agent rejoining needs its own prior
-      // words replayed, which is the whole point of reading history after compaction.
+      // Already ringed by say(), under our clock, so the fingerprint won't match.
+      // Notify regardless: a rejoining agent needs its own words back.
       if (msg.sender === this.nick) {
         if (!this.ringHasNearDuplicate(msg)) this.recordMessage(msg, true)
         this.emitMessage(msg, { historical: true, mention: msg.mention })

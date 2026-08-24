@@ -328,9 +328,11 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(text).not.toContain('fallback-pre-1')
   })
 
-  // Folds #720: an agent recovering from compaction needs its own words back too,
-  // and on the fallback path nothing else puts them in the ring.
-  it('the local ring keeps the agent\'s own outbound messages', async () => {
+  // Folds #720. One setup, three properties of say()'s ring recording: the
+  // single-line branch lands, the multiline branch lands, and neither counts as
+  // unread. chathistoryDisabled puts channel_history on the ring, which is the
+  // thing under test.
+  it('say() records own messages into the ring without marking them unread', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer5')
     await peer.joinChannel('#ip-cq-ownring')
 
@@ -340,20 +342,26 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownring' } })
 
-    const heard = peer.waitForMessage('#ip-cq-ownring', m => m.text === 'own-ring-msg')
+    const heardSingle = peer.waitForMessage('#ip-cq-ownring', m => m.text === 'own-ring-msg')
     await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownring', text: 'own-ring-msg' } })
-    await heard
+    await heardSingle
 
-    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownring' } })
-    expect(hist.isError).toBeFalsy()
-    expect(toolText(hist)).toContain('own-ring-msg')
+    // Multiline is a separate branch of say().
+    const heardMulti = peer.waitForMessage('#ip-cq-ownring', m => m.text.includes('own-multi-tail'))
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownring', text: 'own-multi-head\nown-multi-tail' } })
+    await heardMulti
+
+    const text = toolText(await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownring' } }))
+    expect(text).toContain('own-ring-msg')
+    expect(text).toContain('own-multi-head')
+    expect(text).toContain('own-multi-tail')
+
+    const listed = toolText(await mcp.client.callTool({ name: 'channel_list', arguments: {} }))
+    expect(listed).not.toContain('own-ring-msg')
   })
 
-  // say() records our own message at send time under our own clock; the server later
-  // replays it under its clock. Both halves are asserted against the ring itself:
-  // chathistoryDisabled forces channel_history onto the ring, so what comes back is
-  // what the ring holds, not what the server would have answered. Going through the
-  // server path here would prove nothing — it returns its single row either way.
+  // Our record and the server's replay are the same message; the ring must not keep
+  // both, and the replay must still reach the agent.
   it('own messages replay as historical and leave exactly one ring copy', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer8')
     const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp8', { chathistoryDisabled: true })
@@ -365,49 +373,10 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-cq-ownreplay' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
 
-    // The rejoin must replay our own words back to us.
     await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-replay-msg' }))
 
-    // ...without the ring accumulating a second copy of them.
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownreplay' } })
     expect(toolText(hist).split('own-replay-msg').length - 1).toBe(1)
-  })
-
-  // Our own message is not "unread" — we just wrote it.
-  it('recording an own outbound message does not raise the unread count', async () => {
-    const peer = await connectPeer(ergo, 'ip-cq-peer6')
-    await peer.joinChannel('#ip-cq-ownunread')
-
-    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp6', { chathistoryDisabled: true })
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownunread' } })
-
-    const heard = peer.waitForMessage('#ip-cq-ownunread', m => m.text === 'own-unread-msg')
-    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownunread', text: 'own-unread-msg' } })
-    await heard
-
-    const listed = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
-    expect(toolText(listed)).not.toContain('own-unread-msg')
-  })
-
-  // Multiline goes out through a different branch of say(); it must land in the ring too.
-  it('the local ring keeps own outbound multiline messages', async () => {
-    const peer = await connectPeer(ergo, 'ip-cq-peer7')
-    await peer.joinChannel('#ip-cq-ownmulti')
-
-    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp7', {
-      chathistoryDisabled: true,
-      chathistoryQueryTimeoutMs: 250,
-    })
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownmulti' } })
-
-    const heard = peer.waitForMessage('#ip-cq-ownmulti', m => m.text.includes('own-multi-tail'))
-    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownmulti', text: 'own-multi-head\nown-multi-tail' } })
-    await heard
-
-    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownmulti' } })
-    const text = toolText(hist)
-    expect(text).toContain('own-multi-head')
-    expect(text).toContain('own-multi-tail')
   })
 })
 

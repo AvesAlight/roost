@@ -401,12 +401,8 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const fromServer = await client.chathistoryLatest(key, limit)
-        // The server is authoritative and normally richer — it reaches back past this
-        // session, which the ring cannot. So prefer it, with one exception: service
-        // rows can crowd every real message out of the fetch window, and answering
-        // "no history" while the ring holds the conversation is the worst outcome for
-        // an agent trying to reconstruct one. Fall back only when the server came
-        // back with nothing at all. null means the server path didn't run.
+        // Server reaches back past this session, so prefer it — except when it has
+        // nothing, where the ring may. null means the server path didn't run.
         const fromRing = client.getHistory(key, limit)
         const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
