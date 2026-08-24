@@ -743,9 +743,9 @@ describe('initialize instructions', () => {
     const client = new Client({ name: 'roost-test', version: '0.0.1' })
     await client.connect(clientTransport)
     try {
-      // Not a change-detector on the full banner text — just the two facts
-      // that would otherwise break silently: bin/roost-token-usage's grep
-      // marker, and the auto-join list.
+      // bin/roost-token-usage greps the marker out of session JSONLs to
+      // attribute a transcript to its nick; nothing else asserts it
+      // survives in the banner.
       const instructions = client.getInstructions()
       expect(instructions).toContain(mcpConnectionLine('test-nick'))
       expect(instructions).toContain('#one')
