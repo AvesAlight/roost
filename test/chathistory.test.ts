@@ -80,6 +80,34 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     expect(Number(n2.meta.seq)).toBeGreaterThan(Number(n1.meta.seq))
   })
 
+  // ergo replays a multiline post as a draft/multiline BATCH nested inside the
+  // JOIN auto-replay chathistory batch — irc-framework's own dispatch() drops that
+  // nested batch entirely (it never registers the inner id), so without the intake
+  // fix this post vanishes from the auto-replay rather than arriving as fragments.
+  it('a multiline post sent while parted comes back as one reassembled historical notification', async () => {
+    const sender = await startMcpInProcess(ergo, 'ip-hist-multi-sender')
+    const mcp = await startMcpInProcess(ergo, 'ip-hist-multi-reader')
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-multiline' } })
+    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-multiline' } })
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-hist-multiline' } })
+
+    const text = 'while-parted-multi-one\nwhile-parted-multi-two'
+    await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-hist-multiline', text } })
+    await sleep(200)
+
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-hist-multiline' } })
+
+    const n = await mcp.waitForNotification(messagePredicate({ historical: true, content: text, channel: '#ip-hist-multiline' }))
+    expect(n.meta.buffered).toBe('true')
+    expect(n.meta.chunkCount).toBe('2')
+
+    // One reassembled notification for the post, not two fragments.
+    const matches = mcp.notifications.filter(messagePredicate({ historical: true, channel: '#ip-hist-multiline' }))
+      .filter(x => x.content.includes('while-parted-multi'))
+    expect(matches).toHaveLength(1)
+  })
+
   it('ROOST_IRC_JOIN_HISTORY_LINES caps how many historical messages are emitted', async () => {
     const peer = await connectPeer(ergo, 'ip-hist-peer-limit')
     // Only replay last 2 messages, even though 4 exist.
@@ -377,6 +405,37 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
 
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownreplay' } })
     expect(toolText(hist).split('own-replay-msg').length - 1).toBe(1)
+  })
+
+  // Round-trip equality is the assertion that matters here: a naive same-server-time
+  // grouping heuristic (join every contiguous same-sender row with \n) would pass the
+  // multi-paragraph case but corrupt the long single line, inserting newlines the
+  // sender never typed wherever splitLineForMultiline had chunked it on send. Reusing
+  // reassembleMultilineBatch (concat tags honored) is what makes both lossless.
+  it('reassembles multiline posts replayed via chathistory into one entry each, byte-for-byte', async () => {
+    const sender = await startMcpInProcess(ergo, 'ip-cq-multi-sender')
+    const reader = await startMcpInProcess(ergo, 'ip-cq-multi-reader')
+
+    await sender.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-multiline' } })
+    await reader.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-multiline' } })
+
+    const paragraphs = 'multi one\nmulti two\nmulti three'
+    const long = 'B'.repeat(700) // over MULTILINE_LINE_BYTES — splits into several wire PRIVMSGs on send
+
+    const heard = reader.waitForNotification(messagePredicate({ content: long, channel: '#ip-cq-multiline' }))
+    await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-multiline', text: paragraphs } })
+    await sender.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-multiline', text: long } })
+    await heard
+
+    const hist = await reader.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-multiline' } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+
+    // Two reassembled entries — not one row per wire PRIVMSG.
+    expect(text.match(/<channel /g)?.length).toBe(2)
+    expect(text).toContain(paragraphs)
+    expect(text).toContain(long)
+    expect(text).toContain('chunkCount="3"')
   })
 })
 

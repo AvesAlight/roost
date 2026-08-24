@@ -398,7 +398,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
         const lines = slice.map(m => {
-          const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })
+          const meta: MessageMeta = { historical: true, mention: m.mention }
+          if (m.reassembledFrom !== undefined) { meta.buffered = true; meta.chunkCount = m.reassembledFrom }
+          const wireMeta = buildMessageMeta(m, meta)
           return `<channel ${renderMessageAttrs(wireMeta)}>${escBody(m.text)}</channel>`
         })
         return { content: [{ type: 'text', text: lines.join('\n') }] }

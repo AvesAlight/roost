@@ -63,9 +63,9 @@ export interface ConnectOpts {
 // signals and can ignore the lifecycle kinds.
 export type SystemKind =
   | 'disconnected' | 'reconnected' | 'cap-missing' | 'chathistory-short' | 'registered' | 'registration-failed'
-  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls'
-// string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*;
-// { nick } for registered; { code, nick, reason } for registration-failed
+  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls' | 'multiline-intake-degraded'
+// string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*/
+// multiline-intake-degraded; { nick } for registered; { code, nick, reason } for registration-failed
 // (reason is the server's text for the numeric, e.g. "Erroneous nickname").
 export type SystemContent = string | { code?: number; nick?: string; reason?: string }
 

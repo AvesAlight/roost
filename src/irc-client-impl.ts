@@ -1,5 +1,5 @@
 import IRC from 'irc-framework'
-import type { IrcFrameworkClient } from 'irc-framework'
+import type { IrcFrameworkClient, IrcRawMessage } from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
   splitLineForMultiline,
@@ -49,6 +49,10 @@ const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 // Ergo-specific; extend if other servers ship similar services.
 const HISTORY_SERVICE_SENDERS = new Set(['histserv'])
 
+// Internal-only marker tag, never seen on the wire — see installNestedMultilineBatchIntake.
+// Namespaced so it can't collide with a real IRC tag key.
+const REASSEMBLED_CHUNKS_TAG = 'roost/reassembled-chunks'
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
 
@@ -83,6 +87,15 @@ interface BatchCommand {
   getServerTime?: () => number | undefined
 }
 interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[] }
+
+// Accumulator for a draft/multiline batch nested inside another batch (chathistory
+// replay or JOIN auto-replay) — see installNestedMultilineBatchIntake.
+interface NestedMultilineBatch {
+  outerBatchId: string
+  target: string
+  startTags: Record<string, unknown>
+  members: BatchCommand[]
+}
 
 // ---- Implementation --------------------------------------------------------
 
@@ -136,6 +149,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // is dropped rather than satisfying a subsequent query's resolver. TCP/IRC delivery
   // is FIFO, so dropping one batch is enough.
   private readonly chathistorySkipNextBatch = new Set<string>()
+  // Nested draft/multiline batches currently being restored, keyed by the inner batch id.
+  // See installNestedMultilineBatchIntake.
+  private readonly nestedMultilineBatches = new Map<string, NestedMultilineBatch>()
   private multilineMaxLines = 100
   private readonly history = new Map<string, IrcMessage[]>()
   private readonly unread = new Map<string, UnreadInfo>()
@@ -160,6 +176,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.pendingJoinReplayMs = config.pendingJoinReplayMs ?? 500
     this.irc = new IRC.Client()
     this.registerHandlers()
+    this.installNestedMultilineBatchIntake()
   }
 
   // ---- Public interface --------------------------------------------------
@@ -487,6 +504,113 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('nick in use', onNickReject(433))
   }
 
+  // Restores a draft/multiline batch nested inside another batch (chathistory replay
+  // or the JOIN auto-replay batch) — a shape irc-framework's own dispatch() drops.
+  //
+  // dispatch() only executes a line (which is what opens/closes a batch in its cache)
+  // when the line carries no `batch` tag of its own. A nested "BATCH +id draft/multiline"
+  // line is itself inside the outer batch, so it carries the outer batch's tag — it gets
+  // pushed onto the outer batch's unexecuted command list instead of being executed, the
+  // inner id is never registered, and every member PRIVMSG below it (tagged with the
+  // inner id) falls into dispatch()'s "no cache for this id" branch and is silently
+  // dropped. Confirmed against ergo (a client with the draft/multiline cap enabled — us
+  // — gets this nested shape; a client without the cap gets a flattened, unwrapped one).
+  //
+  // We wrap dispatch to reopen the inner batch ourselves, accumulate its members, and on
+  // the inner batch's end splice one reassembled PRIVMSG into the *outer* batch's own
+  // cache (via the same public cache()/hasCache() surface the library's BATCH handler
+  // uses) — so parseChathistoryBatch and the live multiline path never need to know this
+  // happened. Reassembly reuses reassembleMultilineBatch, so it's lossless: concat tags
+  // are honored, not guessed at.
+  //
+  // Depends on irc-framework's dispatch()/cache() shape (node_modules/irc-framework/src/
+  // commands/handler.js) holding across versions — the integration test that posts a real
+  // multiline message and reads it back via chathistory is the tripwire if that changes.
+  private installNestedMultilineBatchIntake(): void {
+    const handler = this.irc.command_handler
+    const originalDispatch = handler.dispatch.bind(handler)
+    handler.dispatch = (message: IrcRawMessage) => {
+      try {
+        this.dispatchWithNestedBatchIntake(message, originalDispatch)
+      } catch (e) {
+        // This hack rides on irc-framework internals (see the comment above) — if a
+        // future version changes shape under us, degrade to the pre-fix behavior
+        // (a dropped nested batch) rather than taking the whole connection down. That
+        // degrade is otherwise silent — same failure mode #719 flagged for a swallowed
+        // log — so surface it as a system event too, not just stderr. State what we
+        // observed (the override failed), not what we can't know (what the sender
+        // actually posted).
+        this.log(`nested multiline batch intake failed, falling back to default dispatch: ${(e as Error)?.stack ?? e}`)
+        this.emitSystem('multiline-intake-degraded', '[roost] multiline chathistory reassembly failed for one message — a replayed post here may be missing or incomplete')
+        originalDispatch(message)
+      }
+    }
+  }
+
+  private dispatchWithNestedBatchIntake(message: IrcRawMessage, originalDispatch: (message: IrcRawMessage) => void): void {
+    const outerBatchTag = message.tags?.['batch']
+    if (message.command === 'BATCH' && outerBatchTag !== undefined) {
+      const raw = message.params[0] ?? ''
+      const innerId = raw.slice(1)
+      if (raw.startsWith('+') && message.params[1] === 'draft/multiline' && innerId) {
+        this.nestedMultilineBatches.set(innerId, {
+          outerBatchId: String(outerBatchTag),
+          target: message.params[2] ?? '',
+          startTags: message.tags ?? {},
+          members: [],
+        })
+        return
+      }
+      if (raw.startsWith('-') && this.nestedMultilineBatches.has(innerId)) {
+        const nested = this.nestedMultilineBatches.get(innerId)!
+        this.nestedMultilineBatches.delete(innerId)
+        this.spliceReassembledMultiline(nested)
+        return
+      }
+    }
+    if (typeof outerBatchTag === 'string' && this.nestedMultilineBatches.has(outerBatchTag)) {
+      this.nestedMultilineBatches.get(outerBatchTag)!.members.push({
+        command: message.command,
+        params: message.params,
+        nick: message.nick ?? '',
+        tags: message.tags ?? {},
+      })
+      return
+    }
+    originalDispatch(message)
+  }
+
+  // Builds the one reassembled PRIVMSG for a completed nested multiline batch and
+  // splices it into its outer batch's command list, in place of the swallowed markers.
+  private spliceReassembledMultiline(nested: NestedMultilineBatch): void {
+    if (nested.members.length === 0) return
+    const cacheKey = `batch.${nested.outerBatchId}`
+    // Outer batch already closed (or never opened) — nothing to splice into. Shouldn't
+    // happen given FIFO wire delivery; defensive rather than a thrown error.
+    if (!this.irc.command_handler.hasCache(cacheKey)) return
+    const text = reassembleMultilineBatch(nested.members)
+    const timeTag = nested.startTags['time']
+    const serverTimeMs = typeof timeTag === 'string' ? (Date.parse(timeTag) || undefined) : undefined
+    const tags: Record<string, unknown> = { ...nested.startTags, [REASSEMBLED_CHUNKS_TAG]: nested.members.length }
+    // The outer batch's own BATCH handler (irc-framework) doesn't just emit
+    // cache.commands — it replays each one through executeCommand() as if it had
+    // arrived top-level, so this needs to duck-type as a real IrcCommand (getTag
+    // included), not just satisfy our own BatchCommand shape. ident/hostname are
+    // inert filler: the replay's resulting 'message' event carries batch.type ===
+    // 'chathistory' and handleMessage already drops those (see its batch.type guard).
+    const synthesized: BatchCommand & { getTag: (name: string) => unknown; ident: string; hostname: string } = {
+      command: 'PRIVMSG',
+      params: [nested.target, text],
+      nick: nested.members[0].nick,
+      ident: '',
+      hostname: '',
+      tags,
+      getServerTime: () => serverTimeMs,
+      getTag: (name: string) => tags[name.toLowerCase()],
+    }
+    this.irc.command_handler.cache(cacheKey).commands.push(synthesized)
+  }
+
   // ---- IRC event handlers ------------------------------------------------
 
   private handleRegistered(): void {
@@ -769,11 +893,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private emitAutoReplayBatch(commands: BatchCommand[], target: string): void {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
+      const meta: MessageMeta = { historical: true, mention: msg.mention }
+      if (msg.reassembledFrom !== undefined) { meta.buffered = true; meta.chunkCount = msg.reassembledFrom }
       // Already ringed by say(), under our clock, so the fingerprint won't match.
       // Notify regardless: a rejoining agent needs its own words back.
       if (msg.sender === this.nick) {
         if (!this.ringHasNearDuplicate(msg)) this.recordMessage(msg, true)
-        this.emitMessage(msg, { historical: true, mention: msg.mention })
+        this.emitMessage(msg, meta)
         continue
       }
       if (this.hasFingerprint(msg)) {
@@ -781,7 +907,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         continue
       }
       this.recordMessage(msg, true)
-      this.emitMessage(msg, { historical: true, mention: msg.mention })
+      this.emitMessage(msg, meta)
     }
   }
 
@@ -809,6 +935,10 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
       const msg: IrcMessage = { channel: channelKey, sender, text, ts, isDirect }
       msg.mention = this.nickMentionRegex.test(text)
+      // Set only on a PRIVMSG synthesized by installNestedMultilineBatchIntake — states
+      // how many wire lines were grouped, not what the sender originally typed.
+      const chunkCount = c.tags[REASSEMBLED_CHUNKS_TAG]
+      if (typeof chunkCount === 'number' && chunkCount > 1) msg.reassembledFrom = chunkCount
       batch.push(msg)
     }
     return opts.applyJoinFilters && this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
@@ -858,6 +988,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.chathistoryResolvers.clear()
     this.chathistoryQueriesByTarget.clear()
     this.chathistorySkipNextBatch.clear()
+    this.nestedMultilineBatches.clear()
     for (const entry of this.pendingJoinReplays.values()) {
       clearTimeout(entry.timer)
       entry.resolve()

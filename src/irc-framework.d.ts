@@ -1,5 +1,35 @@
 declare module 'irc-framework' {
+  // Shape of the parsed line irc-framework's command_handler.dispatch() receives —
+  // see IrcCommandHandler below.
+  export interface IrcRawMessage {
+    command: string
+    params: string[]
+    tags?: Record<string, unknown>
+    prefix?: string
+    nick?: string
+    ident?: string
+    hostname?: string
+  }
+
+  export interface IrcCommandCache {
+    commands: unknown[]
+    type?: string
+    params?: string[]
+    [key: string]: unknown
+  }
+
+  // Internal-but-public API (see the class's own JSDoc on `cache()`) that routes
+  // every parsed line and buffers BATCH members before a batch's end fires. We
+  // wrap `dispatch` to restore a case irc-framework itself drops — see the
+  // nested-multiline-batch comment at its wrap site.
+  export interface IrcCommandHandler {
+    dispatch(message: IrcRawMessage): void
+    cache(id: string): IrcCommandCache
+    hasCache(id: string): boolean
+  }
+
   export interface IrcFrameworkClient {
+    command_handler: IrcCommandHandler
     requestCap(caps: string[]): void
     connect(opts: {
       host: string
