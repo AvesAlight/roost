@@ -25,10 +25,26 @@ import type {
 // always-replay-on-join contract the rest of the code (and the SIGUSR1 dedupe
 // recovery path) relies on. We detect availability from the CAP LS list instead
 // and use it purely to gate the explicit CHATHISTORY LATEST query.
+//
+// Consequence for limit accounting: ergo records membership changes into channel
+// history as HistServ-synthesized PRIVMSGs, and those rows consume the CHATHISTORY
+// limit like any other. We deliver them to HISTORY_SERVICE_SENDERS and drop them,
+// so a caller asking for N messages on a channel with membership churn gets fewer
+// than N back — sometimes zero. The server honors the limit; we shrink the result
+// after the fact. sendChathistoryQuery compensates by over-fetching and slicing.
 const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
 const BATCH_TYPE_CHATHISTORY = 'chathistory'
+
+// Multiplier applied to a caller's channel_history limit before it goes on the wire,
+// to absorb the service rows we filter out of the reply (see the CAP_CHATHISTORY
+// comment). The floor keeps small limits from over-fetching too little to matter;
+// both are clamped to whatever the server allows via ISUPPORT.
+const CHATHISTORY_OVERFETCH_FACTOR = 8
+const CHATHISTORY_OVERFETCH_FLOOR = 50
+// Fallback when the server doesn't advertise a CHATHISTORY ISUPPORT token.
+const CHATHISTORY_DEFAULT_MAX = 100
 
 // Server-side service senders that synthesize PRIVMSGs into channel history for
 // membership/admin events ("X joined the channel", "Y set channel modes: …",
@@ -77,6 +93,9 @@ interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[]
 interface ChathistoryResolver {
   resolve: (msgs: IrcMessage[] | null) => void
   timer: ReturnType<typeof setTimeout>
+  /** What the caller asked for. The wire request over-fetches past this; the batch
+   *  handler slices back down and reports if even the over-fetch came up short. */
+  limit: number
 }
 
 interface PendingJoinReplay {
@@ -276,10 +295,24 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       }, this.chathistoryQueryTimeoutMs)
       timer.unref?.()
       const list = this.chathistoryResolvers.get(key) ?? []
-      list.push({ resolve, timer })
+      list.push({ resolve, timer, limit })
       this.chathistoryResolvers.set(key, list)
-      this.irc.raw('CHATHISTORY', 'LATEST', target, '*', String(limit))
+      this.irc.raw('CHATHISTORY', 'LATEST', target, '*', String(this.chathistoryWireLimit(limit)))
     })
+  }
+
+  // Server-side cap on a single CHATHISTORY request, from the ISUPPORT token.
+  private chathistoryServerMax(): number {
+    const raw = this.irc.network?.supports?.('CHATHISTORY')
+    const n = typeof raw === 'string' ? parseInt(raw, 10) : NaN
+    return Number.isFinite(n) && n > 0 ? n : CHATHISTORY_DEFAULT_MAX
+  }
+
+  // What we actually ask the server for, given what the caller wants. Over-fetch so
+  // the service rows we filter don't starve the reply; never exceed the server max.
+  private chathistoryWireLimit(limit: number): number {
+    const want = Math.max(limit * CHATHISTORY_OVERFETCH_FACTOR, CHATHISTORY_OVERFETCH_FLOOR)
+    return Math.min(want, this.chathistoryServerMax())
   }
 
   getUsers(channel: string): string[] {
@@ -485,11 +518,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private logChathistoryCap(): void {
     const available: Map<string, string> = this.irc.network?.cap?.available ?? new Map()
     this.chathistoryCapActive = !this.chathistoryDisabled && available.has(CAP_CHATHISTORY)
-    this.log(
-      this.chathistoryCapActive
-        ? `${CAP_CHATHISTORY} advertised — mid-session channel_history will issue server queries`
-        : `${CAP_CHATHISTORY} not advertised${this.chathistoryDisabled ? ' (disabled via config)' : ''} — channel_history falls back to local ring`,
-    )
+    if (this.chathistoryCapActive) {
+      this.log(`${CAP_CHATHISTORY} advertised — mid-session channel_history will issue server queries`)
+      return
+    }
+    const why = this.chathistoryDisabled ? ' (disabled via config)' : ''
+    this.log(`${CAP_CHATHISTORY} not advertised${why} — channel_history falls back to local ring`)
+    // Degrading to the ring is only visible on stderr otherwise, which no agent
+    // reads — and a fallback that looks identical to success is the defect. Same
+    // shape parseMultilineCap already uses for draft/multiline.
+    if (!this.chathistoryDisabled) {
+      this.emitSystem('cap-missing', `${CAP_CHATHISTORY} cap not advertised by server — channel_history is limited to this session's local ring`)
+    }
   }
 
   private handleReconnect(): void {
@@ -688,11 +728,23 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
     const list = this.chathistoryResolvers.get(key)
     if (list && list.length > 0) {
-      const { resolve, timer } = list.shift()!
+      const { resolve, timer, limit } = list.shift()!
       if (list.length === 0) this.chathistoryResolvers.delete(key)
       clearTimeout(timer)
       const msgs = this.parseChathistoryBatch(event.commands, target, { applyJoinFilters: false })
-      resolve(msgs)
+      // A short reply on its own is ambiguous — the channel may simply be that
+      // small. What isn't ambiguous is the server returning fewer messages than we
+      // already hold locally for the same channel: the over-fetch window provably
+      // failed to reach back as far as the ring does. That's the case worth paging
+      // for, so say it out loud rather than silently handing back less.
+      const ringDepth = Math.min(this.getHistory(key, limit).length, limit)
+      if (msgs.length < ringDepth) {
+        this.emitSystem(
+          'chathistory-short',
+          `[roost] channel_history for ${target}: server returned ${msgs.length} of ${limit} requested (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally — service rows are consuming the fetch window`,
+        )
+      }
+      resolve(msgs.slice(-limit))
       return
     }
 

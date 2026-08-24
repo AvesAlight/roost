@@ -6,7 +6,8 @@ import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText, sleep } from './helpers/tool.js'
+import { toolText, sleep, suppressLateRejection } from './helpers/tool.js'
+import IRC from 'irc-framework'
 
 describe.if(isErgoAvailable())('chathistory backfill', () => {
   let ergo: ErgoContext
@@ -325,6 +326,7 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(text).toContain('no history for #ip-cq-fallback')
     expect(text).not.toContain('fallback-pre-1')
   })
+
 })
 
 // Subprocess-only: requires process.kill on subprocess pid via pidfile.
@@ -371,5 +373,56 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#hist-dedup3' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
     await mcp.waitForNotification(messagePredicate({ content: 'dedup-reset-msg', historical: true }), 5000)
+  })
+})
+
+// Ergo records membership changes into channel history as HistServ-synthesized
+// PRIVMSGs. Those rows consume the CHATHISTORY limit, and the client drops them via
+// HISTORY_SERVICE_SENDERS — so a channel with membership churn answers "give me N
+// messages" with far fewer than N, on a busy agent channel often zero. The client
+// compensates by over-fetching and slicing back down.
+describe.if(isErgoAvailable())('channel_history under membership churn', () => {
+  let ergo: ErgoContext
+
+  beforeAll(async () => {
+    ergo = (await startErgo())!
+  })
+
+  // Connect a throwaway client, join, then quit. Each round deposits two HistServ
+  // rows into the channel's server-side history, consuming two CHATHISTORY slots
+  // that the caller will never see in the reply.
+  async function churn(channel: string, rounds: number): Promise<void> {
+    for (let i = 0; i < rounds; i++) {
+      const client = new IRC.Client()
+      await suppressLateRejection(new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('churn client connect timed out')), 5000)
+        client.on('registered', () => { clearTimeout(timer); resolve() })
+        client.connect({ host: ergo.host, port: ergo.port, nick: `churn${i}`, auto_reconnect: false })
+      }))
+      client.join(channel)
+      await sleep(60)
+      client.quit()
+      await sleep(60)
+    }
+  }
+
+  it('returns the requested number of messages when membership events fill the newest slots', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-churn-peer')
+    await peer.joinChannel('#ip-cq-churn')
+    for (let i = 1; i <= 5; i++) peer.say('#ip-cq-churn', `churn-msg-${i}`)
+    await sleep(200)
+
+    // Churn AFTER the messages, so the service rows occupy the newest history slots.
+    // A naive `CHATHISTORY LATEST ... 5` spends its whole budget on them.
+    await churn('#ip-cq-churn', 6)
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-churn-mcp')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-churn' } })
+    await sleep(300)
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-churn', limit: 5 } })
+    expect(hist.isError).toBeFalsy()
+    const text = toolText(hist)
+    for (let i = 1; i <= 5; i++) expect(text).toContain(`churn-msg-${i}`)
   })
 })
