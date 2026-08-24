@@ -520,7 +520,7 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(list2)).not.toContain('ip-ment5: ping')
   })
 
-  // ---- Reply reminder attribute (issue #718) -----------------------------
+  // ---- Reply reminder attribute -------------------------------------------
 
   it('inbound channel message carries a channel_message reminder attribute', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-rem1')
@@ -538,13 +538,16 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
   it('inbound DM carries a direct_message reminder attribute naming the sender', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-rem2')
-    const peer = await connectPeer(ergo, 'ip-rem2-peer')
+    // Mixed-case nick: pins that the hint keys off `msg.sender` (case as sent)
+    // rather than `msg.channel`, which the IRC layer lowercases for DMs.
+    // An all-lowercase nick here would pass under either field.
+    const peer = await connectPeer(ergo, 'ip-Rem2-Peer')
 
     peer.say('ip-rem2', 'dm hello')
     const msg = await mcp.waitForNotification(
       messagePredicate({ isDirect: true, content: 'dm hello' }),
     )
-    expect(msg.meta.reminder).toBe('reply using direct_message to ip-rem2-peer')
+    expect(msg.meta.reminder).toBe('reply using direct_message to ip-Rem2-Peer')
   })
 
   it('historical replay never carries the reminder attribute', async () => {
