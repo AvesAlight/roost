@@ -8,6 +8,7 @@ import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText, sleep, suppressLateRejection } from './helpers/tool.js'
 import IRC from 'irc-framework'
+import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
 
 describe.if(isErgoAvailable())('chathistory backfill', () => {
   let ergo: ErgoContext
@@ -481,5 +482,41 @@ describe.if(isErgoAvailable())('channel_history under membership churn', () => {
     expect(hist.isError).toBeFalsy()
     const text = toolText(hist)
     for (let i = 1; i <= 5; i++) expect(text).toContain(`churn-msg-${i}`)
+  })
+
+  // The test above asserts the user-visible contract, which channel_history can now
+  // satisfy from either source — so it would stay green if over-fetch regressed and
+  // the local ring covered for it. This one talks to the client directly, so only
+  // the server path can answer, and it fails if the wire limit stops over-fetching.
+  it('the server path alone returns the requested count under churn', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-churn2-peer')
+    await peer.joinChannel('#ip-cq-churn2')
+    for (let i = 1; i <= 5; i++) peer.say('#ip-cq-churn2', `churn2-msg-${i}`)
+    await sleep(200)
+    await churn('#ip-cq-churn2', 6)
+
+    const client = new RoostIrcClientImpl({
+      nick: 'ip-cq-churn2-cli',
+      autoJoin: [],
+      historySize: 50,
+      joinHistoryLines: 20,
+      joinHistoryMinutes: 30,
+    })
+    client.connect({ host: ergo.host, port: ergo.port, nick: 'ip-cq-churn2-cli' })
+    const deadline = Date.now() + 5000
+    while (!client.isReady()) {
+      if (Date.now() > deadline) throw new Error('churn2 client never became ready')
+      await sleep(50)
+    }
+    await client.join('#ip-cq-churn2')
+    await sleep(300)
+
+    const msgs = await client.chathistoryLatest('#ip-cq-churn2', 5)
+    client.quit()
+
+    expect(msgs).not.toBeNull()
+    expect(msgs!.map(m => m.text)).toEqual([
+      'churn2-msg-1', 'churn2-msg-2', 'churn2-msg-3', 'churn2-msg-4', 'churn2-msg-5',
+    ])
   })
 })
