@@ -3,7 +3,7 @@ declare module 'irc-framework' {
   export interface IrcRawMessage {
     command: string
     params: string[]
-    tags?: Record<string, unknown>
+    tags?: Record<string, string>
     prefix?: string
     nick?: string
     ident?: string

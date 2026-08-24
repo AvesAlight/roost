@@ -38,6 +38,14 @@ export interface MessageMeta {
   mention?: boolean
 }
 
+// Shared by the JOIN auto-replay path and channel_history's tool response — both
+// build the same historical MessageMeta for a possibly-reassembled IrcMessage.
+export function historicalMeta(msg: IrcMessage): MessageMeta {
+  const meta: MessageMeta = { historical: true, mention: msg.mention }
+  if (msg.reassembledFrom !== undefined) { meta.buffered = true; meta.chunkCount = msg.reassembledFrom }
+  return meta
+}
+
 // Extras on membership events from join/part/kick/quit/nick.
 export interface MembershipExtras {
   reason?: string
