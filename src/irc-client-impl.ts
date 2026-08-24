@@ -782,14 +782,16 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       // to reach back as far as the ring does. That's the case worth paging for, so
       // say it out loud rather than silently handing back less.
       //
-      // Reports what was observed, not why. Service rows crowding the window is the
-      // expected cause and the reason for the over-fetch, but this code can't see
-      // them — they're filtered before it counts — so it doesn't claim them.
+      // Reports what was observed, and only that. Service rows crowding the window is
+      // the expected cause and the reason for the over-fetch, but this code can't see
+      // them — they're filtered before it counts. It also says nothing about which
+      // source answers the call: that's irc-server's choice, and it falls back to the
+      // ring only when the server returns nothing at all.
       const ringDepth = Math.min(this.getHistory(key, limit).length, limit)
       if (msgs.length < ringDepth) {
         this.emitSystem(
           'chathistory-short',
-          `[roost] channel_history for ${target}: server returned ${msgs.length} messages for a limit of ${limit} (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally — answering from the local ring instead`,
+          `[roost] channel_history for ${target}: server returned ${msgs.length} messages for a limit of ${limit} (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally`,
         )
       }
       resolve(msgs.slice(-limit))
