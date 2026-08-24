@@ -407,11 +407,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         // "no history" while the ring holds the conversation is the worst outcome for
         // an agent trying to reconstruct one. Fall back only when the server came
         // back with nothing at all. null means the server path didn't run.
-        //
-        // Deliberately not merging the two: our own messages live in the ring under a
-        // locally-stamped timestamp and on the server under the server's, so a union
-        // would need fuzzy (sender, text, time-window) dedupe to avoid showing them
-        // twice. Not worth it for a fallback this narrow.
         const fromRing = client.getHistory(key, limit)
         const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }

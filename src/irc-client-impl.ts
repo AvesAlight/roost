@@ -28,10 +28,10 @@ import type {
 //
 // Consequence for limit accounting: ergo records membership changes into channel
 // history as HistServ-synthesized PRIVMSGs, and those rows consume the CHATHISTORY
-// limit like any other. We deliver them to HISTORY_SERVICE_SENDERS and drop them,
-// so a caller asking for N messages on a channel with membership churn gets fewer
-// than N back — sometimes zero. The server honors the limit; we shrink the result
-// after the fact. sendChathistoryQuery compensates by over-fetching and slicing.
+// limit like any other, and we filter them out via HISTORY_SERVICE_SENDERS — so a
+// caller asking for N messages on a channel with membership churn gets fewer than N
+// back, sometimes zero. The server honors the limit; we shrink the result after the
+// fact. sendChathistoryQuery compensates by over-fetching and slicing.
 const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
@@ -45,6 +45,11 @@ const CHATHISTORY_OVERFETCH_FACTOR = 8
 const CHATHISTORY_OVERFETCH_FLOOR = 50
 // Fallback when the server doesn't advertise a CHATHISTORY ISUPPORT token.
 const CHATHISTORY_DEFAULT_MAX = 100
+
+// How far apart our own send-time record and the server's replay of the same message
+// may sit and still be treated as one message. Generous: it only has to cover the
+// round trip, and the cost of being too tight is a duplicate ring entry per rejoin.
+const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 
 // Server-side service senders that synthesize PRIVMSGs into channel history for
 // membership/admin events ("X joined the channel", "Y set channel modes: …",
@@ -249,25 +254,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // actually call channel_history for — reconstructing a conversation after compaction,
   // when their own posts are gone from context too.
   //
-  // Recorded as historical so the unread counter doesn't tick for our own words.
-  //
-  // The timestamp is stamped locally rather than taken from the server. Against
-  // loopback ergo the two agree often enough that the sender|ts|text fingerprint
-  // does match the server's replay of the same message, which is what keeps a
-  // part/rejoin from stacking a second copy into the ring. When they don't agree the
-  // ring holds a duplicate — the message is never lost, so a mismatch degrades
-  // rather than breaks. emitAutoReplayBatch deliberately still surfaces the
-  // historical notification for our own messages either way.
+  // Recorded as historical so the unread counter doesn't tick for our own words. The
+  // timestamp is ours, not the server's, so when the server later replays the same
+  // message emitAutoReplayBatch matches it on sender+text within a short window
+  // rather than on the exact-timestamp fingerprint.
   private recordOwnMessage(target: string, text: string): void {
-    const isDirect = targetIsDirect(target)
     const msg: IrcMessage = {
       channel: target.toLowerCase(),
       sender: this.nick,
       text,
       ts: new Date().toISOString(),
-      isDirect,
+      isDirect: targetIsDirect(target),
     }
-    if (this.hasFingerprint(msg)) return
     this.recordMessage(msg, true)
   }
 
@@ -395,6 +393,22 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (set.has(fp)) return
     set.add(fp)
     while (set.size > this.historySize) set.delete(set.values().next().value!)
+  }
+
+  // Same sender and text, close enough in time to be the same message seen twice —
+  // once as our own outbound record, once as the server's replay of it. Deliberately
+  // coarse: an agent posting identical text twice inside the window collapses to one
+  // ring entry, which is a better failure than a duplicate on every rejoin.
+  private ringHasNearDuplicate(msg: IrcMessage, windowMs = OWN_MESSAGE_DEDUPE_WINDOW_MS): boolean {
+    const buf = this.history.get(msg.channel)
+    if (!buf) return false
+    const at = Date.parse(msg.ts)
+    for (let i = buf.length - 1; i >= 0; i--) {
+      const prev = buf[i]
+      if (prev.sender !== msg.sender || prev.text !== msg.text) continue
+      if (Math.abs(Date.parse(prev.ts) - at) <= windowMs) return true
+    }
+    return false
   }
 
   private hasFingerprint(msg: IrcMessage): boolean {
@@ -784,15 +798,17 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private emitAutoReplayBatch(commands: BatchCommand[], target: string): void {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
+      // Our own messages are already in the ring — say() put them there at send time,
+      // under our clock rather than the server's, so the exact-timestamp fingerprint
+      // can't be trusted to match. Match on sender+text within a short window instead.
+      // The notification fires either way: an agent rejoining needs its own prior
+      // words replayed, which is the whole point of reading history after compaction.
+      if (msg.sender === this.nick) {
+        if (!this.ringHasNearDuplicate(msg)) this.recordMessage(msg, true)
+        this.emitMessage(msg, { historical: true, mention: msg.mention })
+        continue
+      }
       if (this.hasFingerprint(msg)) {
-        // Already in the ring, so don't record it twice. Our own messages are the
-        // exception for the *notification*: say() puts them in the ring at send time,
-        // but an agent rejoining a channel still needs its own prior words replayed —
-        // that's the whole point of reading history after compaction.
-        if (msg.sender === this.nick) {
-          this.emitMessage(msg, { historical: true, mention: msg.mention })
-          continue
-        }
         this.log(`chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}`)
         continue
       }

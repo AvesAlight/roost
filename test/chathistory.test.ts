@@ -349,12 +349,14 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(toolText(hist)).toContain('own-ring-msg')
   })
 
-  // say() fingerprints our own message when it records it, which is what stops a
-  // rejoin from stacking a second copy into the ring. That same fingerprint must not
-  // swallow the historical notification — an agent rejoining needs its own words back.
-  it('own messages still replay as historical after being recorded at send time', async () => {
+  // say() records our own message at send time under our own clock; the server later
+  // replays it under its clock. Both halves are asserted against the ring itself:
+  // chathistoryDisabled forces channel_history onto the ring, so what comes back is
+  // what the ring holds, not what the server would have answered. Going through the
+  // server path here would prove nothing — it returns its single row either way.
+  it('own messages replay as historical and leave exactly one ring copy', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer8')
-    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp8')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp8', { chathistoryDisabled: true })
 
     await peer.joinChannel('#ip-cq-ownreplay')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
@@ -363,12 +365,12 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-cq-ownreplay' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
 
+    // The rejoin must replay our own words back to us.
     await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-replay-msg' }))
 
-    // ...and the ring holds exactly one copy of it, not one per rejoin.
+    // ...without the ring accumulating a second copy of them.
     const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownreplay' } })
-    const copies = toolText(hist).split('own-replay-msg').length - 1
-    expect(copies).toBe(1)
+    expect(toolText(hist).split('own-replay-msg').length - 1).toBe(1)
   })
 
   // Our own message is not "unread" — we just wrote it.
@@ -486,30 +488,10 @@ describe.if(isErgoAvailable())('channel_history under membership churn', () => {
     }
   }
 
-  it('returns the requested number of messages when membership events fill the newest slots', async () => {
-    const peer = await connectPeer(ergo, 'ip-cq-churn-peer')
-    await peer.joinChannel('#ip-cq-churn')
-    for (let i = 1; i <= 5; i++) peer.say('#ip-cq-churn', `churn-msg-${i}`)
-    await sleep(200)
-
-    // Churn AFTER the messages, so the service rows occupy the newest history slots.
-    // A naive `CHATHISTORY LATEST ... 5` spends its whole budget on them.
-    await churn('#ip-cq-churn', 6)
-
-    const mcp = await startMcpInProcess(ergo, 'ip-cq-churn-mcp')
-    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-churn' } })
-    await sleep(300)
-
-    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-churn', limit: 5 } })
-    expect(hist.isError).toBeFalsy()
-    const text = toolText(hist)
-    for (let i = 1; i <= 5; i++) expect(text).toContain(`churn-msg-${i}`)
-  })
-
-  // The test above asserts the user-visible contract, which channel_history can now
-  // satisfy from either source — so it would stay green if over-fetch regressed and
-  // the local ring covered for it. This one talks to the client directly, so only
-  // the server path can answer, and it fails if the wire limit stops over-fetching.
+  // Drives the client directly rather than going through channel_history, so only
+  // the server path can answer. Routed through the MCP tool instead, the join
+  // auto-replay would populate the ring and the fallback would satisfy the assertion
+  // even with over-fetch removed — green for the wrong reason.
   it('the server path alone returns the requested count under churn', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-churn2-peer')
     await peer.joinChannel('#ip-cq-churn2')
