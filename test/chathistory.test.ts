@@ -80,10 +80,6 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
     expect(Number(n2.meta.seq)).toBeGreaterThan(Number(n1.meta.seq))
   })
 
-  // ergo replays a multiline post as a draft/multiline BATCH nested inside the
-  // JOIN auto-replay chathistory batch — irc-framework's own dispatch() drops that
-  // nested batch entirely (it never registers the inner id), so without the intake
-  // fix this post vanishes from the auto-replay rather than arriving as fragments.
   it('a multiline post sent while parted comes back as one reassembled historical notification', async () => {
     const sender = await startMcpInProcess(ergo, 'ip-hist-multi-sender')
     const mcp = await startMcpInProcess(ergo, 'ip-hist-multi-reader')
@@ -407,11 +403,6 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(toolText(hist).split('own-replay-msg').length - 1).toBe(1)
   })
 
-  // Round-trip equality is the assertion that matters here: a naive same-server-time
-  // grouping heuristic (join every contiguous same-sender row with \n) would pass the
-  // multi-paragraph case but corrupt the long single line, inserting newlines the
-  // sender never typed wherever splitLineForMultiline had chunked it on send. Reusing
-  // reassembleMultilineBatch (concat tags honored) is what makes both lossless.
   it('reassembles multiline posts replayed via chathistory into one entry each, byte-for-byte', async () => {
     const sender = await startMcpInProcess(ergo, 'ip-cq-multi-sender')
     const reader = await startMcpInProcess(ergo, 'ip-cq-multi-reader')

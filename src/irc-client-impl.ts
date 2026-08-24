@@ -49,8 +49,7 @@ const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 // Ergo-specific; extend if other servers ship similar services.
 const HISTORY_SERVICE_SENDERS = new Set(['histserv'])
 
-// Internal-only marker tag, never seen on the wire — see installNestedMultilineBatchIntake.
-// Namespaced so it can't collide with a real IRC tag key.
+// Internal-only marker tag (never on the wire) — see installNestedMultilineBatchIntake.
 const REASSEMBLED_CHUNKS_TAG = 'roost/reassembled-chunks'
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -504,28 +503,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('nick in use', onNickReject(433))
   }
 
-  // Restores a draft/multiline batch nested inside another batch (chathistory replay
-  // or the JOIN auto-replay batch) — a shape irc-framework's own dispatch() drops.
-  //
-  // dispatch() only executes a line (which is what opens/closes a batch in its cache)
-  // when the line carries no `batch` tag of its own. A nested "BATCH +id draft/multiline"
-  // line is itself inside the outer batch, so it carries the outer batch's tag — it gets
-  // pushed onto the outer batch's unexecuted command list instead of being executed, the
-  // inner id is never registered, and every member PRIVMSG below it (tagged with the
-  // inner id) falls into dispatch()'s "no cache for this id" branch and is silently
-  // dropped. Confirmed against ergo (a client with the draft/multiline cap enabled — us
-  // — gets this nested shape; a client without the cap gets a flattened, unwrapped one).
-  //
-  // We wrap dispatch to reopen the inner batch ourselves, accumulate its members, and on
-  // the inner batch's end splice one reassembled PRIVMSG into the *outer* batch's own
-  // cache (via the same public cache()/hasCache() surface the library's BATCH handler
-  // uses) — so parseChathistoryBatch and the live multiline path never need to know this
-  // happened. Reassembly reuses reassembleMultilineBatch, so it's lossless: concat tags
-  // are honored, not guessed at.
-  //
-  // Depends on irc-framework's dispatch()/cache() shape (node_modules/irc-framework/src/
-  // commands/handler.js) holding across versions — the integration test that posts a real
-  // multiline message and reads it back via chathistory is the tripwire if that changes.
+  // ergo replays a draft/multiline post as a BATCH nested inside another batch
+  // (chathistory replay, JOIN auto-replay). irc-framework's dispatch() never executes
+  // a line carrying its own `batch` tag, so the nested batch's id never registers and
+  // every member under it is silently dropped. This reopens the nested batch ourselves
+  // and splices one reassembled PRIVMSG into the outer batch's own cache
+  // (cache()/hasCache()) so parseChathistoryBatch never needs to know this happened.
   private installNestedMultilineBatchIntake(): void {
     const handler = this.irc.command_handler
     const originalDispatch = handler.dispatch.bind(handler)
@@ -533,13 +516,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       try {
         this.dispatchWithNestedBatchIntake(message, originalDispatch)
       } catch (e) {
-        // This hack rides on irc-framework internals (see the comment above) — if a
-        // future version changes shape under us, degrade to the pre-fix behavior
-        // (a dropped nested batch) rather than taking the whole connection down. That
-        // degrade is otherwise silent — same failure mode #719 flagged for a swallowed
-        // log — so surface it as a system event too, not just stderr. State what we
-        // observed (the override failed), not what we can't know (what the sender
-        // actually posted).
+        // Rides on irc-framework internals — degrade instead of crashing the connection.
         this.log(`nested multiline batch intake failed, falling back to default dispatch: ${(e as Error)?.stack ?? e}`)
         this.emitSystem('multiline-intake-degraded', '[roost] multiline chathistory reassembly failed for one message — a replayed post here may be missing or incomplete')
         originalDispatch(message)
@@ -580,24 +557,16 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     originalDispatch(message)
   }
 
-  // Builds the one reassembled PRIVMSG for a completed nested multiline batch and
-  // splices it into its outer batch's command list, in place of the swallowed markers.
   private spliceReassembledMultiline(nested: NestedMultilineBatch): void {
     if (nested.members.length === 0) return
     const cacheKey = `batch.${nested.outerBatchId}`
-    // Outer batch already closed (or never opened) — nothing to splice into. Shouldn't
-    // happen given FIFO wire delivery; defensive rather than a thrown error.
     if (!this.irc.command_handler.hasCache(cacheKey)) return
     const text = reassembleMultilineBatch(nested.members)
     const timeTag = nested.startTags['time']
     const serverTimeMs = typeof timeTag === 'string' ? (Date.parse(timeTag) || undefined) : undefined
     const tags: Record<string, unknown> = { ...nested.startTags, [REASSEMBLED_CHUNKS_TAG]: nested.members.length }
-    // The outer batch's own BATCH handler (irc-framework) doesn't just emit
-    // cache.commands — it replays each one through executeCommand() as if it had
-    // arrived top-level, so this needs to duck-type as a real IrcCommand (getTag
-    // included), not just satisfy our own BatchCommand shape. ident/hostname are
-    // inert filler: the replay's resulting 'message' event carries batch.type ===
-    // 'chathistory' and handleMessage already drops those (see its batch.type guard).
+    // irc-framework replays every batch command through executeCommand() as if it
+    // arrived top-level, so this must duck-type a full IrcCommand (getTag included).
     const synthesized: BatchCommand & { getTag: (name: string) => unknown; ident: string; hostname: string } = {
       command: 'PRIVMSG',
       params: [nested.target, text],
@@ -935,8 +904,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
       const msg: IrcMessage = { channel: channelKey, sender, text, ts, isDirect }
       msg.mention = this.nickMentionRegex.test(text)
-      // Set only on a PRIVMSG synthesized by installNestedMultilineBatchIntake — states
-      // how many wire lines were grouped, not what the sender originally typed.
+      // Set only on a reassembled PRIVMSG — see installNestedMultilineBatchIntake.
       const chunkCount = c.tags[REASSEMBLED_CHUNKS_TAG]
       if (typeof chunkCount === 'number' && chunkCount > 1) msg.reassembledFrom = chunkCount
       batch.push(msg)

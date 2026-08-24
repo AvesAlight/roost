@@ -15,12 +15,8 @@ function makeClient() {
   return new RoostIrcClientImpl(config) as any
 }
 
-// Exercises the wrapped command_handler.dispatch installed by
-// installNestedMultilineBatchIntake directly, with no socket/ergo needed — the
-// constructor sets up irc-framework's command_handler eagerly. Feeds it the same
-// wire shape captured from a real ergo chathistory replay (see the comment on
-// installNestedMultilineBatchIntake): an outer batch, a nested draft/multiline
-// batch inside it, one member, then the nested end.
+// Drives command_handler.dispatch directly with the wire shape captured from a real
+// ergo chathistory replay — no socket/ergo needed, the constructor wires it eagerly.
 describe('nested multiline batch intake', () => {
   it('reassembles a nested draft/multiline batch replayed inside a chathistory batch', () => {
     const client = makeClient()
@@ -56,9 +52,7 @@ describe('nested multiline batch intake', () => {
 
     dispatch({ command: 'BATCH', params: ['+1', 'chathistory', '#chan'], tags: {} })
 
-    // A tags object whose 'time' getter throws — simulates a future irc-framework
-    // shape mismatch inside our own reassembly code without touching any framework
-    // internals that the outer batch's own lifecycle also depends on.
+    // A 'time' getter that throws simulates a future irc-framework shape mismatch.
     const poisonedTags: Record<string, unknown> = { batch: '1' }
     Object.defineProperty(poisonedTags, 'time', { get() { throw new Error('forced probe failure') } })
     dispatch({ command: 'BATCH', params: ['+2', 'draft/multiline', '#chan'], tags: poisonedTags, nick: 'peer' })

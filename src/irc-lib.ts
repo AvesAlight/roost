@@ -8,9 +8,8 @@ export interface IrcMessage {
   isDirect: boolean
   /** Memoized result of the nick mention regex (text-only). Set by recordMessage; OR'd with isDirect at wire-emit time. */
   mention?: boolean
-  /** Set when this message was reassembled from N wire PRIVMSGs (a multiline batch
-   *  restored from chathistory replay). States what was grouped, not what the sender
-   *  originally typed — see the nested-batch intake comment in irc-client-impl.ts. */
+  /** Set when reassembled from N wire PRIVMSGs (a chathistory-replayed multiline batch).
+   *  States what was grouped, not what the sender typed. */
   reassembledFrom?: number
 }
 
