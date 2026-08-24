@@ -1,19 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
 import type { JoinResult } from '../src/irc-client.js'
-
-const config = {
-  nick: 'test-bot',
-  autoJoin: [],
-  historySize: 50,
-  joinHistoryLines: 20,
-  joinHistoryMinutes: 5,
-}
-
-function makeClient() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return new RoostIrcClientImpl(config) as any
-}
+import { config, makeClient } from './helpers/offline-client.js'
 
 describe('channelUsers cache cleared on disconnect', () => {
   it('isJoined returns false immediately after socket close', () => {

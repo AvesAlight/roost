@@ -1,19 +1,6 @@
 import { describe, it, expect } from 'bun:test'
-import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
 import type { SystemContent } from '../src/irc-client.js'
-
-const config = {
-  nick: 'test-bot',
-  autoJoin: [],
-  historySize: 50,
-  joinHistoryLines: 20,
-  joinHistoryMinutes: 5,
-}
-
-function makeClient() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return new RoostIrcClientImpl(config) as any
-}
+import { makeClient } from './helpers/offline-client.js'
 
 // Drives command_handler.dispatch directly with the wire shape captured from a real
 // ergo chathistory replay — no socket/ergo needed, the constructor wires it eagerly.
@@ -63,5 +50,19 @@ describe('nested multiline batch intake', () => {
 
     // The handler itself must still work for later, unrelated traffic.
     expect(() => dispatch({ command: 'PING', params: ['x'], tags: {} })).not.toThrow()
+  })
+
+  it('delivers a plain message exactly once when a downstream handler throws', () => {
+    const client = makeClient()
+    const dispatch = client.irc.command_handler.dispatch.bind(client.irc.command_handler)
+
+    let calls = 0
+    client.irc.command_handler.on('privmsg', () => {
+      calls++
+      throw new Error('downstream handler boom')
+    })
+
+    expect(() => dispatch({ command: 'PRIVMSG', params: ['#chan', 'hello'], tags: {}, nick: 'peer' })).toThrow('downstream handler boom')
+    expect(calls).toBe(1)
   })
 })
