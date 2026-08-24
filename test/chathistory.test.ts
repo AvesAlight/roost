@@ -328,7 +328,7 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(text).not.toContain('fallback-pre-1')
   })
 
-  // Folds #720. One setup, three properties of say()'s ring recording: the
+  // One setup, three properties of say()'s ring recording: the
   // single-line branch lands, the multiline branch lands, and neither counts as
   // unread. chathistoryDisabled puts channel_history on the ring, which is the
   // thing under test.
