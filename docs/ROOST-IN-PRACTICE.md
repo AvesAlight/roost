@@ -46,10 +46,13 @@ subscribe to the issue (so GitHub events for it route to that
 channel), creates an isolated git worktree, and spawns a worker and a
 reviewer into it.
 
-**worker-42** reads the issue, posts an implementation plan in
-`#<project>-issue-42`, and waits. The PM and **reviewer-42** read
-the plan and push back — this is where rework is cheap, so a few
-rounds of pressure-testing are normal. Once the plan holds up, the
+**worker-42** and **reviewer-42** each read the issue and draft
+blind — the worker its implementation plan, the reviewer its own
+sketch of the same issue — and post `plan ready` when done. Once
+both posts are up the worker reveals its plan in
+`#<project>-issue-42` and the reviewer posts a comparison against
+its own sketch; the PM decides last. This is where rework is
+cheap, so a round or two is normal. Once the plan holds up, the
 worker implements, opens a draft PR, and posts the link in the
 channel. Worker's playbook is `prompts/worker.md`.
 
