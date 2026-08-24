@@ -1,11 +1,12 @@
 import IRC from 'irc-framework'
-import type { IrcFrameworkClient } from 'irc-framework'
+import type { IrcFrameworkClient, IrcRawMessage } from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
   splitLineForMultiline,
   newBatchId,
   reassembleMultilineBatch,
 } from './irc-lib.js'
+import { historicalMeta } from './irc-client.js'
 import type {
   RoostIrcClient,
   ClientConfig,
@@ -33,6 +34,7 @@ const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
 const BATCH_TYPE_CHATHISTORY = 'chathistory'
+const BATCH_TYPE_MULTILINE = 'draft/multiline'
 
 // Over-fetch headroom for the filtered service rows.
 const CHATHISTORY_OVERFETCH_FACTOR = 8
@@ -59,6 +61,16 @@ const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\
 // the two paths drifting on the DM/channel boundary.
 const targetIsDirect = (target: string): boolean => !target.startsWith('#')
 
+// Mirrors IrcCommand.getServerTime(), including its znc.in/server-time numeric-unix
+// fallback, so a synthesized command's time tag parses identically to a real one.
+const SERVER_TIME_NUMERIC = /^[0-9.]{1,}$/
+const parseServerTimeTag = (tag: string | undefined): number | undefined => {
+  if (!tag) return undefined
+  const time = Date.parse(tag) || undefined
+  if (!time && SERVER_TIME_NUMERIC.test(tag)) return new Date(Number(tag) * 1000).getTime()
+  return time
+}
+
 // ---- IRC event shapes ------------------------------------------------------
 
 interface JoinEvent { nick: string; channel: string }
@@ -81,8 +93,21 @@ interface BatchCommand {
   nick: string
   tags: Record<string, unknown>
   getServerTime?: () => number | undefined
+  // Set only on a PRIVMSG synthesized by installNestedMultilineBatchIntake, to the
+  // number of wire lines it was built from.
+  reassembledFrom?: number
 }
 interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[] }
+
+// Accumulator for a draft/multiline batch nested inside another batch (chathistory
+// replay or JOIN auto-replay) — see installNestedMultilineBatchIntake.
+interface NestedMultilineBatch {
+  outerBatchId: string
+  target: string
+  startNick: string
+  startTags: Record<string, string>
+  members: BatchCommand[]
+}
 
 // ---- Implementation --------------------------------------------------------
 
@@ -136,6 +161,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // is dropped rather than satisfying a subsequent query's resolver. TCP/IRC delivery
   // is FIFO, so dropping one batch is enough.
   private readonly chathistorySkipNextBatch = new Set<string>()
+  // Nested draft/multiline batches currently being restored, keyed by the inner batch id.
+  // See installNestedMultilineBatchIntake.
+  private readonly nestedMultilineBatches = new Map<string, NestedMultilineBatch>()
   private multilineMaxLines = 100
   private readonly history = new Map<string, IrcMessage[]>()
   private readonly unread = new Map<string, UnreadInfo>()
@@ -160,6 +188,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.pendingJoinReplayMs = config.pendingJoinReplayMs ?? 500
     this.irc = new IRC.Client()
     this.registerHandlers()
+    this.installNestedMultilineBatchIntake()
   }
 
   // ---- Public interface --------------------------------------------------
@@ -487,6 +516,103 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('nick in use', onNickReject(433))
   }
 
+  // ergo replays a draft/multiline post as a BATCH nested inside another batch
+  // (chathistory replay, JOIN auto-replay). irc-framework's dispatch() never executes
+  // a line carrying its own `batch` tag, so the nested batch's id never registers and
+  // every member under it is silently dropped. This reopens the nested batch ourselves
+  // and splices one reassembled PRIVMSG into the outer batch's own cache
+  // (cache()/hasCache()) so parseChathistoryBatch never needs to know this happened.
+  private installNestedMultilineBatchIntake(): void {
+    const handler = this.irc.command_handler
+    const originalDispatch = handler.dispatch.bind(handler)
+    handler.dispatch = (message: IrcRawMessage) => {
+      let handled = false
+      try {
+        handled = this.tryNestedMultilineIntake(message)
+      } catch (e) {
+        // Rides on irc-framework internals — degrade instead of crashing the connection.
+        // originalDispatch below still runs exactly once either way; see its own comment.
+        this.log(`nested multiline batch intake failed, falling back to default dispatch: ${(e as Error)?.stack ?? e}`)
+        this.emitSystem('multiline-intake-degraded', '[roost] multiline chathistory reassembly failed for one message — a replayed post here may be missing or incomplete')
+      }
+      // Outside the try, and called exactly once: originalDispatch synchronously runs
+      // every downstream handler, so wrapping it here would turn a handler's own throw
+      // into a second dispatch of the same line.
+      if (!handled) originalDispatch(message)
+    }
+  }
+
+  // True when `message` was fully consumed by nested-batch reconstruction (a nested
+  // multiline BATCH marker or one of its members) and must not reach normal dispatch.
+  private tryNestedMultilineIntake(message: IrcRawMessage): boolean {
+    const outerBatchTag = message.tags?.['batch']
+    if (message.command === 'BATCH') {
+      const raw = message.params[0] ?? ''
+      const id = raw.slice(1)
+      if (outerBatchTag === undefined) {
+        // A top-level batch closing — sweep any nested batch left open under it (a
+        // truncated replay that never got its own inner end).
+        if (raw.startsWith('-')) {
+          for (const [innerId, nested] of this.nestedMultilineBatches) {
+            if (nested.outerBatchId === id) this.nestedMultilineBatches.delete(innerId)
+          }
+        }
+        return false
+      }
+      if (raw.startsWith('+') && message.params[1] === BATCH_TYPE_MULTILINE && id) {
+        this.nestedMultilineBatches.set(id, {
+          outerBatchId: outerBatchTag,
+          target: message.params[2] ?? '',
+          startNick: message.nick ?? '',
+          startTags: message.tags ?? {},
+          members: [],
+        })
+        return true
+      }
+      if (raw.startsWith('-') && this.nestedMultilineBatches.has(id)) {
+        const nested = this.nestedMultilineBatches.get(id)!
+        this.nestedMultilineBatches.delete(id)
+        this.spliceReassembledMultiline(nested)
+        return true
+      }
+      return false
+    }
+    if (outerBatchTag !== undefined && this.nestedMultilineBatches.has(outerBatchTag)) {
+      this.nestedMultilineBatches.get(outerBatchTag)!.members.push({
+        command: message.command,
+        params: message.params,
+        nick: message.nick ?? '',
+        tags: message.tags ?? {},
+      })
+      return true
+    }
+    return false
+  }
+
+  private spliceReassembledMultiline(nested: NestedMultilineBatch): void {
+    const privmsgs = nested.members.filter(m => m.command === 'PRIVMSG')
+    if (privmsgs.length === 0) return
+    const cacheKey = `batch.${nested.outerBatchId}`
+    if (!this.irc.command_handler.hasCache(cacheKey)) return
+    const text = reassembleMultilineBatch(privmsgs)
+    const serverTimeMs = parseServerTimeTag(nested.startTags['time'])
+    const tags = nested.startTags
+    // irc-framework replays every batch command through executeCommand() as if it
+    // arrived top-level, so this must duck-type a full IrcCommand (getTag included).
+    const synthesized: BatchCommand & { getTag: (name: string) => string | undefined; ident: string; hostname: string } = {
+      command: 'PRIVMSG',
+      params: [nested.target, text],
+      nick: privmsgs[0].nick || nested.startNick,
+      ident: '',
+      hostname: '',
+      tags,
+      reassembledFrom: privmsgs.length,
+      getServerTime: () => serverTimeMs,
+      getTag: (name: string) => tags[name.toLowerCase()],
+    }
+    this.irc.command_handler.cache(cacheKey).commands.push(synthesized)
+  }
+
   // ---- IRC event handlers ------------------------------------------------
 
   private handleRegistered(): void {
@@ -769,11 +895,12 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private emitAutoReplayBatch(commands: BatchCommand[], target: string): void {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
+      const meta = historicalMeta(msg)
       // Already ringed by say(), under our clock, so the fingerprint won't match.
       // Notify regardless: a rejoining agent needs its own words back.
       if (msg.sender === this.nick) {
         if (!this.ringHasNearDuplicate(msg)) this.recordMessage(msg, true)
-        this.emitMessage(msg, { historical: true, mention: msg.mention })
+        this.emitMessage(msg, meta)
         continue
       }
       if (this.hasFingerprint(msg)) {
@@ -781,7 +908,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         continue
       }
       this.recordMessage(msg, true)
-      this.emitMessage(msg, { historical: true, mention: msg.mention })
+      this.emitMessage(msg, meta)
     }
   }
 
@@ -809,6 +936,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       const ts = (serverTimeMs ? new Date(serverTimeMs) : new Date()).toISOString()
       const msg: IrcMessage = { channel: channelKey, sender, text, ts, isDirect }
       msg.mention = this.nickMentionRegex.test(text)
+      if (c.reassembledFrom !== undefined) msg.reassembledFrom = c.reassembledFrom
       batch.push(msg)
     }
     return opts.applyJoinFilters && this.joinHistoryLines > 0 ? batch.slice(-this.joinHistoryLines) : batch
@@ -858,6 +986,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.chathistoryResolvers.clear()
     this.chathistoryQueriesByTarget.clear()
     this.chathistorySkipNextBatch.clear()
+    this.nestedMultilineBatches.clear()
     for (const entry of this.pendingJoinReplays.values()) {
       clearTimeout(entry.timer)
       entry.resolve()

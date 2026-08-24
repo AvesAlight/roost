@@ -38,6 +38,14 @@ export interface MessageMeta {
   mention?: boolean
 }
 
+// Shared by the JOIN auto-replay path and channel_history's tool response — both
+// build the same historical MessageMeta for a possibly-reassembled IrcMessage.
+export function historicalMeta(msg: IrcMessage): MessageMeta {
+  const meta: MessageMeta = { historical: true, mention: msg.mention }
+  if (msg.reassembledFrom !== undefined) { meta.buffered = true; meta.chunkCount = msg.reassembledFrom }
+  return meta
+}
+
 // Extras on membership events from join/part/kick/quit/nick.
 export interface MembershipExtras {
   reason?: string
@@ -63,9 +71,9 @@ export interface ConnectOpts {
 // signals and can ignore the lifecycle kinds.
 export type SystemKind =
   | 'disconnected' | 'reconnected' | 'cap-missing' | 'chathistory-short' | 'registered' | 'registration-failed'
-  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls'
-// string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*;
-// { nick } for registered; { code, nick, reason } for registration-failed
+  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls' | 'multiline-intake-degraded'
+// string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*/
+// multiline-intake-degraded; { nick } for registered; { code, nick, reason } for registration-failed
 // (reason is the server's text for the numeric, e.g. "Erroneous nickname").
 export type SystemContent = string | { code?: number; nick?: string; reason?: string }
 

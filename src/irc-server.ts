@@ -35,6 +35,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import { historicalMeta } from './irc-client.js'
 import type { RoostIrcClient, ClientConfig, UnreadInfo, MessageMeta } from './irc-client.js'
 import type { IrcMessage } from './irc-lib.js'
 import type { WireMeta, WireMessageMeta, WireMembershipMeta } from './wire-meta.js'
@@ -398,7 +399,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
         const lines = slice.map(m => {
-          const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })
+          const wireMeta = buildMessageMeta(m, historicalMeta(m))
           return `<channel ${renderMessageAttrs(wireMeta)}>${escBody(m.text)}</channel>`
         })
         return { content: [{ type: 'text', text: lines.join('\n') }] }
