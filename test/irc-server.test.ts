@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeAll, spyOn } from 'bun:test'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
@@ -11,6 +12,7 @@ import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 import { createMcpServer } from '../src/irc-server.js'
+import { mcpConnectionLine } from '../src/mcp-banner.js'
 import type { RoostIrcClient, ClientConfig } from '../src/irc-client.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
@@ -730,6 +732,30 @@ const stubConfig: ClientConfig = {
   joinHistoryLines: 5,
   joinHistoryMinutes: 5,
 }
+
+describe('initialize instructions', () => {
+  it('carries the connection marker and every auto-joined channel', async () => {
+    const config: ClientConfig = { ...stubConfig, autoJoin: ['#one', '#two'] }
+    const { server } = createMcpServer(makeStubClient(), config)
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+
+    const client = new Client({ name: 'roost-test', version: '0.0.1' })
+    await client.connect(clientTransport)
+    try {
+      // bin/roost-token-usage greps the marker out of session JSONLs to
+      // attribute a transcript to its nick; nothing else asserts it
+      // survives in the banner.
+      const instructions = client.getInstructions()
+      expect(instructions).toContain(mcpConnectionLine('test-nick'))
+      expect(instructions).toContain('#one')
+      expect(instructions).toContain('#two')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+})
 
 describe('pushNotification error handling', () => {
   it('silently suppresses Not connected (transport teardown)', async () => {
