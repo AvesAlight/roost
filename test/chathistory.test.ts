@@ -327,6 +327,63 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(text).not.toContain('fallback-pre-1')
   })
 
+  // Folds #720: an agent recovering from compaction needs its own words back too,
+  // and on the fallback path nothing else puts them in the ring.
+  it('the local ring keeps the agent\'s own outbound messages', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer5')
+    await peer.joinChannel('#ip-cq-ownring')
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp5', {
+      chathistoryDisabled: true,
+      chathistoryQueryTimeoutMs: 250,
+    })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownring' } })
+
+    const heard = peer.waitForMessage('#ip-cq-ownring', m => m.text === 'own-ring-msg')
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownring', text: 'own-ring-msg' } })
+    await heard
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownring' } })
+    expect(hist.isError).toBeFalsy()
+    expect(toolText(hist)).toContain('own-ring-msg')
+  })
+
+  // Our own message is not "unread" — we just wrote it.
+  it('recording an own outbound message does not raise the unread count', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer6')
+    await peer.joinChannel('#ip-cq-ownunread')
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp6', { chathistoryDisabled: true })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownunread' } })
+
+    const heard = peer.waitForMessage('#ip-cq-ownunread', m => m.text === 'own-unread-msg')
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownunread', text: 'own-unread-msg' } })
+    await heard
+
+    const listed = await mcp.client.callTool({ name: 'channel_list', arguments: {} })
+    expect(toolText(listed)).not.toContain('own-unread-msg')
+  })
+
+  // Multiline goes out through a different branch of say(); it must land in the ring too.
+  it('the local ring keeps own outbound multiline messages', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer7')
+    await peer.joinChannel('#ip-cq-ownmulti')
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp7', {
+      chathistoryDisabled: true,
+      chathistoryQueryTimeoutMs: 250,
+    })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownmulti' } })
+
+    const heard = peer.waitForMessage('#ip-cq-ownmulti', m => m.text.includes('own-multi-tail'))
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownmulti', text: 'own-multi-head\nown-multi-tail' } })
+    await heard
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownmulti' } })
+    const text = toolText(hist)
+    expect(text).toContain('own-multi-head')
+    expect(text).toContain('own-multi-tail')
+  })
 })
 
 // Subprocess-only: requires process.kill on subprocess pid via pidfile.

@@ -214,6 +214,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } {
     if (text.length <= MULTILINE_LINE_BYTES && !text.includes('\n')) {
       this.irc.say(target, text)
+      this.recordOwnMessage(target, text)
       return { chunks: 1, mode: 'single' }
     }
 
@@ -238,7 +239,32 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     }
     this.irc.raw('BATCH', `-${id}`)
     this.log(`multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)`)
+    this.recordOwnMessage(target, text)
     return { chunks: wireLines.length, mode: 'multiline' }
+  }
+
+  // Our own outbound messages never come back to us: handleMessage drops self, and we
+  // don't negotiate echo-message. Without this the local ring is a record of what
+  // everyone *else* said, which makes the fallback path useless for the thing agents
+  // actually call channel_history for — reconstructing a conversation after compaction,
+  // when their own posts are gone from context too.
+  //
+  // Recorded as historical so the unread counter doesn't tick for our own words. The
+  // timestamp is stamped locally, so it won't match the server's to the millisecond;
+  // that matters only if echo-message is ever negotiated, at which point the
+  // sender|ts|text fingerprint would not dedupe the echo. Insurance against a cap we
+  // don't request, not a live guarantee.
+  private recordOwnMessage(target: string, text: string): void {
+    const isDirect = targetIsDirect(target)
+    const msg: IrcMessage = {
+      channel: target.toLowerCase(),
+      sender: this.nick,
+      text,
+      ts: new Date().toISOString(),
+      isDirect,
+    }
+    if (this.hasFingerprint(msg)) return
+    this.recordMessage(msg, true)
   }
 
   async whoisChannels(): Promise<string[] | null> {
