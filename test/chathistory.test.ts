@@ -349,6 +349,28 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(toolText(hist)).toContain('own-ring-msg')
   })
 
+  // say() fingerprints our own message when it records it, which is what stops a
+  // rejoin from stacking a second copy into the ring. That same fingerprint must not
+  // swallow the historical notification — an agent rejoining needs its own words back.
+  it('own messages still replay as historical after being recorded at send time', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer8')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp8')
+
+    await peer.joinChannel('#ip-cq-ownreplay')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownreplay', text: 'own-replay-msg' } })
+    await sleep(150)
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-cq-ownreplay' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
+
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-replay-msg' }))
+
+    // ...and the ring holds exactly one copy of it, not one per rejoin.
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownreplay' } })
+    const copies = toolText(hist).split('own-replay-msg').length - 1
+    expect(copies).toBe(1)
+  })
+
   // Our own message is not "unread" — we just wrote it.
   it('recording an own outbound message does not raise the unread count', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer6')

@@ -401,13 +401,19 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const fromServer = await client.chathistoryLatest(key, limit)
-        // Prefer whichever source actually has more to say. The server is normally
-        // richer — it reaches back past this session — but service rows can crowd
-        // real messages out of the fetch window, and returning "no history" while
-        // the ring holds the answer is the worst outcome for an agent trying to
-        // reconstruct a conversation. null means the server path didn't run at all.
+        // The server is authoritative and normally richer — it reaches back past this
+        // session, which the ring cannot. So prefer it, with one exception: service
+        // rows can crowd every real message out of the fetch window, and answering
+        // "no history" while the ring holds the conversation is the worst outcome for
+        // an agent trying to reconstruct one. Fall back only when the server came
+        // back with nothing at all. null means the server path didn't run.
+        //
+        // Deliberately not merging the two: our own messages live in the ring under a
+        // locally-stamped timestamp and on the server under the server's, so a union
+        // would need fuzzy (sender, text, time-window) dedupe to avoid showing them
+        // twice. Not worth it for a fallback this narrow.
         const fromRing = client.getHistory(key, limit)
-        const slice = fromServer === null || fromRing.length > fromServer.length ? fromRing : fromServer
+        const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
         const lines = slice.map(m => {
           const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })

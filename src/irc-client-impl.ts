@@ -249,11 +249,15 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // actually call channel_history for — reconstructing a conversation after compaction,
   // when their own posts are gone from context too.
   //
-  // Recorded as historical so the unread counter doesn't tick for our own words. The
-  // timestamp is stamped locally, so it won't match the server's to the millisecond;
-  // that matters only if echo-message is ever negotiated, at which point the
-  // sender|ts|text fingerprint would not dedupe the echo. Insurance against a cap we
-  // don't request, not a live guarantee.
+  // Recorded as historical so the unread counter doesn't tick for our own words.
+  //
+  // The timestamp is stamped locally rather than taken from the server. Against
+  // loopback ergo the two agree often enough that the sender|ts|text fingerprint
+  // does match the server's replay of the same message, which is what keeps a
+  // part/rejoin from stacking a second copy into the ring. When they don't agree the
+  // ring holds a duplicate — the message is never lost, so a mismatch degrades
+  // rather than breaks. emitAutoReplayBatch deliberately still surfaces the
+  // historical notification for our own messages either way.
   private recordOwnMessage(target: string, text: string): void {
     const isDirect = targetIsDirect(target)
     const msg: IrcMessage = {
@@ -781,6 +785,14 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
       if (this.hasFingerprint(msg)) {
+        // Already in the ring, so don't record it twice. Our own messages are the
+        // exception for the *notification*: say() puts them in the ring at send time,
+        // but an agent rejoining a channel still needs its own prior words replayed —
+        // that's the whole point of reading history after compaction.
+        if (msg.sender === this.nick) {
+          this.emitMessage(msg, { historical: true, mention: msg.mention })
+          continue
+        }
         this.log(`chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}`)
         continue
       }
