@@ -25,10 +25,22 @@ import type {
 // always-replay-on-join contract the rest of the code (and the SIGUSR1 dedupe
 // recovery path) relies on. We detect availability from the CAP LS list instead
 // and use it purely to gate the explicit CHATHISTORY LATEST query.
+//
+// Limit accounting: ergo stores membership changes as HistServ PRIVMSGs, which
+// consume the CHATHISTORY limit and are then filtered out by HISTORY_SERVICE_SENDERS.
+// The server honors the limit; we shrink the result. Hence the over-fetch below.
 const CAP_CHATHISTORY = 'draft/chathistory'
 // Batch type — what ergo tags chathistory BATCH start/end with. Not the same string
 // as the cap; the spec keeps the type unscoped.
 const BATCH_TYPE_CHATHISTORY = 'chathistory'
+
+// Over-fetch headroom for the filtered service rows.
+const CHATHISTORY_OVERFETCH_FACTOR = 8
+const CHATHISTORY_OVERFETCH_FLOOR = 50
+const CHATHISTORY_DEFAULT_MAX = 100
+
+// Gap allowed between our send-time record of a message and the server's replay of it.
+const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 
 // Server-side service senders that synthesize PRIVMSGs into channel history for
 // membership/admin events ("X joined the channel", "Y set channel modes: …",
@@ -77,6 +89,7 @@ interface BatchEndEvent { id: string; params: string[]; commands: BatchCommand[]
 interface ChathistoryResolver {
   resolve: (msgs: IrcMessage[] | null) => void
   timer: ReturnType<typeof setTimeout>
+  limit: number
 }
 
 interface PendingJoinReplay {
@@ -195,6 +208,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   say(target: string, text: string): { chunks: number; mode: 'single' | 'multiline' } {
     if (text.length <= MULTILINE_LINE_BYTES && !text.includes('\n')) {
       this.irc.say(target, text)
+      this.recordOwnMessage(target, text)
       return { chunks: 1, mode: 'single' }
     }
 
@@ -219,7 +233,22 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     }
     this.irc.raw('BATCH', `-${id}`)
     this.log(`multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)`)
+    this.recordOwnMessage(target, text)
     return { chunks: wireLines.length, mode: 'multiline' }
+  }
+
+  // Our own messages never come back to us: handleMessage drops self and we don't
+  // negotiate echo-message. Timestamp is ours, not the server's — see
+  // ringHasNearDuplicate.
+  private recordOwnMessage(target: string, text: string): void {
+    const msg: IrcMessage = {
+      channel: target.toLowerCase(),
+      sender: this.nick,
+      text,
+      ts: new Date().toISOString(),
+      isDirect: targetIsDirect(target),
+    }
+    this.recordMessage(msg, true)
   }
 
   async whoisChannels(): Promise<string[] | null> {
@@ -276,10 +305,21 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       }, this.chathistoryQueryTimeoutMs)
       timer.unref?.()
       const list = this.chathistoryResolvers.get(key) ?? []
-      list.push({ resolve, timer })
+      list.push({ resolve, timer, limit })
       this.chathistoryResolvers.set(key, list)
-      this.irc.raw('CHATHISTORY', 'LATEST', target, '*', String(limit))
+      this.irc.raw('CHATHISTORY', 'LATEST', target, '*', String(this.chathistoryWireLimit(limit)))
     })
+  }
+
+  private chathistoryServerMax(): number {
+    const raw = this.irc.network?.supports?.('CHATHISTORY')
+    const n = typeof raw === 'string' ? parseInt(raw, 10) : NaN
+    return Number.isFinite(n) && n > 0 ? n : CHATHISTORY_DEFAULT_MAX
+  }
+
+  private chathistoryWireLimit(limit: number): number {
+    const want = Math.max(limit * CHATHISTORY_OVERFETCH_FACTOR, CHATHISTORY_OVERFETCH_FLOOR)
+    return Math.min(want, this.chathistoryServerMax())
   }
 
   getUsers(channel: string): string[] {
@@ -332,6 +372,20 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (set.has(fp)) return
     set.add(fp)
     while (set.size > this.historySize) set.delete(set.values().next().value!)
+  }
+
+  // Matched on sender+text since our timestamp and the server's differ. Coarse:
+  // identical text twice inside the window collapses to one entry.
+  private ringHasNearDuplicate(msg: IrcMessage, windowMs = OWN_MESSAGE_DEDUPE_WINDOW_MS): boolean {
+    const buf = this.history.get(msg.channel)
+    if (!buf) return false
+    const at = Date.parse(msg.ts)
+    for (let i = buf.length - 1; i >= 0; i--) {
+      const prev = buf[i]
+      if (prev.sender !== msg.sender || prev.text !== msg.text) continue
+      if (Math.abs(Date.parse(prev.ts) - at) <= windowMs) return true
+    }
+    return false
   }
 
   private hasFingerprint(msg: IrcMessage): boolean {
@@ -485,11 +539,16 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private logChathistoryCap(): void {
     const available: Map<string, string> = this.irc.network?.cap?.available ?? new Map()
     this.chathistoryCapActive = !this.chathistoryDisabled && available.has(CAP_CHATHISTORY)
-    this.log(
-      this.chathistoryCapActive
-        ? `${CAP_CHATHISTORY} advertised — mid-session channel_history will issue server queries`
-        : `${CAP_CHATHISTORY} not advertised${this.chathistoryDisabled ? ' (disabled via config)' : ''} — channel_history falls back to local ring`,
-    )
+    if (this.chathistoryCapActive) {
+      this.log(`${CAP_CHATHISTORY} advertised — mid-session channel_history will issue server queries`)
+      return
+    }
+    const why = this.chathistoryDisabled ? ' (disabled via config)' : ''
+    this.log(`${CAP_CHATHISTORY} not advertised${why} — channel_history falls back to local ring`)
+    // A silent degrade to the ring is indistinguishable from success.
+    if (!this.chathistoryDisabled) {
+      this.emitSystem('cap-missing', `${CAP_CHATHISTORY} cap not advertised by server — channel_history is limited to this session's local ring`)
+    }
   }
 
   private handleReconnect(): void {
@@ -688,11 +747,19 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
     const list = this.chathistoryResolvers.get(key)
     if (list && list.length > 0) {
-      const { resolve, timer } = list.shift()!
+      const { resolve, timer, limit } = list.shift()!
       if (list.length === 0) this.chathistoryResolvers.delete(key)
       clearTimeout(timer)
       const msgs = this.parseChathistoryBatch(event.commands, target, { applyJoinFilters: false })
-      resolve(msgs)
+      // A short reply alone is ambiguous; returning less than the ring holds is not.
+      const ringDepth = Math.min(this.getHistory(key, limit).length, limit)
+      if (msgs.length < ringDepth) {
+        this.emitSystem(
+          'chathistory-short',
+          `[roost] channel_history for ${target}: server returned ${msgs.length} messages for a limit of ${limit} (asked the wire for ${this.chathistoryWireLimit(limit)}), fewer than the ${ringDepth} held locally`,
+        )
+      }
+      resolve(msgs.slice(-limit))
       return
     }
 
@@ -702,6 +769,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private emitAutoReplayBatch(commands: BatchCommand[], target: string): void {
     const msgs = this.parseChathistoryBatch(commands, target, { applyJoinFilters: true })
     for (const msg of msgs) {
+      // Already ringed by say(), under our clock, so the fingerprint won't match.
+      // Notify regardless: a rejoining agent needs its own words back.
+      if (msg.sender === this.nick) {
+        if (!this.ringHasNearDuplicate(msg)) this.recordMessage(msg, true)
+        this.emitMessage(msg, { historical: true, mention: msg.mention })
+        continue
+      }
       if (this.hasFingerprint(msg)) {
         this.log(`chathistory dedup skip ${msg.sender}@${msg.channel} ${msg.ts}`)
         continue

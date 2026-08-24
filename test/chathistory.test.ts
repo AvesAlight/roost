@@ -6,7 +6,9 @@ import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
-import { toolText, sleep } from './helpers/tool.js'
+import { toolText, sleep, suppressLateRejection } from './helpers/tool.js'
+import IRC from 'irc-framework'
+import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
 
 describe.if(isErgoAvailable())('chathistory backfill', () => {
   let ergo: ErgoContext
@@ -325,6 +327,57 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
     expect(text).toContain('no history for #ip-cq-fallback')
     expect(text).not.toContain('fallback-pre-1')
   })
+
+  // One setup, three properties of say()'s ring recording: the
+  // single-line branch lands, the multiline branch lands, and neither counts as
+  // unread. chathistoryDisabled puts channel_history on the ring, which is the
+  // thing under test.
+  it('say() records own messages into the ring without marking them unread', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer5')
+    await peer.joinChannel('#ip-cq-ownring')
+
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp5', {
+      chathistoryDisabled: true,
+      chathistoryQueryTimeoutMs: 250,
+    })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownring' } })
+
+    const heardSingle = peer.waitForMessage('#ip-cq-ownring', m => m.text === 'own-ring-msg')
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownring', text: 'own-ring-msg' } })
+    await heardSingle
+
+    // Multiline is a separate branch of say().
+    const heardMulti = peer.waitForMessage('#ip-cq-ownring', m => m.text.includes('own-multi-tail'))
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownring', text: 'own-multi-head\nown-multi-tail' } })
+    await heardMulti
+
+    const text = toolText(await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownring' } }))
+    expect(text).toContain('own-ring-msg')
+    expect(text).toContain('own-multi-head')
+    expect(text).toContain('own-multi-tail')
+
+    const listed = toolText(await mcp.client.callTool({ name: 'channel_list', arguments: {} }))
+    expect(listed).not.toContain('own-ring-msg')
+  })
+
+  // Our record and the server's replay are the same message; the ring must not keep
+  // both, and the replay must still reach the agent.
+  it('own messages replay as historical and leave exactly one ring copy', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-peer8')
+    const mcp = await startMcpInProcess(ergo, 'ip-cq-mcp8', { chathistoryDisabled: true })
+
+    await peer.joinChannel('#ip-cq-ownreplay')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
+    await mcp.client.callTool({ name: 'channel_message', arguments: { channel: '#ip-cq-ownreplay', text: 'own-replay-msg' } })
+    await sleep(150)
+    await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#ip-cq-ownreplay' } })
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-cq-ownreplay' } })
+
+    await mcp.waitForNotification(messagePredicate({ historical: true, content: 'own-replay-msg' }))
+
+    const hist = await mcp.client.callTool({ name: 'channel_history', arguments: { channel: '#ip-cq-ownreplay' } })
+    expect(toolText(hist).split('own-replay-msg').length - 1).toBe(1)
+  })
 })
 
 // Subprocess-only: requires process.kill on subprocess pid via pidfile.
@@ -371,5 +424,72 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
     await mcp.client.callTool({ name: 'channel_leave', arguments: { channel: '#hist-dedup3' } })
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#hist-dedup3' } })
     await mcp.waitForNotification(messagePredicate({ content: 'dedup-reset-msg', historical: true }), 5000)
+  })
+})
+
+// Ergo records membership changes into channel history as HistServ-synthesized
+// PRIVMSGs. Those rows consume the CHATHISTORY limit, and the client drops them via
+// HISTORY_SERVICE_SENDERS — so a channel with membership churn answers "give me N
+// messages" with far fewer than N, on a busy agent channel often zero. The client
+// compensates by over-fetching and slicing back down.
+describe.if(isErgoAvailable())('channel_history under membership churn', () => {
+  let ergo: ErgoContext
+
+  beforeAll(async () => {
+    ergo = (await startErgo())!
+  })
+
+  // Connect a throwaway client, join, then quit. Each round deposits two HistServ
+  // rows into the channel's server-side history, consuming two CHATHISTORY slots
+  // that the caller will never see in the reply.
+  async function churn(channel: string, rounds: number): Promise<void> {
+    for (let i = 0; i < rounds; i++) {
+      const client = new IRC.Client()
+      await suppressLateRejection(new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('churn client connect timed out')), 5000)
+        client.on('registered', () => { clearTimeout(timer); resolve() })
+        client.connect({ host: ergo.host, port: ergo.port, nick: `churn${i}`, auto_reconnect: false })
+      }))
+      client.join(channel)
+      await sleep(60)
+      client.quit()
+      await sleep(60)
+    }
+  }
+
+  // Drives the client directly rather than going through channel_history, so only
+  // the server path can answer. Routed through the MCP tool instead, the join
+  // auto-replay would populate the ring and the fallback would satisfy the assertion
+  // even with over-fetch removed — green for the wrong reason.
+  it('the server path alone returns the requested count under churn', async () => {
+    const peer = await connectPeer(ergo, 'ip-cq-churn2-peer')
+    await peer.joinChannel('#ip-cq-churn2')
+    for (let i = 1; i <= 5; i++) peer.say('#ip-cq-churn2', `churn2-msg-${i}`)
+    await sleep(200)
+    await churn('#ip-cq-churn2', 6)
+
+    const client = new RoostIrcClientImpl({
+      nick: 'ip-cq-churn2-cli',
+      autoJoin: [],
+      historySize: 50,
+      joinHistoryLines: 20,
+      joinHistoryMinutes: 30,
+    })
+    client.connect({ host: ergo.host, port: ergo.port, nick: 'ip-cq-churn2-cli' })
+    const deadline = Date.now() + 5000
+    while (!client.isReady()) {
+      if (Date.now() > deadline) throw new Error('churn2 client never became ready')
+      await sleep(50)
+    }
+    await client.join('#ip-cq-churn2')
+    await sleep(300)
+
+    const msgs = await client.chathistoryLatest('#ip-cq-churn2', 5)
+    client.quit()
+
+    expect(msgs).not.toBeNull()
+    expect(msgs!.map(m => m.text)).toEqual([
+      'churn2-msg-1', 'churn2-msg-2', 'churn2-msg-3', 'churn2-msg-4', 'churn2-msg-5',
+    ])
   })
 })

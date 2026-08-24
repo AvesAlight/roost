@@ -392,7 +392,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const limit = (args.limit as number | undefined) ?? 20
         client.ackUnread(key)
         const fromServer = await client.chathistoryLatest(key, limit)
-        const slice = fromServer ?? client.getHistory(key, limit)
+        // Server reaches back past this session, so prefer it — except when it has
+        // nothing, where the ring may. null means the server path didn't run.
+        const fromRing = client.getHistory(key, limit)
+        const slice = fromServer === null || fromServer.length === 0 ? fromRing : fromServer
         if (slice.length === 0) return { content: [{ type: 'text', text: `<channel event="no-history" channel="${escAttr(key)}">no history for ${key}</channel>` }] }
         const lines = slice.map(m => {
           const wireMeta = buildMessageMeta(m, { historical: true, mention: m.mention })

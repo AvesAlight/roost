@@ -62,9 +62,9 @@ export interface ConnectOpts {
 // Other consumers (the worker MCP) only need the registered/disconnected/reconnected
 // signals and can ignore the lifecycle kinds.
 export type SystemKind =
-  | 'disconnected' | 'reconnected' | 'cap-missing' | 'registered' | 'registration-failed'
+  | 'disconnected' | 'reconnected' | 'cap-missing' | 'chathistory-short' | 'registered' | 'registration-failed'
   | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls'
-// string for disconnected/reconnected/cap-missing/ping/pong/reconnecting/cap-*;
+// string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*;
 // { nick } for registered; { code, nick, reason } for registration-failed
 // (reason is the server's text for the numeric, e.g. "Erroneous nickname").
 export type SystemContent = string | { code?: number; nick?: string; reason?: string }

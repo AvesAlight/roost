@@ -23,7 +23,10 @@ declare module 'irc-framework' {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     removeListener(event: string, handler: (...args: any[]) => void): void
     connection: { write(data: string): void }
-    network?: { cap?: { enabled?: string[]; available?: Map<string, string> } }
+    network?: {
+      cap?: { enabled?: string[]; available?: Map<string, string> }
+      supports?: (name: string) => string | boolean | undefined
+    }
   }
 
   interface IrcNamespace {
