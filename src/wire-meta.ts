@@ -25,14 +25,7 @@ export interface WireMessageMeta {
   historical?: 'true'
   mention?: 'true'
   seenBy?: string
-}
-
-export interface WireReminderMeta {
-  event: 'reminder'
-  sender: string
-  channel: string
-  isDirect: 'true' | 'false'
-  ts: string
+  reminder?: string
 }
 
 export interface WireMembershipMeta {
@@ -63,7 +56,6 @@ export interface WireUnreadSummaryMeta {
 
 export type WireMeta =
   | WireMessageMeta
-  | WireReminderMeta
   | WireMembershipMeta
   | WireSystemMeta
   | WireUnreadSummaryMeta

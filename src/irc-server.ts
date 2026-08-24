@@ -50,9 +50,6 @@ const PASSIVE_SENTINEL = 'roost-irc MCP is passive: a sibling MCP in the same RO
 
 const REPLY_REMINDER = "Your text output isn't surfaced to humans or other agents in the channel — use channel_message / direct_message to reply."
 const UNREAD_HINT = '(post a message to those channels/peers or call channel_ack to clear)'
-// 1/7 — midpoint of a 1/5–1/10 range. Random rate avoids the
-// pattern-match-and-ignore failure mode of a fixed cadence.
-const REMINDER_PROBABILITY = 1 / 7
 
 // Re-export ClientConfig under the legacy name for callers that import McpServerConfig.
 export type { ClientConfig as McpServerConfig } from './irc-client.js'
@@ -192,10 +189,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   // millisecond timestamp (the original bug behind reassembly).
   let receiveSeq = 0
 
-  // Tracks whether any non-historical inbound message has been emitted in
-  // this session — gates the always-attach-on-first-message behavior.
-  let firstMessageSeen = false
-
   // ---- MCP server --------------------------------------------------------
 
   const mcp = new Server(
@@ -209,7 +202,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       // for to attribute a session JSONL to its roost nick. Centralized in
       // src/mcp-banner.ts so the producer (here) and the consumer can't
       // drift. Passive variant above uses a different wording on purpose.
-      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. Channel messages (not DMs) also carry seenBy="nick1, nick2" — the channel's current member list, so you can tell who else already has the message and skip restating it — omitted when no members are cached. After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses include a [#channel seen by: nick1, nick2, ...] line when members are present — anyone not in this list did not see your message. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true"; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}. IMPORTANT: ${REPLY_REMINDER}`,
+      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This MCP is a plain IRCv3 client — there is no special pipeline between it and any other component. Every message that arrives in a channel (from another agent, a human, or a bot) reaches you identically, as a normal IRC channel message. Outbound: use channel_message, direct_message, channel_join, channel_leave, channel_who, channel_history, channel_list, channel_ack. channel_message supports multiline — long messages are sent as IRCv3 draft/multiline batches. Inbound: IRC traffic arrives as <channel> events. Regular messages carry event="message"; membership events (join/leave/nick) carry the corresponding event= value. All carry sender, channel, isDirect, ts, and seq. event="message" events carry mention="true" when your nick appears in the body or it's a DM. Channel messages (not DMs) also carry seenBy="nick1, nick2" — the channel's current member list, so you can tell who else already has the message and skip restating it — omitted when no members are cached. Every live (non-historical) event="message" also carries reminder="reply using channel_message to #chan" (or "reply using direct_message to <nick>" for DMs) — ${REPLY_REMINDER} After compaction a special event with event=unread-summary lists channels with pending unread messages — check those channels. channel_message responses include a [#channel seen by: nick1, nick2, ...] line when members are present — anyone not in this list did not see your message. channel_message, direct_message, channel_list, and channel_ack responses include a trailing 'unread:' block listing other channels with pending messages. channel_history returns historical <channel> elements with historical="true" and never carries reminder; parse them the same way as live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}.`,
     },
   )
 
@@ -231,6 +224,13 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
   const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;')
   const escBody = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const wireMention = (msg: { mention?: boolean; isDirect: boolean }) => msg.mention || msg.isDirect
+
+  // The reply hint attached to every live message (see buildMessageMeta).
+  // DMs must key off `sender`, not `channel` — for DMs the IRC layer folds
+  // the peer nick into `channel` lowercased, which would ship a
+  // case-mangled direct_message target.
+  const replyHint = (msg: IrcMessage): string =>
+    msg.isDirect ? `reply using direct_message to ${msg.sender}` : `reply using channel_message to ${msg.channel}`
 
   // Single source of truth for the message wire shape — used by the live emit
   // path (notifications/claude/channel) and by channel_history's tool response
@@ -260,6 +260,10 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       const users = client.getUsers(msg.channel)
       if (users.length > 0) r.seenBy = users.join(', ')
     }
+    // Reply hint rides on every live message — never on historical replay
+    // (channel_history's synthesized meta always sets `historical: true`,
+    // so this guard covers that call site too).
+    if (!meta.historical) r.reminder = replyHint(msg)
     return r
   }
 
@@ -290,19 +294,6 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     process.stderr.write(
       `roost-irc[${NICK}]: <- ${msg.isDirect ? 'DM from' : `${msg.channel} <`}${msg.sender}> ${msg.text.length > 120 ? msg.text.slice(0, 117) + '...' : msg.text}${meta.buffered ? ` [BUFFERED x${meta.chunkCount}]` : ''}${meta.historical ? ' [HISTORY]' : ''}\n`,
     )
-
-    if (!meta.historical) {
-      if (!firstMessageSeen || Math.random() < REMINDER_PROBABILITY) {
-        pushNotification(REPLY_REMINDER, {
-          event: 'reminder',
-          channel: msg.channel,
-          sender: '',
-          isDirect: msg.isDirect ? 'true' : 'false',
-          ts: localeTs(msg.ts),
-        })
-      }
-      firstMessageSeen = true
-    }
   })
 
   client.on('membership', (kind, nick, channel, extras) => {
