@@ -5,7 +5,6 @@ import type { MembershipKind, SystemKind } from '../../src/irc-client.js'
 import type {
   WireMeta,
   WireMessageMeta,
-  WireReminderMeta,
   WireMembershipMeta,
   WireSystemMeta,
   WireUnreadSummaryMeta,
@@ -40,6 +39,7 @@ export interface MessageMatch {
   isDirect?: boolean
   mention?: boolean
   historical?: boolean
+  reminder?: string
 }
 
 function matchesMessage(n: ChannelNotification, m: MessageMatch): n is MessageNotification {
@@ -50,6 +50,7 @@ function matchesMessage(n: ChannelNotification, m: MessageMatch): n is MessageNo
   if (m.isDirect !== undefined && (n.meta.isDirect === 'true') !== m.isDirect) return false
   if (m.mention !== undefined && (n.meta.mention === 'true') !== m.mention) return false
   if (m.historical !== undefined && (n.meta.historical === 'true') !== m.historical) return false
+  if (m.reminder !== undefined && n.meta.reminder !== m.reminder) return false
   return true
 }
 
@@ -78,7 +79,7 @@ export function assertChannelMessage(
   )
 }
 
-// Generic event-narrowing helpers for non-message events (membership, reminder,
+// Generic event-narrowing helpers for non-message events (membership,
 // system, unread-summary). `eventPredicate('join', { sender: 'x' })` narrows
 // awaited notifications to the matching variant; `expectEvent(n, 'leave')`
 // asserts an already-held notification and narrows it.
@@ -88,7 +89,6 @@ export function assertChannelMessage(
 // assignable to `{event: 'join'}` and would `Extract` to `never`.
 export type EventVariantMeta<E extends WireMeta['event']> =
   E extends 'message' ? WireMessageMeta & { event: 'message' }
-  : E extends 'reminder' ? WireReminderMeta & { event: 'reminder' }
   : E extends MembershipKind ? WireMembershipMeta & { event: E }
   : E extends 'unread-summary' ? WireUnreadSummaryMeta & { event: 'unread-summary' }
   : E extends SystemKind ? WireSystemMeta & { event: E }
