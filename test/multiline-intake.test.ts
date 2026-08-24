@@ -65,4 +65,18 @@ describe('nested multiline batch intake', () => {
     expect(() => dispatch({ command: 'PRIVMSG', params: ['#chan', 'hello'], tags: {}, nick: 'peer' })).toThrow('downstream handler boom')
     expect(calls).toBe(1)
   })
+
+  it('cleans up an orphaned nested batch when the outer batch closes without its own inner end', () => {
+    const client = makeClient()
+    const dispatch = client.irc.command_handler.dispatch.bind(client.irc.command_handler)
+
+    dispatch({ command: 'BATCH', params: ['+1', 'chathistory', '#chan'], tags: {} })
+    dispatch({ command: 'BATCH', params: ['+2', 'draft/multiline', '#chan'], tags: { batch: '1' }, nick: 'peer' })
+    dispatch({ command: 'PRIVMSG', params: ['#chan', 'orphaned line'], tags: { batch: '2' }, nick: 'peer' })
+
+    // The outer batch closes directly — the inner '-2' never arrives (a truncated replay).
+    expect(() => dispatch({ command: 'BATCH', params: ['-1'], tags: {} })).not.toThrow()
+
+    expect(client.nestedMultilineBatches.size).toBe(0)
+  })
 })
