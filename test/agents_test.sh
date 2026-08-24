@@ -53,7 +53,7 @@ cp "$REPO/agents/project-manager.md" "$TDIR/proj/.claude/agents/"
 out="$(HOME="$TDIR/fakehome" "${ROOST_BIN}" agents --all --cwd "$TDIR/proj" 2>&1)"
 if echo "$out" | grep -q "Shipped with roost" \
     && echo "$out" | grep -q "associate-pm" \
-    && echo "$out" | grep -q "drives a milestone to completion" \
+    && echo "$out" | grep -q "drives one milestone to completion" \
     && echo "$out" | grep -qE 'project-manager[[:space:]]+\(project\)' \
     && echo "$out" | grep -q "Shipped but not installed here: associate-pm" \
     && echo "$out" | grep -q "roost init --force-agents"; then

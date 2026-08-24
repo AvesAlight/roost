@@ -81,7 +81,7 @@ present receives the message identically via its roost-irc MCP.
 - **Worker ↔ reviewer**: co-located in `#<project>-issue-<N>`.
   No relay.
 - **Worker ↔ PM**: co-located in `#<project>-issue-<N>` for
-  plan pressure-testing, structural updates, ready-flip signaling.
+  the plan gate, structural updates, ready-flip signaling.
   APM picks up the operational dances (ready flip, follow-up
   filing) off the same channel without round-tripping through
   the PM.
@@ -90,11 +90,14 @@ present receives the message identically via its roost-irc MCP.
 
 The reviewer is resident in `#<project>-issue-<N>` from setup (the
 APM spawns it alongside the worker). It works in two beats:
-pressure-testing the worker's plan before any code, then reviewing
-the PR. Sequencing — each step bumps the next:
+a blind counter-sketch compared against the worker's plan before
+any code, then reviewing the PR. Sequencing — each step bumps the
+next:
 
-1. Worker posts its plan; reviewer pressure-tests it (cold lens — no
-   project context) before the worker writes code.
+1. Worker and reviewer draft blind and sync with `plan ready`
+   posts; the worker reveals its plan and the reviewer posts a
+   comparison against its own sketch before the worker writes
+   code.
 2. Worker implements → opens PR (with `Closes #<N>` in the body) and
    posts the link in `#<project>-issue-<N>`.
 3. Reviewer reads the diff and posts a headlined `APPROVED` /
