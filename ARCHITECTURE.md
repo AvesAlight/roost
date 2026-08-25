@@ -207,8 +207,7 @@ alive and nothing has joined. The wrapper answers the prompts it
 recognizes and waits out `--ready-timeout` for the join; on expiry it
 prints the session's current screen and exits non-zero, leaving the
 session up to attach. It only sends a keypress when the prompt is one
-it knows *and* the selected option is the affirmative one — an Enter
-aimed at a screen whose default is "No" is worse than the stall.
+it knows and the selected option is the affirmative one.
 
 ### Debugging stalled agents
 

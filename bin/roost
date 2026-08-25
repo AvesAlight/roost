@@ -690,29 +690,9 @@ require_ircd() {
 # Permbot (when --perm-irc is on) runs in-process inside the MCP server
 # (src/irc-server.ts) — no separate process to manage here.
 
-# --- spawn readiness -------------------------------------------------------
-#
-# A fresh checkout can stack several first-run interactive prompts, each one
-# only rendered after the previous is answered. A session parked on any of
-# them looks identical from the outside to a session doing slow work: the
-# tmux session exists, the process is alive, and nothing has joined IRC.
-#
-# Two rules keep this honest:
-#
-#   1. Only ever send Enter when the pane shows a prompt we recognize AND its
-#      selected option is the affirmative one. Matching the prompt's title
-#      alone is not enough — an Enter aimed at a screen whose default is "No"
-#      is worse than the stall it was meant to clear.
-#   2. "ready" means an observed IRC join, not "the process started".
-
-# Emit the key to send for the prompt currently on screen, or nothing.
-#
-# Reads pane text on stdin. Recognition is deliberately narrow: the pane must
-# carry the confirm footer, the arrow-marked line must be a known affirmative,
-# and the folder-trust screen additionally has to name the directory we asked
-# for. Anything else emits nothing, which routes the spawn to the readiness
-# timeout — loud, with the unrecognized screen quoted — rather than to a blind
-# keypress.
+# Emit the key to send for the prompt on screen (pane text on stdin), or
+# nothing. An unrecognized screen gets no keypress: it falls through to the
+# readiness timeout, which quotes it.
 startup_prompt_key() {
   local want_cwd="${1:-}"
   local pane selected
@@ -723,7 +703,7 @@ startup_prompt_key() {
     *) return 0 ;;
   esac
 
-  # The arrow-marked option is the one Enter would take.
+  # The arrow-marked option is what Enter would take.
   selected="$(printf '%s\n' "${pane}" | grep -m1 '^[[:space:]]*❯' \
                 | sed 's/^[[:space:]]*❯[[:space:]]*[0-9]*\.[[:space:]]*//' \
                 | sed 's/[[:space:]]*$//')"
@@ -733,12 +713,9 @@ startup_prompt_key() {
     "I am using this for local development") ;;
     "Yes, allow external imports") ;;
     "Yes, I trust this folder")
-      # The trust screen prints the workspace it is asking about. Require it
-      # to be the directory we launched into, so a prompt about some other
-      # path never gets an automatic yes. The pane prints the resolved path
-      # (/tmp renders as /private/tmp on macOS), so compare resolved forms —
-      # a literal string compare here would silently never match on any
-      # symlinked path and reintroduce the exact silent-stall signature.
+      # Only trust the directory we launched into. The pane prints the
+      # resolved path (/tmp renders as /private/tmp on macOS), so compare
+      # resolved forms — a literal compare never matches a symlinked path.
       local shown shown_real want_real
       shown="$(printf '%s\n' "${pane}" | grep -m1 '^[[:space:]]*/' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       [ -n "${shown}" ] || return 0
@@ -752,28 +729,18 @@ startup_prompt_key() {
   printf 'Enter'
 }
 
-# Is <nick> present on the ircd right now?
-#
-# One-shot WHOIS from a throwaway connection: 311 (whois user) means joined,
-# 401 (no such nick) means not. Exit 0 present, 1 absent, 2 the probe itself
-# could not talk to the ircd — the caller distinguishes "agent never joined"
-# from "we never managed to look", because reporting the second as the first
-# is how a spawn bug gets blamed on an agent.
+# One-shot WHOIS for <nick>. Returns 0 present, 1 absent, 2 could not look.
+# Callers must keep 2 distinct from 1.
 irc_nick_present() {
   local target="$1"
   [ -n "${ROOST_READY_PROBE:-}" ] && { "${ROOST_READY_PROBE}" "${target}"; return $?; }
 
-  # Cheap reachability check first, so "the ircd is down" is never reported as
-  # "the agent never joined".
+  # Reachability first, so a down ircd returns 2 rather than 1.
   (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null || return 2
 
-  # The WHOIS itself runs in a subshell holding a fixed fd. Two bash-3.2
-  # constraints shape this and neither is cosmetic: `exec {var}<>` (dynamic fd
-  # allocation) does not exist before bash 4.1, and a failed `exec` in a
-  # non-interactive shell terminates that shell outright. macOS ships 3.2, so
-  # the dynamic form would take the whole spawn down with it — silently, and
-  # reported as success. Numbered fd, and the subshell keeps any exec failure
-  # local to the probe.
+  # Numbered fd in a subshell, both required by bash 3.2 (macOS): `exec
+  # {var}<>` is 4.1+, and a failed `exec` terminates a non-interactive shell,
+  # so the subshell keeps that failure local to the probe.
   (
     local line saw_welcome=0 rc=1
     local probe_nick="roostprobe$$"
@@ -791,7 +758,7 @@ irc_nick_present() {
             printf 'WHOIS %s\r\n' "${target}" >&9
             ;;
           *" 43"[0-9]" "*|*" 46"[0-9]" "*)
-            # Our own probe nick was rejected. Says nothing about the target.
+            # Our own probe nick was rejected; says nothing about the target.
             exit 2 ;;
         esac
         continue
@@ -806,28 +773,22 @@ irc_nick_present() {
     exit "${rc}"
   )
   local rc=$?
-  # 0 present, 1 absent, anything else: we failed to look.
   case "${rc}" in
     0|1) return "${rc}" ;;
     *)   return 2 ;;
   esac
 }
 
-# Drain first-run prompts and wait for the session to actually reach IRC.
-#
-# One loop for both: the prompts stack (each is only drawn once the previous is
-# answered) and joining IRC is what proves the whole stack is drained, so there
-# is a single exit condition rather than a fixed per-prompt window.
-#
+# Answer first-run prompts as they surface and wait for the nick to reach IRC.
+# The prompts stack (each is drawn only after the previous is answered), so the
+# join is the single exit condition rather than a window per prompt.
 # Returns 0 once the nick is on IRC, 6 if the wait expired or the session died.
 await_spawn_ready() {
   local session="$1" nick="$2" target_cwd="$3" timeout="$4"
   local pane key probe_rc last_pane=""
   local ready=0 probe_broken=0
-  # Wall-clock, not loop iterations: a single probe can block for its read
-  # timeout when the ircd goes quiet mid-handshake, so counting turns would
-  # stretch --ready-timeout exactly when the ircd is unhealthy — which is when
-  # someone is reading the number.
+  # Wall-clock, not loop turns: a probe can block for its read timeout, which
+  # would stretch --ready-timeout past the seconds it advertises.
   local started="${SECONDS}" waited=0
   while [ $((SECONDS - started)) -lt "${timeout}" ]; do
     waited=$((SECONDS - started))
@@ -858,7 +819,7 @@ await_spawn_ready() {
       echo "  [+${waited}s] answered first-run prompt"
     fi
 
-    # Give the next screen a beat to render before looking again.
+    # Let the next screen render.
     sleep 1
   done
 

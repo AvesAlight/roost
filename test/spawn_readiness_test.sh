@@ -15,9 +15,8 @@ fail() { echo "FAIL: $1 ${2:+— $2}"; FAIL=$((FAIL+1)); }
 # shellcheck disable=SC1091
 source "${ROOT}/bin/roost"
 
-# Pane fixtures are transcribed from real sessions, not paraphrased: the trust
-# screen was captured from a never-opened checkout, the other two from a
-# stalled spawn. Wording is the contract these matchers are written against.
+# Fixtures are captured pane text, not paraphrase — the wording is the
+# contract these matchers are written against.
 trust_pane() {
   cat <<PANE
 
@@ -87,9 +86,7 @@ got="$(trust_pane "$REAL_TDIR" | startup_prompt_key "$TDIR")"
 [ "$got" = "Enter" ] && ok "folder-trust prompt answered when the shown path is our cwd" \
   || fail "folder-trust prompt answered when the shown path is our cwd" "got='$got'"
 
-# The pane prints the resolved path: on macOS a /tmp cwd renders as
-# /private/tmp. A literal compare would never fire here, which is the silent
-# stall this whole change exists to remove — so compare resolved forms.
+# The pane prints the resolved path (/tmp -> /private/tmp on macOS).
 if [ "$REAL_TDIR" != "$TDIR" ]; then
   got="$(trust_pane "$REAL_TDIR" | startup_prompt_key "$TDIR")"
   [ "$got" = "Enter" ] && ok "folder-trust matches through a symlinked cwd (${TDIR} -> ${REAL_TDIR})" \
@@ -110,16 +107,14 @@ got="$(printf 'Delete everything?\n\n❯ 1. Yes, delete it all\n  2. Cancel\n\nE
 [ -z "$got" ] && ok "unrecognized prompt gets no key even with an affirmative default" \
   || fail "unrecognized prompt gets no key even with an affirmative default" "got='$got'"
 
-# Identical to the passing trust case except the confirm footer is gone, so
-# the footer gate is the only thing that can reject it. (An earlier version of
-# this fixture also lacked the workspace path, which meant the path guard
-# rejected it and the test stayed green with the footer gate deleted.)
+# Identical to the passing trust case except the footer, so the footer gate is
+# the only thing that can reject it.
 got="$(trust_pane "$REAL_TDIR" | grep -v 'Enter to confirm' | startup_prompt_key "$TDIR")"
 [ -z "$got" ] && ok "no key sent without the confirm footer" || fail "no key sent without the confirm footer" "got='$got'"
 
 # -- await_spawn_ready -------------------------------------------------------
-# Stub tmux and the IRC probe. STATE_DIR drives what the fake pane shows and
-# when the fake nick 'joins', so the prompts stack the way they do live.
+# Stubbed tmux and probe. $STATE drives what the pane shows and when the nick
+# 'joins', so the prompts stack the way they do live.
 
 STATE="$TDIR/state"
 mkdir -p "$STATE"
@@ -203,13 +198,10 @@ else
 fi
 
 # -- irc_nick_present against a real ircd -------------------------------------
-# The loop tests above stub the probe, so on their own they'd stay green even
-# if the probe were completely broken — which it was once: the first version
-# used bash 4.1 dynamic fd allocation (`exec {fd}<>`), and on macOS's bash 3.2
-# that failed `exec` terminated the whole spawn instantly, reported as success.
-# These cases talk to a live ergo, or skip.
+# The cases above stub the probe and stay green even if it is broken. These
+# exercise the real one against a live ergo, or skip.
 
-# The loop tests above export a stub probe; these cases need the real one.
+# The cases above export a stub probe; these need the real one.
 unset ROOST_READY_PROBE
 
 if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
@@ -239,7 +231,7 @@ if (echo > /dev/tcp/"${IRC_HOST}"/"${IRC_PORT}") 2>/dev/null; then
   kill "$presence_pid" 2>/dev/null
   wait "$presence_pid" 2>/dev/null
 
-  # A port with nothing listening is 'could not look' (2), never 'absent' (1).
+  # Nothing listening is 'could not look' (2), never 'absent' (1).
   ( IRC_PORT=6699; irc_nick_present "$present_nick" ); rc=$?
   [ "$rc" -eq 2 ] && ok "live probe: unreachable ircd reports probe failure, not absence" \
     || fail "live probe: unreachable ircd reports probe failure, not absence" "rc=$rc"
