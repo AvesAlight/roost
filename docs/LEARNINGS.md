@@ -875,6 +875,57 @@ clean cohort confirmed the standalone effect. Characterize the behavior
 (issuance shifts 0/8 to 6/8; classifier blocks most but not all), not a
 mechanism the data doesn't isolate.
 
+### Spawn readiness: "process started" was never evidence of "agent running"
+
+`roost spawn` used to dismiss exactly one first-run prompt (the dev-channels
+warning) and then print `ready`. `ready` meant `tmux new-session` returned,
+which is equally true of a session parked on an unanswered prompt forever. That
+failure is invisible and indefinite: the tmux session is alive, the process is
+healthy, and nothing has joined IRC. Observed costs ranged from 85 minutes (a
+worker/reviewer pair, caught only when a PM got suspicious of the silence) down
+to ~2 minutes once operators learned to recognize it on sight.
+
+A fresh checkout can stack three prompts — folder trust, external CLAUDE.md
+imports, the dev-channels warning — and each is drawn only after the previous
+is answered, so a fixed per-prompt window never drains the stack.
+
+Two things fixed it, and only the second is population-independent:
+
+- Answer prompts from a table, but only when the arrow-marked (selected) option
+  is a known affirmative. Matching the prompt's *title* is not enough: a blind
+  Enter aimed at a screen whose default is "No" is worse than the stall it was
+  meant to clear. An unrecognized screen deliberately gets no keypress and
+  falls through to the timeout, which quotes it.
+- Make `ready` mean an observed IRC join (WHOIS from a throwaway connection),
+  with `--ready-timeout` and a non-zero exit on expiry. This is the part that
+  holds regardless of *which* prompt is blocking, including prompts that don't
+  exist yet.
+
+Repeated attempts to fix this by enumerating which checkouts are trusted all
+failed the same way. Three successive write-ups of the trusted-checkout
+population were each corrected by the next spawn, because the population is
+unbounded: the trap fires on the first checkout nobody has opened, and a cycle
+that keeps reaching new repos keeps meeting it. Don't key the fix on a table.
+
+**Two measurement notes, both of which nearly shipped as false greens:**
+
+- The pane text the matchers key on must be captured, not retyped. The
+  folder-trust wording quoted in the issue body had been through three human
+  restatements; the matcher was written against `tmux capture-pane` output from
+  a genuinely untrusted checkout instead. The pane prints the *resolved* path
+  (`/tmp/x` renders as `/private/tmp/x` on macOS), so a literal `shown ==
+  --cwd` comparison would silently never fire on any symlinked path — the exact
+  signature this change exists to remove.
+- **`bin/roost` runs under bash 3.2 on macOS.** `exec {fd}<>` (dynamic fd
+  allocation) is bash 4.1+, and a failed `exec` in a non-interactive shell
+  terminates that shell outright. The first version of the readiness probe used
+  it, so spawn exited instantly, printed nothing, and returned success — a
+  false green produced by the very code meant to end false greens. The unit
+  tests stayed green throughout because they stub the probe. CI runs Linux with
+  bash 5 and would not have caught it either. Anything added to `bin/roost`
+  needs a bash 3.2 check, and any probe that stubs its I/O needs at least one
+  case that exercises the real thing.
+
 ## 8. Routing-layer architecture (post-Test-4 design session)
 
 Worked out 2026-04-28 in a #roost session with productops-customer

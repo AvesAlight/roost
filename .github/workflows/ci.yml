@@ -58,6 +58,9 @@ jobs:
       - name: Shell tests — spawn
         run: bash test/spawn_test.sh
 
+      - name: Shell tests — spawn readiness
+        run: bash test/spawn_readiness_test.sh
+
       - name: Shell tests — agents
         run: bash test/agents_test.sh
 

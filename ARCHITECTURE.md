@@ -138,7 +138,7 @@ event volume; the actionable view lives at the dispatcher.
 Use the `bin/roost` wrapper (or invoke the `roost` Claude Code skill
 from a model context — installed at `~/.claude/skills/roost` when
 the symlink is in place). The wrapper hides the env-var dance,
-mcp-config path, dev-channels prompt dismissal, and tmux session
+mcp-config path, first-run prompt handling, and tmux session
 naming.
 
 ```bash
@@ -195,8 +195,20 @@ roost spawn <project>-pm \
 
 `--prompt-file` is the load-bearing primitive — it's what lets the
 fresh instance pick up without scrolling channel history. The
-wrapper waits for the dev-channels prompt, dismisses it, then
-pastes the handoff prompt into the TUI and submits it.
+wrapper answers Claude Code's first-run prompts, then pastes the
+handoff prompt into the TUI and submits it.
+
+Spawn reports ready only once it has watched the session join IRC
+under its nick. A fresh checkout can stack several first-run prompts
+(folder trust, external CLAUDE.md imports, the dev-channels warning),
+each drawn only after the previous is answered, and a session parked
+on any of them is indistinguishable from a slow one: the process is
+alive and nothing has joined. The wrapper answers the prompts it
+recognizes and waits out `--ready-timeout` for the join; on expiry it
+prints the session's current screen and exits non-zero, leaving the
+session up to attach. It only sends a keypress when the prompt is one
+it knows *and* the selected option is the affirmative one — an Enter
+aimed at a screen whose default is "No" is worse than the stall.
 
 ### Debugging stalled agents
 

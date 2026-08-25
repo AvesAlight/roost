@@ -280,13 +280,19 @@ tmux session teardown — no orphan processes.
 
 ## Diagnostics
 
-If `roost spawn` hangs at the dev-channels prompt step, the prompt
-text may have changed. Check the pane manually:
+If `roost spawn` exits non-zero saying the nick never joined IRC, it
+prints the screen the session was sitting on. A prompt in that output
+is one the wrapper doesn't recognize — either new wording or a new
+prompt. Answer it by hand, and the spawn path needs a matching entry:
 
 ```bash
 roost attach <nick>
-# you may need to dismiss a prompt
+# answer the prompt shown in the spawn output
 ```
+
+Spawn deliberately won't blind-Enter a screen it can't identify, so a
+new prompt surfaces as a loud failure rather than a session that sits
+forever while the spawn reports success.
 
 If the session comes up but the agent never responds, the `roost-irc`
 MCP probably failed to load. Check
