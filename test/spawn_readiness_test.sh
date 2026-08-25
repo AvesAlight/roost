@@ -110,7 +110,11 @@ got="$(printf 'Delete everything?\n\n❯ 1. Yes, delete it all\n  2. Cancel\n\nE
 [ -z "$got" ] && ok "unrecognized prompt gets no key even with an affirmative default" \
   || fail "unrecognized prompt gets no key even with an affirmative default" "got='$got'"
 
-got="$(printf 'just some scrollback\n❯ 1. Yes, I trust this folder\n' | startup_prompt_key "$TDIR")"
+# Identical to the passing trust case except the confirm footer is gone, so
+# the footer gate is the only thing that can reject it. (An earlier version of
+# this fixture also lacked the workspace path, which meant the path guard
+# rejected it and the test stayed green with the footer gate deleted.)
+got="$(trust_pane "$REAL_TDIR" | grep -v 'Enter to confirm' | startup_prompt_key "$TDIR")"
 [ -z "$got" ] && ok "no key sent without the confirm footer" || fail "no key sent without the confirm footer" "got='$got'"
 
 # -- await_spawn_ready -------------------------------------------------------
@@ -139,7 +143,6 @@ tmux() {
   esac
   return 0
 }
-sleep() { :; }
 
 probe="$TDIR/probe"
 cat > "$probe" <<'PROBE'

@@ -822,13 +822,15 @@ irc_nick_present() {
 # Returns 0 once the nick is on IRC, 6 if the wait expired or the session died.
 await_spawn_ready() {
   local session="$1" nick="$2" target_cwd="$3" timeout="$4"
-  # Drain first-run prompts and wait for the session to actually reach IRC.
-  # One loop for both: the prompts stack (each is only drawn once the previous
-  # is answered) and joining IRC is what proves the whole stack is drained, so
-  # there is a single exit condition rather than a fixed per-prompt window.
-  local waited=0 pane key probe_rc last_pane=""
+  local pane key probe_rc last_pane=""
   local ready=0 probe_broken=0
-  while [ "${waited}" -lt "${timeout}" ]; do
+  # Wall-clock, not loop iterations: a single probe can block for its read
+  # timeout when the ircd goes quiet mid-handshake, so counting turns would
+  # stretch --ready-timeout exactly when the ircd is unhealthy — which is when
+  # someone is reading the number.
+  local started="${SECONDS}" waited=0
+  while [ $((SECONDS - started)) -lt "${timeout}" ]; do
+    waited=$((SECONDS - started))
     if ! tmux has-session -t "${session}" 2>/dev/null; then
       echo "error: session '${session}' exited before joining IRC as '${nick}'" >&2
       echo "  last screen:" >&2
@@ -854,15 +856,14 @@ await_spawn_ready() {
     if [ -n "${key}" ]; then
       tmux send-keys -t "${session}" "${key}"
       echo "  [+${waited}s] answered first-run prompt"
-      # Give the next screen a beat to render before looking again.
     fi
 
+    # Give the next screen a beat to render before looking again.
     sleep 1
-    waited=$((waited + 1))
   done
 
   if [ "${ready}" -eq 1 ]; then
-    echo "  ready. joined IRC as ${nick} after ${waited}s"
+    echo "  ready. joined IRC as ${nick} after $((SECONDS - started))s"
     echo "  attach with: roost attach ${nick}"
     echo "  shutdown with: roost shutdown ${nick}"
     return 0
