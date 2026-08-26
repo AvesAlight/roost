@@ -48,13 +48,31 @@ Promoting a local entry to tracked: hand-edit `config.json` to add, then DM
 key in both files — concat-merge would scrape it twice and `watch list`
 shows the duplicate.
 
+### Boot-time GitHub identity pin
+
+Every `gh` call the dispatcher makes shells out with no account selection of
+its own, so on a shared box it would otherwise inherit whatever `gh` account
+happened to be active at boot — whoever ran `gh auth switch` last, not
+necessarily the dispatcher's own bot account. When `agent_logins` holds
+exactly one login, boot resolves that login's own stored credential
+explicitly (`gh auth token -u <login>`, which works regardless of which
+account is currently "active"), confirms it with a live `gh api user` call,
+and pins it into the process's `GH_TOKEN` for the rest of the run — every
+later `gh` call is then immune to a concurrent `gh auth switch` elsewhere on
+the box, not just whatever was active at the instant boot ran. A login with no
+stored credential on the box, or one that doesn't confirm as itself, is a
+fatal boot error — fail loud, not a silent wrong-account start. Leaving
+`agent_logins` empty skips the pin (nothing configured to pin against); this
+is the shared choke point for daemon mode, `--dispatch-irc`, and the one-shot
+CLI alike.
+
 Fields:
 
 | Field | Meaning |
 |---|---|
 | `project` | Lowercase slug used to namespace IRC nicks/channels (`<project>-worker-N`, `#<project>-issue-N`). Falls back to the basename of `repo` when set. Required in multi-repo mode. Must match `^[a-z0-9][a-z0-9-]*$`. |
 | `repo` | Default `OWNER/NAME` for watched items in single-repo mode; per-entry `repo` may omit (inherits) or match this value, but cannot diverge. **Leave unset to enable multi-repo mode**, where every watched entry must carry its own `repo` and per-issue artifacts pick up a `<slug>` segment derived from the entry's repo basename. |
-| `agent_logins` | GitHub logins whose comments are tagged `is_worker_reply: true` (informational). |
+| `agent_logins` | GitHub logins whose comments are tagged `is_worker_reply: true` (informational). When it holds **exactly one** login, that login also pins the dispatcher's boot-time GitHub identity — see below. More than one is refused at boot (ambiguous identity). |
 | `irc.nick` | Nick the dispatcher uses on the IRC server. Defaults to `<project>-dispatcher`. |
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |

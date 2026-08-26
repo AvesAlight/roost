@@ -27,6 +27,7 @@ import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
 import { resolveProjectChannel, dispatcherNick, defaultProject } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
+import { pinGhIdentity } from './orchestrator/gh-identity.js'
 
 const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
 
@@ -42,6 +43,10 @@ async function loadConfigWithPlugins(
   log: PluginLogger,
 ): Promise<{ config: OrchestratorConfig; plugins: Plugin[]; projectChannel: string }> {
   const config = await loadConfig(stateDir)
+  // Refuse to start against the wrong (or ambiguous) GitHub identity — must
+  // run before any plugin gets a chance to shell out to `gh`. See
+  // gh-identity.ts for why this pin, not just a check, is the actual fix.
+  await pinGhIdentity(config, log)
   const projectChannel = resolveProjectChannel(config)
   await loadExternalPlugins(stateDir, config.plugin_paths)
   const plugins = buildPlugins(config, projectChannel, log)
