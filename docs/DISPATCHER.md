@@ -62,9 +62,9 @@ later `gh` call is then immune to a concurrent `gh auth switch` elsewhere on
 the box, not just whatever was active at the instant boot ran. A login with no
 stored credential on the box, or one that doesn't confirm as itself, is a
 fatal boot error — fail loud, not a silent wrong-account start. Leaving
-`agent_logins` empty skips the pin (nothing configured to pin against); this
-is the shared choke point for daemon mode, `--dispatch-irc`, and the one-shot
-CLI alike.
+`agent_logins` empty — or holding more than one login — skips the pin
+(nothing to infer a single identity from); this is the shared choke point
+for daemon mode, `--dispatch-irc`, and the one-shot CLI alike.
 
 Fields:
 
