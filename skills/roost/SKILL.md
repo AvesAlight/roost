@@ -30,7 +30,7 @@ a tool surface.
 
 ```bash
 roost spawn <nick> [-c CHANS] [-m MODEL] [--agent NAME] [-s SESSION] [--mcp-config PATH] \
-                   [--cwd PATH] [--prompt PROMPT] \
+                   [--cwd PATH] [--allow-shared-cwd] [--prompt PROMPT] \
                    [--permission-mode MODE] [--cache-ttl 5m|1h] \
                    [--steer-compact] \
                    [--trust-remote] \
@@ -65,7 +65,13 @@ Defaults:
   spawned session: `FORCE_PROMPT_CACHING_5M=1` or
   `ENABLE_PROMPT_CACHING_1H=1`. See `roost spawn --help`
   ("Agent class guidance") for the role→flag heuristic.
-- cwd: current directory at spawn time
+- cwd: current directory at spawn time. Refused when it's inside a
+  *linked* git worktree another live roost session already occupies
+  (worktrees are one-session-each — this is what stops a reviewer from
+  silently landing in a worker's worktree instead of their own) — pass
+  `--allow-shared-cwd` to override. The repo's main worktree is never
+  guarded, since sharing it (e.g. a PM spawning its APM with no `--cwd`
+  at all) is normal.
 - session name: `roost-<nick>`
 - mcp server: auto-loaded via plugin (override with `--mcp-config`)
 - `--steer-compact`: opt-in. Wires a PreCompact hook that intercepts
@@ -262,6 +268,11 @@ roost spawn reviewer-123 -c '#pr-123' --cwd ~/Dev/myproject
 roost list
 roost status
 ```
+
+`roost list` includes each session's live cwd (read from tmux, not the
+`--cwd` it was spawned with) — use it to audit whether a session is
+actually sitting where you expect, e.g. confirming a reviewer really
+landed in its own review worktree and not the worker's.
 
 **Peek at a session's TUI without attaching:**
 

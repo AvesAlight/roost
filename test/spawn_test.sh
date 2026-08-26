@@ -1073,6 +1073,109 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
+# -- Tests 52-55: linked-worktree collision guard -----------------------------
+# A linked (non-primary) git worktree is meant to hold exactly one live
+# session — the invariant #1602/#1597 broke (a reviewer's cwd silently
+# landing in the worker's worktree). These start a real bare tmux session
+# (not a full roost spawn — no claude/ircd needed) to act as "already live
+# here", then assert the guard's behavior against it. Skipped gracefully if
+# tmux isn't installed.
+
+_make_git_repo() {
+  local repo="$1"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+}
+
+if command -v tmux >/dev/null 2>&1; then
+
+  setup
+  repo="$TDIR/repo52"
+  _make_git_repo "$repo"
+  linked="$TDIR/repo52-linked"
+  git -C "$repo" worktree add -q "$linked" -b linked-branch-52 >/dev/null 2>&1
+  tmux kill-session -t roost-occupant52 2>/dev/null || true
+  tmux new-session -d -s roost-occupant52 -c "$linked" 'sleep 60'
+  if [ -d "$linked" ]; then
+    err="$("${ROOST_BIN}" spawn testnick --cwd "$linked" 2>&1)"; exit_code=$?
+    if [ "$exit_code" -ne 0 ] && echo "$err" | grep -qF "already live under session 'occupant52'"; then
+      ok "linked worktree already occupied: spawn refused, names the occupying nick"
+    else
+      fail "linked worktree already occupied: spawn refused, names the occupying nick" "exit=$exit_code err=$err"
+    fi
+  else
+    fail "linked worktree already occupied: spawn refused, names the occupying nick" "git worktree add failed, linked dir missing"
+  fi
+  tmux kill-session -t roost-occupant52 2>/dev/null || true
+  git -C "$repo" worktree remove --force "$linked" 2>/dev/null || true
+  teardown
+
+  setup
+  repo="$TDIR/repo53"
+  _make_git_repo "$repo"
+  tmux kill-session -t roost-pm53 2>/dev/null || true
+  tmux new-session -d -s roost-pm53 -c "$repo" 'sleep 60'
+  out="$("${ROOST_BIN}" spawn apmtest53 --cwd "$repo" 2>&1)"; exit_code=$?
+  if [ "$exit_code" -eq 0 ] && ! echo "$out" | grep -q "already live under session"; then
+    ok "main worktree shared by two sessions: not guarded (PM+APM bootstrap survives)"
+  else
+    fail "main worktree shared by two sessions: not guarded (PM+APM bootstrap survives)" "exit=$exit_code out=$out"
+  fi
+  tmux kill-session -t roost-pm53 2>/dev/null || true
+  teardown
+
+  setup
+  repo="$TDIR/repo54"
+  _make_git_repo "$repo"
+  linked="$TDIR/repo54-linked"
+  git -C "$repo" worktree add -q "$linked" -b linked-branch-54 >/dev/null 2>&1
+  tmux kill-session -t roost-occupant54 2>/dev/null || true
+  tmux new-session -d -s roost-occupant54 -c "$linked" 'sleep 60'
+  if [ -d "$linked" ]; then
+    out="$("${ROOST_BIN}" spawn testnick54 --cwd "$linked" --allow-shared-cwd 2>&1)"; exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
+      ok "--allow-shared-cwd: overrides the linked-worktree collision guard"
+    else
+      fail "--allow-shared-cwd: overrides the linked-worktree collision guard" "exit=$exit_code out=$out"
+    fi
+  else
+    fail "--allow-shared-cwd: overrides the linked-worktree collision guard" "git worktree add failed, linked dir missing"
+  fi
+  tmux kill-session -t roost-occupant54 2>/dev/null || true
+  git -C "$repo" worktree remove --force "$linked" 2>/dev/null || true
+  teardown
+
+  setup
+  tmux kill-session -t roost-plainoccupant55 2>/dev/null || true
+  tmux new-session -d -s roost-plainoccupant55 -c "$TDIR" 'sleep 60'
+  out="$("${ROOST_BIN}" spawn testnick55 --cwd "$TDIR" 2>&1)"; exit_code=$?
+  if [ "$exit_code" -eq 0 ]; then
+    ok "non-git cwd: collision guard doesn't apply"
+  else
+    fail "non-git cwd: collision guard doesn't apply" "exit=$exit_code out=$out"
+  fi
+  tmux kill-session -t roost-plainoccupant55 2>/dev/null || true
+  teardown
+
+  # -- Test 56: `roost list` reports each session's live cwd -------------------
+  setup
+  tmux kill-session -t roost-listcwd56 2>/dev/null || true
+  tmux new-session -d -s roost-listcwd56 -c "$TDIR" 'sleep 60'
+  out="$("${ROOST_BIN}" list 2>&1)"
+  tmux kill-session -t roost-listcwd56 2>/dev/null || true
+  canon_tdir="$(cd "$TDIR" && pwd -P)"
+  if echo "$out" | grep -F "nick=listcwd56" | grep -qF "cwd=$canon_tdir"; then
+    ok "roost list: reports the session's live cwd"
+  else
+    fail "roost list: reports the session's live cwd" "out=$out want_cwd=$canon_tdir"
+  fi
+  teardown
+
+else
+  echo "SKIP: tmux not installed, skipping linked-worktree collision-guard + list-cwd tests (52-56)"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

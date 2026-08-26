@@ -38,6 +38,57 @@ IRC_HOST="${ROOST_IRC_SERVER:-127.0.0.1}"
 IRC_PORT=6667
 SESSION_PREFIX="roost-"
 
+# Emit "<session-name><TAB><pane_current_path>" for every live roost-prefixed
+# tmux session. Shared by `roost list`'s cwd column and cmd_spawn's worktree
+# collision guard so the two can't disagree about what counts as "live here".
+# Silent no-op (nothing printed) when tmux isn't installed or no server is
+# running — both callers treat that the same as "no sessions".
+_roost_session_cwds() {
+  command -v tmux &>/dev/null || return 0
+  tmux list-sessions -F $'#{session_name}\t#{pane_current_path}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true
+}
+
+# Print the canonicalized root of the *linked* (non-primary) git worktree
+# containing $1, if any. Returns 1 (nothing printed) when $1 isn't inside a
+# git repo, or is inside the repo's main worktree — those cases are left
+# unguarded on purpose: PM/APM/dispatcher/humans routinely share the main
+# worktree, but exactly one thing should ever live in a linked one (that's
+# the invariant worker/reviewer worktrees depend on).
+_linked_worktree_root() {
+  local _path="$1"
+  local _path_canon
+  _path_canon="$(cd "${_path}" 2>/dev/null && pwd -P)" || return 1
+  local _wt_list
+  _wt_list="$(git -C "${_path}" worktree list --porcelain 2>/dev/null)" || return 1
+  [ -n "${_wt_list}" ] || return 1
+  local _line _wt_path _wt_canon _main_wt="" _matched="" _idx=0
+  while IFS= read -r _line; do
+    case "${_line}" in
+      "worktree "*)
+        # Increment unconditionally, before the cd attempt: git guarantees
+        # the porcelain output's first "worktree" record is the main one,
+        # regardless of whether that path still resolves. Gating the
+        # position counter on cd success would mis-mark the *next* record
+        # as main if the real main worktree's directory is gone.
+        _idx=$((_idx + 1))
+        _wt_path="${_line#worktree }"
+        _wt_canon="$(cd "${_wt_path}" 2>/dev/null && pwd -P)" || continue
+        [ "${_idx}" -eq 1 ] && _main_wt="${_wt_canon}"
+        case "${_path_canon}" in
+          "${_wt_canon}"|"${_wt_canon}"/*) _matched="${_wt_canon}" ;;
+        esac
+        ;;
+    esac
+  done <<< "${_wt_list}"
+  [ -n "${_matched}" ] || return 1
+  # If the main worktree's own path couldn't be resolved, we can't tell
+  # whether $1 is inside it or a linked one — skip the guard rather than
+  # risk either a false block or a false pass.
+  [ -n "${_main_wt}" ] || return 1
+  [ "${_matched}" != "${_main_wt}" ] || return 1
+  printf '%s\n' "${_matched}"
+}
+
 print_version() {
   local pkg="${ROOST_DIR}/package.json"
   local version
@@ -232,7 +283,14 @@ Options:
   --cwd PATH                 Working directory for the spawned session.
                              Default: current directory. Pass a worktree
                              path so RVM/bundler/nvm resolve correctly
-                             inside the login shell.
+                             inside the login shell. Refused when PATH is
+                             inside a *linked* git worktree another live
+                             roost session already occupies (worker/reviewer
+                             worktrees are one-session-each) — pass
+                             --allow-shared-cwd to override. The repo's main
+                             worktree is never guarded; sharing it (e.g.
+                             PM + APM with no --cwd at all) is normal.
+  --allow-shared-cwd          Skip the linked-worktree collision guard above.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --agent NAME               Run this session as a named agent. Forwards
                              --agent to claude, which loads the matching
@@ -329,7 +387,12 @@ usage_list() {
   cat <<EOF
 Usage: roost list
 
-Show all roost-prefixed tmux sessions with nick and creation time.
+Show all roost-prefixed tmux sessions with nick, creation time, and cwd.
+cwd is read live from tmux (the pane's current working directory), not
+the --cwd passed at spawn time — if the session has since \`cd\`'d, this
+reflects where it is now. Use it to audit whether a session actually
+landed (or still is) where you expect, e.g. a reviewer that should be
+sitting in its own review worktree.
 
 Example:
   roost list
@@ -692,6 +755,7 @@ cmd_spawn() {
   local prompt_text=""
   local prompt_stdin=0
   local cwd="${PWD}"
+  local allow_shared_cwd=0
   local perm_irc=0
   local perm_target=""
   local ask_irc=""
@@ -721,6 +785,7 @@ cmd_spawn() {
       --prompt)         prompt_text="$2"; shift 2 ;;
       --prompt-stdin)   prompt_stdin=1; shift ;;
       --cwd)            cwd="$2"; shift 2 ;;
+      --allow-shared-cwd) allow_shared_cwd=1; shift ;;
       --perm-irc)       perm_irc=1; shift ;;
       --perm-target)    perm_target="$2"; shift 2 ;;
       --ask-irc)        ask_irc="$2"; shift 2 ;;
@@ -770,6 +835,36 @@ cmd_spawn() {
   if [ ! -d "${cwd}" ]; then
     echo "error: --cwd ${cwd} is not a directory" >&2
     exit 1
+  fi
+  # Worktree collision guard: a linked (non-primary) git worktree is meant to
+  # hold exactly one live thing — that's the invariant a worker's and a
+  # reviewer's worktrees depend on, and the one both #1602 and #1597 broke
+  # (a reviewer's actual cwd landing in the worker's worktree, silently, with
+  # nothing to catch it until cleanup). The main worktree is deliberately
+  # exempt: PM/APM/dispatcher/humans routinely share it, spawned with no
+  # --cwd at all, and that's correct, not a bug. Non-git cwds are exempt too
+  # — this tool ships to projects that may not use worktrees at all.
+  if [ "${allow_shared_cwd}" -eq 0 ]; then
+    local _guard_root
+    if _guard_root="$(_linked_worktree_root "${cwd}")" && [ -n "${_guard_root}" ]; then
+      local _existing _es _ep
+      _existing="$(_roost_session_cwds)"
+      if [ -n "${_existing}" ]; then
+        while IFS=$'\t' read -r _es _ep; do
+          [ -n "${_es}" ] || continue
+          [ -n "${_ep}" ] || continue
+          local _ep_canon
+          _ep_canon="$(cd "${_ep}" 2>/dev/null && pwd -P)" || continue
+          case "${_ep_canon}" in
+            "${_guard_root}"|"${_guard_root}"/*)
+              echo "error: --cwd ${cwd} is inside worktree ${_guard_root}, already live under session '${_es#"${SESSION_PREFIX}"}' (cwd: ${_ep})" >&2
+              echo "  a linked worktree is one-session-only — a worker and its reviewer must never share one. Pass --allow-shared-cwd to override." >&2
+              exit 1
+              ;;
+          esac
+        done <<< "${_existing}"
+      fi
+    fi
   fi
   if [ "${perm_irc}" -eq 1 ] && [ -z "${perm_target}" ]; then
     echo "error: --perm-irc requires --perm-target NICK" >&2
@@ -1385,12 +1480,12 @@ cmd_shutdown() {
 cmd_list() {
   require_tmux
   local sessions
-  sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^${SESSION_PREFIX}" || true)"
+  sessions="$(_roost_session_cwds)"
   if [ -z "${sessions}" ]; then
     echo "(no roost sessions)"
     return 0
   fi
-  echo "${sessions}" | while IFS= read -r s; do
+  echo "${sessions}" | while IFS=$'\t' read -r s cwd; do
     local nick="${s#"${SESSION_PREFIX}"}"
     local created_unix created
     created_unix="$(tmux display -t "${s}" -p '#{session_created}' 2>/dev/null)"
@@ -1399,7 +1494,7 @@ cmd_list() {
     else
       created="?"
     fi
-    printf '%-30s nick=%s   created=%s\n' "${s}" "${nick}" "${created}"
+    printf '%-30s nick=%s   created=%s   cwd=%s\n' "${s}" "${nick}" "${created}" "${cwd:-?}"
   done
 }
 
