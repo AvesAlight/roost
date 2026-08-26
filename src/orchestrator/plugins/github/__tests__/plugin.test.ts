@@ -1,4 +1,4 @@
-import { describe, it, expect, spyOn } from 'bun:test'
+import { describe, it, expect, spyOn, beforeEach, afterEach } from 'bun:test'
 import { GitHubPrsPlugin } from '../prs-plugin.js'
 import { GitHubIssuesPlugin } from '../issues-plugin.js'
 import { GitHubNewIssuesPlugin } from '../new-issues-plugin.js'
@@ -1734,6 +1734,11 @@ describe('GhPluginBase.observeRateLimit integration', () => {
 })
 
 describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () => {
+  // History is a class-static shared across every GhPluginBase instance (see
+  // base.ts) — reset between cases so injected history doesn't leak.
+  beforeEach(() => { GhPluginBase.resetRateLimitHistoryForTest() })
+  afterEach(() => { GhPluginBase.resetRateLimitHistoryForTest() })
+
   function observe(plugin: GitHubPrsPlugin, remaining: number, resetInMs = 60 * 60_000) {
     const fetch = async () => ({
       core: { remaining, limit: 5000, resetAt: Math.floor((Date.now() + resetInMs) / 1000) },
@@ -1758,7 +1763,7 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
     const plugin = new GitHubPrsPlugin('#proj')
     // Inject a stale entry that would trigger a warning if used as anchor.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._rateLimitHistory = [
+    ;(GhPluginBase as any)._rateLimitHistory = [
       { remaining: 5000, ts: Date.now() - RATE_LIMIT_WINDOW_MS - 10_000 },
     ]
     // After pruning the stale entry, history is empty → cold-start → no warning.
@@ -1769,7 +1774,7 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
     const plugin = new GitHubPrsPlugin('#proj')
     // Inject history entry 160 seconds ago (> half-window threshold) with 5000 remaining.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._rateLimitHistory = [
+    ;(GhPluginBase as any)._rateLimitHistory = [
       { remaining: 5000, ts: Date.now() - 160_000 },
     ]
     // Now 100 remaining, reset in 60 min. 4900 consumed in 160s → very high rate → warns.
@@ -1785,7 +1790,7 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
     // Anchor is oldest: 5000 - 4800 = 200 consumed in 300s → 40/min.
     // 4800 remaining at 40/min → 120 min to exhaust. Reset in 60 min. 120 >= 60 → no warning.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._rateLimitHistory = [
+    ;(GhPluginBase as any)._rateLimitHistory = [
       { remaining: 5000, ts: now - 300_000 },
       { remaining: 4800, ts: now - 10_000 },
     ]
@@ -1794,6 +1799,23 @@ describe('GhPluginBase.observeRateLimit — pruning and anchor selection', () =>
 })
 
 describe('GhPluginBase.observeRateLimit — graphql budget', () => {
+  // History and warn cooldowns are class-static shared across every
+  // GhPluginBase instance (see base.ts) — reset between cases.
+  beforeEach(() => {
+    GhPluginBase.resetRateLimitHistoryForTest()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._statics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._gqlStatics.warnedAt = null
+  })
+  afterEach(() => {
+    GhPluginBase.resetRateLimitHistoryForTest()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._statics.warnedAt = null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(GhPluginBase as any)._gqlStatics.warnedAt = null
+  })
+
   function snapshotFetch(core: { remaining: number; resetInMs?: number }, graphql: { remaining: number; resetInMs?: number } | null) {
     return async () => ({
       core: { remaining: core.remaining, limit: 5000, resetAt: Math.floor((Date.now() + (core.resetInMs ?? 60 * 60_000)) / 1000) },
@@ -1840,9 +1862,9 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     // Core bursts too (would warn if not suppressed); graphql also bursts for
     // the first time and should still fire — proving the cooldowns are independent.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    ;(GhPluginBase as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    ;(GhPluginBase as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
     expect(result).toHaveLength(1)
@@ -1857,9 +1879,9 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(GhPluginBase as any)._gqlStatics.warnedAt = null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    ;(GhPluginBase as any)._rateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(plugin as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
+    ;(GhPluginBase as any)._graphqlRateLimitHistory = [{ remaining: 5000, ts: now - 160_000 }]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = await (plugin as any).observeRateLimit('#proj', snapshotFetch({ remaining: 100 }, { remaining: 100 }))
     expect(result).toHaveLength(2)

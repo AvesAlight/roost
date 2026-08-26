@@ -23,8 +23,15 @@ export abstract class GhPluginBase extends BasePlugin {
   protected readonly client: GhClient
   protected readonly log: PluginLogger
 
-  private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
-  private _graphqlRateLimitHistory: Array<{ remaining: number; ts: number }> = []
+  // Cross-instance sample history — static, not per-instance: every GhPluginBase
+  // subclass polls the *same* account-wide GH budget every tick (issues, prs,
+  // new-issues, new-prs, commits), so a per-instance history only sees the
+  // subset of ticks that one plugin happened to sample and understates the
+  // real consumption rate feeding computeRateLimitWarning's exhaustion
+  // projection. Consistent with _statics/_gqlStatics/_breaker below, which are
+  // already shared for the same reason.
+  private static _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
+  private static _graphqlRateLimitHistory: Array<{ remaining: number; ts: number }> = []
 
   // Cross-instance cooldown handles — one warning per 10 min total, core and
   // graphql tracked independently so a graphql-budget warning isn't suppressed
@@ -65,6 +72,14 @@ export abstract class GhPluginBase extends BasePlugin {
   // class-static, so trip state would otherwise leak across tests.
   static resetBreakerForTest(): void {
     GhPluginBase._breaker.forceClose()
+  }
+
+  // Test-only: reset the shared rate-limit sample history between cases —
+  // also class-static, so it would otherwise leak across tests same as the
+  // breaker above.
+  static resetRateLimitHistoryForTest(): void {
+    GhPluginBase._rateLimitHistory = []
+    GhPluginBase._graphqlRateLimitHistory = []
   }
 
   // ---- gh-call resilience (rate-limit breaker + per-entry transient skip) ---
@@ -248,11 +263,11 @@ export abstract class GhPluginBase extends BasePlugin {
   ): Promise<PluginMessage[]> {
     const snapshot = await _fetch(this.log)
     if (!snapshot) return []
-    const core = observeRateLimitFromInfo(snapshot.core, this._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')
-    this._rateLimitHistory = core.history
+    const core = observeRateLimitFromInfo(snapshot.core, GhPluginBase._rateLimitHistory, GhPluginBase._statics, this.log, projectChannel, 'GH')
+    GhPluginBase._rateLimitHistory = core.history
     if (!snapshot.graphql) return core.events
-    const graphql = observeRateLimitFromInfo(snapshot.graphql, this._graphqlRateLimitHistory, GhPluginBase._gqlStatics, this.log, projectChannel, 'GH-GraphQL')
-    this._graphqlRateLimitHistory = graphql.history
+    const graphql = observeRateLimitFromInfo(snapshot.graphql, GhPluginBase._graphqlRateLimitHistory, GhPluginBase._gqlStatics, this.log, projectChannel, 'GH-GraphQL')
+    GhPluginBase._graphqlRateLimitHistory = graphql.history
     return [...core.events, ...graphql.events]
   }
 }

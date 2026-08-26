@@ -70,8 +70,8 @@ async function runTicks(
 
 describe('gh-call resilience (readEntry + breaker)', () => {
   stubRateLimit()
-  beforeEach(() => { GhPluginBase.resetBreakerForTest() })
-  afterEach(() => { GhPluginBase.resetBreakerForTest() })
+  beforeEach(() => { GhPluginBase.resetBreakerForTest(); GhPluginBase.resetRateLimitHistoryForTest() })
+  afterEach(() => { GhPluginBase.resetBreakerForTest(); GhPluginBase.resetRateLimitHistoryForTest() })
 
   it('success path: a clean read emits events normally', async () => {
     const spy = spyOn(GhClient.prototype, 'fetchRepoOpenPrs').mockResolvedValue([pr(1), pr(2)])
@@ -247,8 +247,8 @@ function stubGhSpawn(stdout: string, exitCode: number, stderr = ''): { mockResto
 
 describe('gh-call resilience — per-N skip path (issues/prs)', () => {
   stubRateLimit()
-  beforeEach(() => { GhPluginBase.resetBreakerForTest() })
-  afterEach(() => { GhPluginBase.resetBreakerForTest() })
+  beforeEach(() => { GhPluginBase.resetBreakerForTest(); GhPluginBase.resetRateLimitHistoryForTest() })
+  afterEach(() => { GhPluginBase.resetBreakerForTest(); GhPluginBase.resetRateLimitHistoryForTest() })
 
   it('per-alias miss carries the flapped PR forward and re-adds its dynamic channels', async () => {
     const prevPr1 = prSnap({ number: 1, url: 'https://github.com/org/repo/pull/1', linked_issues: [{ repo: 'org/repo', number: 42 }] })
@@ -346,6 +346,7 @@ describe('gh-call resilience — per-N skip path (issues/prs)', () => {
     } finally { prsBatch.mockRestore() }
 
     GhPluginBase.resetBreakerForTest()
+    GhPluginBase.resetRateLimitHistoryForTest()
     const issuesBatch = stubIssuesBatch(() => miss())
     try {
       const config: OrchestratorConfig = {
