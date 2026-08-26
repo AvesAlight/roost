@@ -135,13 +135,15 @@ On confirmation, for each issue N:
 
    A spawned session's cwd is fixed by roost at launch, so the reviewer must be spawned with `--cwd` already pointing at its own tree. This costs a second dependency install per issue — that's the price of the reviewer being able to run anything at all.
    If the PM named a cross-issue contract for this issue, pass it in the reviewer's prompt after the required tokens (e.g. `... gh-login=<gh-login> consumes-contract-from=#<M>`) so it reviews with that lens.
+
+   **Verify both landed where intended before trusting either.** `roost spawn` refuses to put a session's `--cwd` inside a linked worktree another live session already occupies, so a straight collision is caught at the command itself. That doesn't catch every way this can go wrong — a wrong-but-currently-empty path, a typo that happens to resolve somewhere real. Run `roost list`, and for each of `<worker-nick>` / `<reviewer-nick>` compare its reported cwd against the worktree path you created for it in step 1 (`realpath` both sides before comparing — don't compare unresolved strings). Any mismatch: **halt, don't post "worker + reviewer up"**, flag it in `#<project>-leads` instead. This is the actual prevention for the class of incident where a reviewer's real process ended up in the worker's worktree and nothing caught it until cleanup went to remove that worktree out from under it.
 6. Snapshot cumulative token usage for the long-lived agents so the cleanup cost report can diff per-issue:
    ```
    "$(roost root)/bin/roost-token-usage" snapshot "$(pwd)/.orchestrator" <N> <project>-pm <project>-apm
    ```
    Workers and reviewers are both ephemeral (one issue each) — their full lifetime is captured at cleanup by the report step, no pre-snapshot needed.
 
-The PM is already in the channel by this point, so there's no join cue to send — post the completion notice in the issue channel itself: `worker + reviewer up`.
+The PM is already in the channel by this point, so there's no join cue to send — once cwds are verified, post the completion notice in the issue channel itself: `worker + reviewer up`.
 
 The invite in step 4 is the one that needs the PM's full namespaced nick (e.g. `<project>-pm`, not just `pm`) so it trips `mention=true`. On a batch, invite and wait per issue — spawning issue B's team off issue A's JOIN is the same miss, one lane over.
 
@@ -206,6 +208,8 @@ Before you ack the merge, verify the approval is real and human: `gh pr view <N>
      and take the `worktree` path from the record whose `branch` field is `refs/heads/<worker-branch>` (then again for `refs/heads/review/<N>`). Remove only those paths. Never reconstruct a path from the branch name or reuse one you saw earlier: directory names get reused, and a path that once held this branch can hold a live one now. `git worktree remove --force` on it destroys uncommitted work and kills any dev server running out of it.
 
      The `--force` is required because a worker's build leaves the tree dirty with untracked artifacts — which means **a clean tree is not evidence you have the right tree.** Cleanliness was never the property that mattered; the branch field is. If no record matches the branch, stop and flag it rather than guessing.
+
+     **Before removing, confirm nothing live is still sitting in that path.** The worker/reviewer shutdown above should already guarantee this, but "the PR that owned this worktree merged" and "nobody's cwd is in this directory" are different claims — a reviewer working a fleet of issues out of one long-lived session, or any other process someone `cd`'d into the tree, survives its owning PR's merge. Check `roost list` for any session whose cwd is the resolved path or a subdirectory of it (canonicalize both sides — a symlinked path compares unequal to itself and the check then reads identical whether it's working or broken); `lsof +D <path>` as a backstop for anything not roost-managed. If something's still there, **halt** — flag it in `#<project>-leads` rather than force-removing out from under a live process.
 
      After removing, confirm `git worktree list` no longer shows the paths. If they're still there the removal didn't take — resolve and retry. Then delete the reviewer's throwaway branch, which outlives its worktree: `git branch -D review/<N>`. Leave the worker's branch alone; it's merged history.
    - DM `<project>-dispatcher`: `unwatch <N>` (if an issue watch was set) then `unwatch pr <N>`. Scope it to the merged PR — the daemon keeps running across issues, and full shutdown is the teardown dance below.
