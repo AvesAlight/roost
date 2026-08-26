@@ -1073,13 +1073,13 @@ fi
 [ -n "$data_dir" ] && rm -rf "$data_dir"
 teardown
 
-# -- Tests 52-55: linked-worktree collision guard -----------------------------
+# -- Tests 52-56: linked-worktree collision guard + roost list cwd -----------
 # A linked (non-primary) git worktree is meant to hold exactly one live
-# session — the invariant #1602/#1597 broke (a reviewer's cwd silently
-# landing in the worker's worktree). These start a real bare tmux session
-# (not a full roost spawn — no claude/ircd needed) to act as "already live
-# here", then assert the guard's behavior against it. Skipped gracefully if
-# tmux isn't installed.
+# session — the invariant that let a reviewer's cwd land silently in the
+# worker's worktree, with nothing to catch it. These start a real bare tmux
+# session (not a full roost spawn — no claude/ircd needed) to act as
+# "already live here", then assert the guard's behavior against it. Skipped
+# gracefully if tmux isn't installed.
 
 _make_git_repo() {
   local repo="$1"
@@ -1097,8 +1097,17 @@ if command -v tmux >/dev/null 2>&1; then
   git -C "$repo" worktree add -q "$linked" -b linked-branch-52 >/dev/null 2>&1
   tmux kill-session -t roost-occupant52 2>/dev/null || true
   tmux new-session -d -s roost-occupant52 -c "$linked" 'sleep 60'
+  # Spawn through a symlink alias rather than the real path: pins the
+  # canonicalize-before-compare property (pwd -P on both sides) on any OS.
+  # Without this, the raw-string comparison already happens to agree on
+  # Linux (CI's ubuntu-latest, where /tmp is a real directory) and only
+  # diverges by accident of platform on macOS ($TMPDIR under /tmp, which is
+  # itself a symlink to /private/tmp) — so a regression to string equality
+  # would ship green on the machine that gates the merge.
+  linked_alias="$TDIR/repo52-linked-alias"
+  ln -s "$linked" "$linked_alias"
   if [ -d "$linked" ]; then
-    err="$("${ROOST_BIN}" spawn testnick --cwd "$linked" 2>&1)"; exit_code=$?
+    err="$("${ROOST_BIN}" spawn testnick --cwd "$linked_alias" 2>&1)"; exit_code=$?
     if [ "$exit_code" -ne 0 ] && echo "$err" | grep -qF "already live under session 'occupant52'"; then
       ok "linked worktree already occupied: spawn refused, names the occupying nick"
     else

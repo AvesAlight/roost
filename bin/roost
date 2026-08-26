@@ -290,7 +290,7 @@ Options:
                              --allow-shared-cwd to override. The repo's main
                              worktree is never guarded; sharing it (e.g.
                              PM + APM with no --cwd at all) is normal.
-  --allow-shared-cwd          Skip the linked-worktree collision guard above.
+  --allow-shared-cwd         Skip the linked-worktree collision guard above.
   -s, --session NAME         Override tmux session name. Default: roost-<nick>
   --agent NAME               Run this session as a named agent. Forwards
                              --agent to claude, which loads the matching
@@ -838,9 +838,9 @@ cmd_spawn() {
   fi
   # Worktree collision guard: a linked (non-primary) git worktree is meant to
   # hold exactly one live thing — that's the invariant a worker's and a
-  # reviewer's worktrees depend on, and the one both #1602 and #1597 broke
-  # (a reviewer's actual cwd landing in the worker's worktree, silently, with
-  # nothing to catch it until cleanup). The main worktree is deliberately
+  # reviewer's worktrees depend on, and the one that let a reviewer's actual
+  # cwd land silently in the worker's worktree, with nothing to catch it
+  # until cleanup went to remove it. The main worktree is deliberately
   # exempt: PM/APM/dispatcher/humans routinely share it, spawned with no
   # --cwd at all, and that's correct, not a bug. Non-git cwds are exempt too
   # — this tool ships to projects that may not use worktrees at all.
