@@ -34,21 +34,16 @@ describe('GhPluginBase rate-limit history — shared across instances', () => {
   })
 
   it('a second, distinct plugin instance sees the first instance\'s sample as its anchor', async () => {
-    const issuesPlugin = new GitHubIssuesPlugin('#proj-leads')
     const prsPlugin = new GitHubPrsPlugin('#proj-leads')
 
-    // Sanity: two different classes, both extending GhPluginBase.
-    expect(issuesPlugin.constructor).not.toBe(prsPlugin.constructor)
-
-    // Seed the shared history as though the *issues* instance sampled 5000
-    // remaining 160s ago (past the half-window gate).
+    // Seed the shared history as though a *different* instance (e.g. the
+    // issues plugin) sampled 5000 remaining 160s ago (past the half-window
+    // gate) — this instance never observed that sample itself.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(GhPluginBase as any)._rateLimitHistory = [{ remaining: 5000, ts: Date.now() - 160_000 }]
-    void issuesPlugin // seeded directly; instance only used for the sanity check above
 
-    // A *different instance of a different class* observes next. If history
-    // were per-instance (the bug), this call would see an empty history and
-    // never warn regardless of the drop.
+    // If history were per-instance (the bug), this call would see an empty
+    // history and never warn regardless of the drop.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const events = await (prsPlugin as any).observeRateLimit('#proj-leads', async () => snapshot(100, 60 * 60_000))
     expect(events).toHaveLength(1)

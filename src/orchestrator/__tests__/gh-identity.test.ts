@@ -37,13 +37,17 @@ describe('pinGhIdentity', () => {
     expect(ghToken()).toBeUndefined()
   })
 
-  it('refuses to start when agent_logins has more than one entry — ambiguous identity', async () => {
+  it('skips the pin (does not throw) when agent_logins has more than one entry — can\'t infer an identity, but this is a supported config shape (roost init --agent-login is repeatable)', async () => {
+    delete process.env.GH_TOKEN
     const config: OrchestratorConfig = { project: 'p', agent_logins: ['BotOne', 'BotTwo'] }
     const deps: GhIdentityDeps = {
       resolveToken: async () => { throw new Error('should not be called') },
       verifyLogin: async () => { throw new Error('should not be called') },
     }
-    await expect(pinGhIdentity(config, noop, deps)).rejects.toThrow(/ambiguous dispatcher identity/)
+    const logs: string[] = []
+    await pinGhIdentity(config, (msg: string) => logs.push(msg), deps)
+    expect(ghToken()).toBeUndefined()
+    expect(logs.some(l => l.includes('BotOne, BotTwo') && l.includes('skipping the boot pin'))).toBe(true)
   })
 
   it('pins process.env.GH_TOKEN when the resolved token verifies as the configured login', async () => {
@@ -66,6 +70,19 @@ describe('pinGhIdentity', () => {
     }
     await expect(pinGhIdentity(config, noop, deps)).rejects.toThrow(/no stored gh credential/)
     expect(ghToken()).toBeUndefined()
+  })
+
+  it('pins successfully when the confirmed login differs only in case from the configured one', async () => {
+    delete process.env.GH_TOKEN
+    const config: OrchestratorConfig = { project: 'p', agent_logins: ['teakbuilds'] }
+    const deps: GhIdentityDeps = {
+      resolveToken: async () => 'tok',
+      // gh api user returns GitHub's canonical casing, which may not match
+      // how an operator typed agent_logins — logins are case-insensitive.
+      verifyLogin: async () => 'TeakBuilds',
+    }
+    await pinGhIdentity(config, noop, deps)
+    expect(ghToken()).toBe('tok')
   })
 
   it('throws and does not set GH_TOKEN when gh api user reports a different login than configured', async () => {

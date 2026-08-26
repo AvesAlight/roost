@@ -1,17 +1,12 @@
 // Boot-time pin for the GitHub identity the dispatcher runs as.
 //
-// The dispatcher shells out to `gh` (see plugins/github/github-api.ts) with no
-// account selection of its own — every call inherits whatever the box's
-// *active* `gh` account happens to be at the moment it spawns. On a shared box
-// that's whoever ran `gh auth switch` last, not necessarily the dispatcher's
-// own bot account. `pinGhIdentity` resolves the configured login's own stored
-// credential explicitly (`gh auth token -u <login>`, which works regardless of
-// which account is "active"), confirms it with a live `gh api user` call, and
-// then pins it into `process.env.GH_TOKEN` for the rest of this process's
-// lifetime — every later `Bun.spawn(['gh', ...])` inherits `process.env` with
-// no override, so once this is set the dispatcher is immune to a concurrent
-// `gh auth switch` elsewhere on the box, not just whatever was active at the
-// instant this check ran.
+// gh calls inherit whatever account is ambiently active on the box, not
+// necessarily the dispatcher's own bot account. `pinGhIdentity` resolves the
+// configured login's own stored credential explicitly regardless of which
+// account is active, confirms it with a live `gh api user` call, and pins it
+// into `process.env.GH_TOKEN` for the rest of this process — every later `gh`
+// call inherits `process.env` with no override, so this pins rather than
+// merely checks: it also survives a concurrent `gh auth switch` after boot.
 import type { OrchestratorConfig } from './config.js'
 import type { PluginLogger } from './plugin.js'
 
@@ -40,7 +35,7 @@ async function defaultResolveToken(login: string): Promise<string> {
   if (exitCode !== 0) {
     throw new Error(
       `gh-identity: no stored gh credential for login "${login}" (gh auth token -u ${login} failed: ${stderr.trim() || `exit ${exitCode}`}) —` +
-      ` run \`gh auth login\` (or, if already logged in on another account, \`gh auth switch -u ${login}\` once) on this box for that account, then retry`
+      ` run \`gh auth login\` for that account on this box (the pin doesn't require it to be the active account), then retry`
     )
   }
   const token = stdout.trim()
@@ -50,12 +45,9 @@ async function defaultResolveToken(login: string): Promise<string> {
 
 async function defaultVerifyLogin(token: string): Promise<string> {
   // Full env inherited (gh needs HOME/GH_CONFIG_DIR/etc. to run at all) but
-  // GH_TOKEN forced to exactly this token, overriding anything ambient — gh's
-  // own precedence puts GH_TOKEN above the active-account keyring lookup, so
-  // this call can't silently fall back to whatever account is ambiently
-  // active (verified: `gh auth token -u <login>` itself ignores a bogus
-  // ambient GH_TOKEN and still resolves the login's real stored token, so the
-  // resolveToken step above is unaffected either way).
+  // GH_TOKEN forced to exactly this token — gh's own precedence puts GH_TOKEN
+  // above the active-account keyring lookup, so this call can't silently fall
+  // back to whatever account is ambiently active.
   const { stdout, stderr, exitCode } = await runGh(['api', 'user', '-q', '.login'], { ...process.env, GH_TOKEN: token })
   if (exitCode !== 0) {
     throw new Error(`gh-identity: gh api user failed while verifying the pinned credential (exit ${exitCode}): ${stderr.trim()}`)
@@ -66,8 +58,8 @@ async function defaultVerifyLogin(token: string): Promise<string> {
 }
 
 // Refuses to resolve (throws) rather than silently continuing whenever the
-// configured identity can't be confirmed — a boot-time hard-fail is the whole
-// point: it fires at the moment of use, unlike doc instructions that decay.
+// configured identity can't be confirmed — a boot-time hard-fail fires at the
+// moment of use.
 export async function pinGhIdentity(
   config: OrchestratorConfig,
   log: PluginLogger,
@@ -79,15 +71,19 @@ export async function pinGhIdentity(
     return
   }
   if (logins.length > 1) {
-    // agent_logins is documented as the set of logins whose comments get
-    // tagged is_worker_reply — an author set, not an identity. Picking one
-    // element to pin against by array order would re-point the dispatcher's
-    // credential silently the next time that list changes, which is the exact
-    // failure mode this function exists to prevent.
-    throw new Error(
-      `gh-identity: agent_logins has ${logins.length} entries (${logins.join(', ')}) — ambiguous dispatcher identity, ` +
-      'pin it explicitly by leaving exactly one login in agent_logins (the dispatcher\'s own bot account)'
+    // agent_logins is a documented, supported multi-entry shape (`roost init
+    // --agent-login` is repeatable) — an author set, not necessarily an
+    // identity. Picking one element to pin against by array order would
+    // re-point the dispatcher's credential silently the next time that list
+    // changes, which is the exact failure mode this function exists to
+    // prevent — so this skips the pin (like the empty case) rather than
+    // refusing to boot a supported config. Fatal stays reserved for "the
+    // login resolves but confirms as somebody else."
+    log(
+      `gh-identity: agent_logins has ${logins.length} entries (${logins.join(', ')}) — can't infer a dispatcher identity, ` +
+      'skipping the boot pin; leave exactly one login in agent_logins to enable it\n'
     )
+    return
   }
   const expectedLogin = logins[0]
   const resolveToken = deps.resolveToken ?? defaultResolveToken
@@ -95,7 +91,9 @@ export async function pinGhIdentity(
 
   const token = await resolveToken(expectedLogin)
   const actualLogin = await verifyLogin(token)
-  if (actualLogin !== expectedLogin) {
+  // GitHub logins are case-insensitive; `gh api user` returns canonical
+  // casing, which may not match how an operator typed agent_logins.
+  if (actualLogin.toLowerCase() !== expectedLogin.toLowerCase()) {
     throw new Error(
       `gh-identity: gh api user confirmed login "${actualLogin}", expected "${expectedLogin}" (from agent_logins) — refusing to start`
     )
