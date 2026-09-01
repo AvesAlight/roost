@@ -9,6 +9,8 @@ import {
   MISSING_KEY_MESSAGE,
   REJECTED_KEY_MESSAGE,
   MAX_ISSUE_PAGES,
+  TEAM_OPEN_ISSUES_QUERY,
+  TEAM_PROJECT_OPEN_ISSUES_QUERY,
 } from '../linear-api.js'
 
 interface Harness {
@@ -763,5 +765,51 @@ describe('LinearClient.probe', () => {
     try { await client.probe() } catch (e) { caught = e }
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearError).message).toMatch(/unexpected shape/)
+  })
+})
+
+// The failure mode for these queries is a live-API complexity rejection, which
+// no fetch mock reproduces. Assert the shape that keeps the query under the cap
+// instead: every connection in these queries carries an explicit `first`.
+// Match connections by the Linear convention they all follow — the selection
+// body opens with its `nodes` page — rather than by the argument list, so a new
+// bare connection (the exact pattern that bit #734) is caught instead of
+// sailing past because it has no parens. A connection with no arg list, or one
+// whose arg list lacks `first:`, is a gap.
+describe('linear query connection bounds', () => {
+  const CONNECTION_FIELD = /\b(\w+)\s*(\([^)]*\))?\s*\{\s*nodes\b/g
+
+  function connectionsWithMissingFirst(query: string): string[] {
+    const missing: string[] = []
+    for (const m of query.matchAll(CONNECTION_FIELD)) {
+      const args = m[2]
+      if (!args || !args.includes('first:')) missing.push(m[1])
+    }
+    return missing
+  }
+
+  it('gives every connection an explicit first in the team query', () => {
+    expect(connectionsWithMissingFirst(TEAM_OPEN_ISSUES_QUERY)).toEqual([])
+  })
+
+  it('gives every connection an explicit first in the project query', () => {
+    expect(connectionsWithMissingFirst(TEAM_PROJECT_OPEN_ISSUES_QUERY)).toEqual([])
+  })
+
+  // The matcher must catch the historical regression, not just guard the fix.
+  // Current main leaves `teams` and `labels` bare (the two unbounded
+  // connections #734 blames), so the matcher flags both.
+  it('flags the bare teams and labels connections of the unbounded shape', () => {
+    const unbounded = `query($teamKey: String!, $first: Int!, $after: String) {
+      teams(filter: { key: { eq: $teamKey } }) {
+        nodes {
+          issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: $first, after: $after) {
+            nodes { id identifier title labels { nodes { name } } url }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+    expect(connectionsWithMissingFirst(unbounded).sort()).toEqual(['labels', 'teams'])
   })
 })

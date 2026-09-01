@@ -2,6 +2,20 @@
 
 Cross-cutting rules for this repo — entries here span 3+ roles. Auto-loaded into every Claude Code session in this repo. Hand-maintained.
 
+## 2026-08-31: Linear GraphQL complexity is a per-query budget summed across every connection, rejected at validation not rate-limit (from #734)
+
+Linear scores a GraphQL query against a 10000 complexity cap and rejects an
+over-budget query at validation as `INPUT_ERROR` ("Query too complex"), not as
+`RATELIMITED` — so it looks nothing like a rate limit and the existing
+rate-limit branch doesn't catch it. The score is summed across every connection
+in the query, and an unpaginated connection here scores high enough to blow the
+cap on its own. Bound every connection with an explicit `first`; the same query
+with `first` on every connection passes. Verify a query shape against the live
+API rather than a fetch mock: a complexity rejection is a validation outcome no
+mocked response reproduces. The exact per-connection scoring model is not
+settled empirically — the defensible claim is the before/after: unpaginated
+rejected, fully-`first`-ed passes.
+
 ## 2026-05-19: Canonicalize wording verbatim when an invariant lives in 3+ surfaces (from #422)
 
 When the same invariant lives in 3+ surfaces (operator help, agent prompts, learnings, etc.), pick one canonical sentence and copy it verbatim across all places. Paraphrasing looks fine at first but drifts on the next edit — and a future reader can't tell which copy is right. For ≤2 places, the duplication tax exceeds the drift risk; phrase each in context.

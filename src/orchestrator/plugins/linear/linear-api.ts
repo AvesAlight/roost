@@ -315,14 +315,18 @@ function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
   return Array.isArray(nodes)
 }
 
-// Linear's GraphQL connections default to `first: 50` when the arg is
-// omitted, so both queries below pass `first`/`after` explicitly and
-// `fetchTeamOpenIssues` walks `pageInfo` until exhausted.
-const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
-  teams(filter: { key: { eq: $teamKey } }) {
+// Linear scores a query against a 10000 complexity cap and rejects an
+// over-budget query at validation as "Query too complex" (INPUT_ERROR, not
+// RATELIMITED), so the existing rate-limit branch misses it. The unpaginated
+// query here scores 58800 and is rejected; the same query with `first` on
+// every connection passes. Every connection in these queries carries an
+// explicit `first`, and the test asserts it. `fetchTeamOpenIssues` still walks
+// `pageInfo` until exhausted, paginating the issues connection.
+export const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
+  teams(filter: { key: { eq: $teamKey } }, first: 1) {
     nodes {
       issues(filter: { state: { type: { nin: ["completed", "canceled"] } } }, first: $first, after: $after) {
-        nodes { id identifier title labels { nodes { name } } url }
+        nodes { id identifier title labels(first: 20) { nodes { name } } url }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -331,14 +335,14 @@ const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: S
 
 // Project-scoped variant — the project-existence check rides the same round
 // trip as each issue page, and the connection pages like the unscoped query.
-const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!, $first: Int!, $after: String) {
-  teams(filter: { key: { eq: $teamKey } }) {
+export const TEAM_PROJECT_OPEN_ISSUES_QUERY = `query($teamKey: String!, $projectName: String!, $first: Int!, $after: String) {
+  teams(filter: { key: { eq: $teamKey } }, first: 1) {
     nodes {
-      projects(filter: { name: { eq: $projectName } }) {
+      projects(filter: { name: { eq: $projectName } }, first: 1) {
         nodes { id }
       }
       issues(filter: { state: { type: { nin: ["completed", "canceled"] } }, project: { name: { eq: $projectName } } }, first: $first, after: $after) {
-        nodes { id identifier title labels { nodes { name } } url }
+        nodes { id identifier title labels(first: 20) { nodes { name } } url }
         pageInfo { hasNextPage endCursor }
       }
     }
