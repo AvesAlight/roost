@@ -11,8 +11,8 @@ import {
 } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerLinearId, type PerLinearIdCommand } from '../grammar.js'
-import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
-import { LinearClient } from './linear-api.js'
+import { CooldownGate, observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { LinearClient, LinearError } from './linear-api.js'
 import { LinearScraper } from './scraper.js'
 import { formatLinearMessage } from './format.js'
 import { isTombstone, type LinearIssuePluginState, type LinearIssueState, type LinearWatchedEntry } from './types.js'
@@ -36,11 +36,10 @@ export class LinearIssuesPlugin extends BasePlugin {
 
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
-  // Per-entry hard-error cooldown slot (issue #735). Keyed by the watched
-  // identifier, cooldown-gated so a persistent fetch failure posts once per
-  // WARN_COOLDOWN_MS rather than every tick. Distinct from the rate-limit
-  // statics (cross-instance) — this is a per-watcher signal.
-  private _fetchFailWarnedAt = new Map<string, number>()
+  // Per-entry hard-error cooldown slot, keyed by the watched identifier. A
+  // per-watcher signal (unlike the cross-instance rate-limit statics), so a
+  // persistent fetch failure posts once per window rather than every tick.
+  private _fetchFailWarnGate = new CooldownGate()
 
   constructor(
     defaultChannel: string,
@@ -179,12 +178,15 @@ export class LinearIssuesPlugin extends BasePlugin {
         prev === null ? undefined : (prev.issues[key] ?? null)
       try {
         const { next, events } = await scraper.scrapeIssue(entry.identifier, prevEntry)
-        this._fetchFailWarnedAt.delete(key)  // clean fetch → clear the hard-error cooldown slot
+        this._fetchFailWarnGate.clear(key)
         return { kind: 'ok' as const, key, next, events, entryChannels: entry.channels ?? [] }
       } catch (e) {
-        // Per-entry isolation: a hard error is rethrown out of scrapeIssue, so
-        // catch here. One entry failing must not reject the whole Promise.all
-        // and drop every sibling entry's events for the tick — the #602 shape.
+        // Non-domain defects re-throw so they still crash the tick with a stack
+        // (the orchestrator backstop logs it) rather than reading as an API
+        // outage. A LinearError is a per-entry condition: one entry failing
+        // must not reject the whole Promise.all and drop every sibling's
+        // events for the tick — the batch-collapse shape.
+        if (!(e instanceof LinearError)) throw e
         return { kind: 'error' as const, key, entryChannels: entry.channels ?? [], error: e }
       }
     }))
@@ -195,14 +197,12 @@ export class LinearIssuesPlugin extends BasePlugin {
       if (item.kind === 'error') {
         // Preserve the prior watermark so a recovered tick doesn't re-seed the
         // entry (which would replay the now-watching + backlog events).
-        if (prev != null) curState.issues[item.key] = prev.issues[item.key]
+        const prior = prev?.issues[item.key]
+        if (prior !== undefined) curState.issues[item.key] = prior
         const detail = item.error instanceof Error ? item.error.message : String(item.error)
         this.log(`linear-issues: error fetching issue ${item.key}: ${detail}\n`)
-        const now = Date.now()
-        const lastWarnedAt = this._fetchFailWarnedAt.get(item.key) ?? 0
-        if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
-          this._fetchFailWarnedAt.set(item.key, now)
-          const issueChan = linearIssueChannel(defaultProject(config), item.key)
+        if (this._fetchFailWarnGate.claim(item.key, Date.now())) {
+          const issueChan = linearIssueChannel(project, item.key)
           messages.push({
             channels: this.resolveChannels([issueChan], item.entryChannels),
             text: `[linear-issues] issue ${item.key} fetch failing: ${detail}`,

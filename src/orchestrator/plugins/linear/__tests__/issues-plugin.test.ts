@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test'
 import { LinearIssuesPlugin, type LinearClientLike } from '../issues-plugin.js'
+import { LinearError } from '../linear-api.js'
 import type { OrchestratorConfig } from '../../../config.js'
 import type { Command } from '../../../dispatcher-dm-handler.js'
 import type { LinearIssuePluginState, LinearIssueSnap, LinearIssueTombstone } from '../types.js'
@@ -198,14 +199,14 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
   })
 })
 
-// ---- runTick: hard fetch error isolation (issue #735) -------------------
+// ---- runTick: hard fetch error isolation --------------------------------
 
-describe('LinearIssuesPlugin.runTick — hard fetch error isolation (issue #735)', () => {
+describe('LinearIssuesPlugin.runTick — hard fetch error isolation', () => {
   function throwingClient(failId: string): LinearClientLike {
     return {
       graphql: async (_q, vars) => {
         const id = (vars as { id: string }).id
-        if (id === failId) throw new Error('linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
+        if (id === failId) throw new LinearError('linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
         // A non-failing entry returns a completed issue so it emits a state change.
         return { issue: rawIssue({ state: { type: 'completed', name: 'Done' } }) }
       },
@@ -252,7 +253,7 @@ describe('LinearIssuesPlugin.runTick — hard fetch error isolation (issue #735)
     expect(warns[0]?.channels).toEqual(['#proj-issue-c-758', '#triage'])
   })
 
-  it('preserves the failing entry watermark — no state written on error', async () => {
+  it('does not modify state for the failing entry — prior watermark preserved', async () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
@@ -296,26 +297,46 @@ describe('LinearIssuesPlugin.runTick — hard fetch error isolation (issue #735)
       project: 'proj',
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
     }
-    // One client, toggled between clean and failing so the same plugin instance
-    // can run a clean tick (clears the slot) then a failing tick (warns again).
-    let phase: 'clean' | 'fail' = 'clean'
+    // One client, toggled between failing and clean so the same plugin instance
+    // can run a failing tick (warns and seeds the slot), a clean tick (clears
+    // the slot), and a failing tick again (warns — proving the slot cleared).
+    let phase: 'fail' | 'clean' = 'fail'
     const toggleClient: LinearClientLike = {
       graphql: async () => {
-        if (phase === 'fail') throw new Error('boom')
+        if (phase === 'fail') throw new LinearError('boom')
         return { issue: rawIssue() }
       },
       getLastRateLimit: () => null,
     }
     const p = plugin(toggleClient)
-    // Seed cooldown as if a hard error warned just now.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(p as any)._fetchFailWarnedAt.set('C-758', Date.now())
-    phase = 'clean'
-    const r1 = await p.runTick(cfg, { issues: { 'C-758': snapC758 } })
-    expect(r1.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(0)
+    // Tick 1: a hard error warns and seeds the cooldown slot.
     phase = 'fail'
+    const r1 = await p.runTick(cfg, { issues: { 'C-758': snapC758 } })
+    expect(r1.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+    // Tick 2: a clean fetch clears the slot — no warn.
+    phase = 'clean'
     const r2 = await p.runTick(cfg, r1.state as LinearIssuePluginState)
-    expect(r2.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+    expect(r2.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(0)
+    // Tick 3: a fresh hard error warns again because the slot was cleared.
+    phase = 'fail'
+    const r3 = await p.runTick(cfg, r2.state as LinearIssuePluginState)
+    expect(r3.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+  })
+
+  it('a typo\'d issue id on team C does not suppress team C\'s own fetch-fail cooldown, and vice versa', async () => {
+    // Sharpest case for entryKey slotting: two watched entries on the same team
+    // that both fetch-fail must each get their own cooldown slot.
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }, { identifier: 'C-759' }] } },
+    }
+    const failing: LinearClientLike = {
+      graphql: async () => { throw new LinearError('boom') },
+      getLastRateLimit: () => null,
+    }
+    const result = await plugin(failing).runTick(cfg, { issues: { 'C-758': snapC758, 'C-759': snapC758 } })
+    const warns = result.messages.filter(e => e.text.includes('fetch failing'))
+    expect(warns).toHaveLength(2)
   })
 })
 
