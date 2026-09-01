@@ -634,6 +634,15 @@ describe('LinearNewIssuesPlugin.runTick — hard fetch error channel warning', (
       expect(warns).toHaveLength(2)
     } finally { spy.mockRestore() }
   })
+
+  it('a non-LinearError defect is rethrown — runTick rejects, it must crash the tick', async () => {
+    // Go-red coverage for the rethrow guard: a raw defect must not be swallowed
+    // into a per-entry "fetch failing" that reads as an API outage.
+    const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockRejectedValue(new Error('bun.spawn died'))
+    try {
+      await expect(makePlugin().plugin.runTick(baseConfig(), null)).rejects.toThrow('bun.spawn died')
+    } finally { spy.mockRestore() }
+  })
 })
 
 describe('formatNewLinearIssue', () => {

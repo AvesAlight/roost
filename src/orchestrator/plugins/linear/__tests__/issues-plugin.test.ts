@@ -338,6 +338,20 @@ describe('LinearIssuesPlugin.runTick — hard fetch error isolation', () => {
     const warns = result.messages.filter(e => e.text.includes('fetch failing'))
     expect(warns).toHaveLength(2)
   })
+
+  it('a non-LinearError defect is rethrown — runTick rejects, it must crash the tick', async () => {
+    // Go-red coverage for the rethrow guard: a raw defect must not be swallowed
+    // into a per-entry "fetch failing" that reads as an API outage.
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
+    }
+    const defecting: LinearClientLike = {
+      graphql: async () => { throw new Error('bun.spawn died') },
+      getLastRateLimit: () => null,
+    }
+    await expect(plugin(defecting).runTick(cfg, { issues: { 'C-758': snapC758 } })).rejects.toThrow('bun.spawn died')
+  })
 })
 
 // ---- runTick: disappeared (AC) -----------------------------------------

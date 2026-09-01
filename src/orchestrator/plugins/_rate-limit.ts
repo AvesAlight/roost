@@ -21,8 +21,7 @@ export const WARN_COOLDOWN_MS = 10 * 60_000
 // entry key (team, team::project, or issue id) so independent entries each get
 // their own cooldown slot. claim() checks-and-records atomically; clear() drops
 // a key so an outage that clears inside the window warns again rather than
-// staying suppressed. Extracted from the per-poller cooldown copy so the four
-// call sites share one implementation instead of drifting.
+// staying suppressed.
 export class CooldownGate {
   private readonly _warnedAt = new Map<string, number>()
   constructor(private readonly windowMs: number = WARN_COOLDOWN_MS) {}
