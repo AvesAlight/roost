@@ -9,6 +9,8 @@ import {
   MISSING_KEY_MESSAGE,
   REJECTED_KEY_MESSAGE,
   MAX_ISSUE_PAGES,
+  TEAM_OPEN_ISSUES_QUERY,
+  TEAM_PROJECT_OPEN_ISSUES_QUERY,
 } from '../linear-api.js'
 
 interface Harness {
@@ -763,5 +765,30 @@ describe('LinearClient.probe', () => {
     try { await client.probe() } catch (e) { caught = e }
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearError).message).toMatch(/unexpected shape/)
+  })
+})
+
+// The failure mode for these queries is a live-API complexity rejection, which
+// no fetch mock reproduces. Assert the shape that keeps the query under the cap
+// instead: every connection field (a field with arguments followed by a
+// selection set — `teams`, `issues`, `labels`, `projects`) carries an explicit
+// `first:`. `nodes` has no argument list, so it is correctly excluded.
+describe('linear query connection bounds', () => {
+  const CONNECTION_FIELD = /\b(\w+)\([^)]*\)\s*\{/g
+
+  function connectionsWithMissingFirst(query: string): string[] {
+    const missing: string[] = []
+    for (const m of query.matchAll(CONNECTION_FIELD)) {
+      if (!m[0].includes('first:')) missing.push(m[1])
+    }
+    return missing
+  }
+
+  it('gives every connection an explicit first in the team query', () => {
+    expect(connectionsWithMissingFirst(TEAM_OPEN_ISSUES_QUERY)).toEqual([])
+  })
+
+  it('gives every connection an explicit first in the project query', () => {
+    expect(connectionsWithMissingFirst(TEAM_PROJECT_OPEN_ISSUES_QUERY)).toEqual([])
   })
 })
