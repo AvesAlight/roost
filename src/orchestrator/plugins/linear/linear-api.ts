@@ -315,13 +315,13 @@ function isLabelsShape(v: unknown): v is { nodes: Array<{ name: string }> } {
   return Array.isArray(nodes)
 }
 
-// Linear bills a GraphQL connection at `first` when it's set, or at the
-// default (50) when it's omitted, and sums every connection in a query against
-// a 10000 complexity cap — an unpaginated query here scores 58800 and is
-// rejected at validation as "Query too complex", while the same query with
-// `first` on every connection passes. Every connection in both queries below
-// carries an explicit `first`, and the test asserts it. `fetchTeamOpenIssues`
-// still walks `pageInfo` until exhausted, paginating the issues connection.
+// Linear scores a query against a 10000 complexity cap and rejects an
+// over-budget query at validation as "Query too complex" (INPUT_ERROR, not
+// RATELIMITED), so the existing rate-limit branch misses it. The unpaginated
+// query here scores 58800 and is rejected; the same query with `first` on
+// every connection passes. Every connection in these queries carries an
+// explicit `first`, and the test asserts it. `fetchTeamOpenIssues` still walks
+// `pageInfo` until exhausted, paginating the issues connection.
 export const TEAM_OPEN_ISSUES_QUERY = `query($teamKey: String!, $first: Int!, $after: String) {
   teams(filter: { key: { eq: $teamKey } }, first: 1) {
     nodes {
