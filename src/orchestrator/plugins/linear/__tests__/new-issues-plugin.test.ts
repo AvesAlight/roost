@@ -263,14 +263,16 @@ describe('LinearNewIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('logs and continues when fetchTeamOpenIssues throws', async () => {
+  it('posts a channel warning when fetchTeamOpenIssues throws (and still logs to daemon.log)', async () => {
     const logs: string[] = []
     const errClient = new LinearClient('lin_api_fake_test', (msg) => { logs.push(msg) })
     const spy = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockRejectedValue(new Error('network error'))
     try {
       const plugin = new LinearNewIssuesPlugin('#proj-leads', (msg) => { logs.push(msg) }, errClient)
       const result = await plugin.runTick(baseConfig(), prevState([]))
-      expect(result.messages).toHaveLength(0)
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.text).toBe('[linear-new-issues] team C fetch failing: network error')
+      expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
       expect(logs.some(l => l.includes('network error'))).toBe(true)
     } finally { spy.mockRestore() }
   })
@@ -505,6 +507,89 @@ describe('LinearNewIssuesPlugin.runTick — team not found', () => {
       )
       expect(warnings).toHaveLength(0)
     } finally { spy.mockRestore() }
+  })
+})
+
+describe('LinearNewIssuesPlugin.runTick — hard fetch error channel warning', () => {
+  stubRateLimit()
+
+  function hardErrorFetch() {
+    return spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockRejectedValue(new Error('linear graphql failed: HTTP 400 (code=INPUT_ERROR)'))
+  }
+
+  it('posts the error text and watch label to the project channel', async () => {
+    hardErrorFetch()
+    const { plugin } = makePlugin()
+    const result = await plugin.runTick(baseConfig(), prevState([]))
+    const warns = result.messages.filter(e => e.text?.includes('fetch failing'))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]?.text).toBe('[linear-new-issues] team C fetch failing: linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
+    expect(warns[0]?.channels).toEqual(['#proj-leads'])
+  })
+
+  it('routes the warning to entry.channels when set', async () => {
+    hardErrorFetch()
+    const config = baseConfig({ plugins: { 'linear-new-issues': { watched: [{ team: 'C', channels: ['#triage', '#leads'] }] } } })
+    const { plugin } = makePlugin()
+    const result = await plugin.runTick(config, prevState([]))
+    const warns = result.messages.filter(e => e.text?.includes('fetch failing'))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]?.channels).toEqual(['#triage', '#leads'])
+  })
+
+  it('does not modify state for the failing team — prior watermark preserved', async () => {
+    hardErrorFetch()
+    const { plugin } = makePlugin()
+    const result = await plugin.runTick(baseConfig(), prevState(['C-1', 'C-2']))
+    expect((result.state as LinearNewIssuesPluginState).teams['C']).toEqual(['C-1', 'C-2'])
+  })
+
+  it('suppresses a second warning within the cooldown window', async () => {
+    hardErrorFetch()
+    const { plugin } = makePlugin()
+    const result1 = await plugin.runTick(baseConfig(), prevState([]))
+    const result2 = await plugin.runTick(baseConfig(), prevState([]))
+    expect(result1.messages.filter(e => e.text?.includes('fetch failing'))).toHaveLength(1)
+    expect(result2.messages.filter(e => e.text?.includes('fetch failing'))).toHaveLength(0)
+  })
+
+  it('per-team cooldown: team C in cooldown does not suppress the first warning for team MAR', async () => {
+    const config: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-new-issues': { watched: [{ team: 'C' }, { team: 'MAR' }] } },
+    }
+    const { plugin } = makePlugin()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._fetchFailWarnedAt.set('C', Date.now())
+    spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockRejectedValue(new Error('boom'))
+    const result = await plugin.runTick(config, null)
+    const warns = result.messages.filter(e => e.text?.includes('fetch failing'))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]?.text).toContain('team MAR fetch failing')
+  })
+
+  it('cooldown resets per-team: re-warns after WARN_COOLDOWN_MS elapses', async () => {
+    hardErrorFetch()
+    const { plugin } = makePlugin()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._fetchFailWarnedAt.set('C', Date.now() - WARN_COOLDOWN_MS - 1)
+    const result = await plugin.runTick(baseConfig(), prevState([]))
+    expect(result.messages.filter(e => e.text?.includes('fetch failing'))).toHaveLength(1)
+  })
+
+  it('clears the cooldown slot on a successful fetch — an outage that clears inside the cooldown warns again', async () => {
+    const { plugin } = makePlugin()
+    // Seed cooldown as if a hard error warned just now.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(plugin as any)._fetchFailWarnedAt.set('C', Date.now())
+    // First tick: a clean fetch clears the slot (no warn, no new issues).
+    const clean = spyOn(LinearClient.prototype, 'fetchTeamOpenIssues').mockResolvedValue({ kind: 'ok', issues: [] })
+    const result1 = await plugin.runTick(baseConfig(), prevState([]))
+    expect(result1.messages.filter(e => e.text?.includes('fetch failing'))).toHaveLength(0)
+    // Second tick: a fresh hard error warns again because the slot was cleared.
+    clean.mockImplementation(async () => { throw new Error('now failing') })
+    const result2 = await plugin.runTick(baseConfig(), prevState([]))
+    expect(result2.messages.filter(e => e.text?.includes('fetch failing'))).toHaveLength(1)
   })
 })
 

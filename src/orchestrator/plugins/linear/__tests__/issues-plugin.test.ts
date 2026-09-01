@@ -198,6 +198,127 @@ describe('LinearIssuesPlugin.runTick — routing', () => {
   })
 })
 
+// ---- runTick: hard fetch error isolation (issue #735) -------------------
+
+describe('LinearIssuesPlugin.runTick — hard fetch error isolation (issue #735)', () => {
+  function throwingClient(failId: string): LinearClientLike {
+    return {
+      graphql: async (_q, vars) => {
+        const id = (vars as { id: string }).id
+        if (id === failId) throw new Error('linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
+        // A non-failing entry returns a completed issue so it emits a state change.
+        return { issue: rawIssue({ state: { type: 'completed', name: 'Done' } }) }
+      },
+      getLastRateLimit: () => null,
+    }
+  }
+
+  const snapC758: LinearIssueSnap = {
+    id: 'uuid-1', identifier: 'C-758', title: 't', url: 'https://x',
+    status: 'Backlog', statusType: 'backlog', labels: [],
+    seen_comment_ids: [], seen_github_attachment_ids: [],
+  }
+
+  it('isolates a single entry hard error — a sibling still emits its events', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }, { identifier: 'C-759' }] } },
+    }
+    const prev: LinearIssuePluginState = {
+      issues: {
+        'C-758': { ...snapC758, status: 'In Progress', statusType: 'started' },
+        'C-759': { ...snapC758, identifier: 'C-759', status: 'Started', statusType: 'started' },
+      },
+    }
+    const result = await plugin(throwingClient('C-758')).runTick(cfg, prev)
+    // Sibling C-759's state change still lands — the Promise.all batch did not collapse.
+    const sibling = result.messages.find(e =>
+      e.text.includes('state:') && e.channels.includes('#proj-issue-c-759'))
+    expect(sibling).toBeDefined()
+    // The failing entry posts a cooldown-gated warn.
+    const warns = result.messages.filter(e => e.text.includes('fetch failing'))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]?.text).toBe('[linear-issues] issue C-758 fetch failing: linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
+  })
+
+  it('routes the fetch-failing warn to the per-issue channel + entry.channels', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#triage'] }] } },
+    }
+    const result = await plugin(throwingClient('C-758')).runTick(cfg, { issues: { 'C-758': snapC758 } })
+    const warns = result.messages.filter(e => e.text.includes('fetch failing'))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]?.channels).toEqual(['#proj-issue-c-758', '#triage'])
+  })
+
+  it('preserves the failing entry watermark — no state written on error', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
+    }
+    const result = await plugin(throwingClient('C-758')).runTick(cfg, { issues: { 'C-758': snapC758 } })
+    expect((result.state as LinearIssuePluginState).issues['C-758']).toEqual(snapC758)
+  })
+
+  it('a recovered entry does not replay seed events — the preserved watermark holds', async () => {
+    // Tick 1: hard error, watermark preserved. Tick 2: clean fetch — must emit a
+    // state change, NOT a now-watching/backlog seed (which a lost watermark replays).
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
+    }
+    const tick1 = await plugin(throwingClient('C-758')).runTick(cfg, { issues: { 'C-758': snapC758 } })
+    expect(tick1.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+    const recovered: LinearClientLike = {
+      graphql: async () => ({ issue: rawIssue({ state: { type: 'completed', name: 'Done' } }) }),
+      getLastRateLimit: () => null,
+    }
+    const tick2 = await plugin(recovered).runTick(cfg, tick1.state as LinearIssuePluginState)
+    expect(tick2.messages.find(e => e.text.startsWith('now watching linear issue'))).toBeUndefined()
+    expect(tick2.messages.some(e => e.text.includes('state:'))).toBe(true)
+  })
+
+  it('suppresses a repeated warn within the cooldown window', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
+    }
+    const p = plugin(throwingClient('C-758'))
+    const r1 = await p.runTick(cfg, { issues: { 'C-758': snapC758 } })
+    const r2 = await p.runTick(cfg, r1.state as LinearIssuePluginState)
+    expect(r1.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+    expect(r2.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(0)
+  })
+
+  it('clears the cooldown slot on a clean fetch — an outage that clears warns again', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758' }] } },
+    }
+    // One client, toggled between clean and failing so the same plugin instance
+    // can run a clean tick (clears the slot) then a failing tick (warns again).
+    let phase: 'clean' | 'fail' = 'clean'
+    const toggleClient: LinearClientLike = {
+      graphql: async () => {
+        if (phase === 'fail') throw new Error('boom')
+        return { issue: rawIssue() }
+      },
+      getLastRateLimit: () => null,
+    }
+    const p = plugin(toggleClient)
+    // Seed cooldown as if a hard error warned just now.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(p as any)._fetchFailWarnedAt.set('C-758', Date.now())
+    phase = 'clean'
+    const r1 = await p.runTick(cfg, { issues: { 'C-758': snapC758 } })
+    expect(r1.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(0)
+    phase = 'fail'
+    const r2 = await p.runTick(cfg, r1.state as LinearIssuePluginState)
+    expect(r2.messages.filter(e => e.text.includes('fetch failing'))).toHaveLength(1)
+  })
+})
+
 // ---- runTick: disappeared (AC) -----------------------------------------
 
 describe('LinearIssuesPlugin.runTick — disappeared lifecycle', () => {

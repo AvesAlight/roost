@@ -58,6 +58,11 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   // watches on the same team with different (typo'd) project names each get
   // their own cooldown slot, so one doesn't suppress the other's warning.
   private _notFoundWarnedAt = new Map<string, number>()
+  // Sibling of _notFoundWarnedAt for hard fetch errors (issue #735). A hard
+  // error (network/timeout/400) and a not-found verdict are distinct failure
+  // modes with different operator actions, so they keep independent cooldown
+  // slots — one must not suppress the other's warning.
+  private _fetchFailWarnedAt = new Map<string, number>()
 
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
@@ -192,9 +197,29 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       try {
         result = await this.client.fetchTeamOpenIssues(team, linearProject)
       } catch (e) {
-        this.log(`linear-new-issues: error fetching ${watchLabel}: ${e instanceof Error ? e.message : String(e)}\n`)
+        const detail = e instanceof Error ? e.message : String(e)
+        this.log(`linear-new-issues: error fetching ${watchLabel}: ${detail}\n`)
+        // Hard error — nothing was fetched, so the team's prev watermark is
+        // preserved (the key is only written below on success). Surface it to
+        // the watch channel, cooldown-gated so a persistent outage posts once
+        // per window rather than every tick. Distinct from the not-found path:
+        // a hard error's cause (transient vs key-rotation) has no single
+        // clear recovery, so no unwatch hint.
+        const now = Date.now()
+        const lastWarnedAt = this._fetchFailWarnedAt.get(key) ?? 0
+        if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
+          this._fetchFailWarnedAt.set(key, now)
+          messages.push({
+            channels: [...announcementChannels],
+            text: `[linear-new-issues] ${watchLabel} fetch failing: ${detail}`,
+          })
+        }
         continue
       }
+      // Clean fetch → clear the hard-error cooldown slot, so an outage that
+      // clears and returns inside the cooldown warns again rather than staying
+      // suppressed (mirrors the GH clearBatchFailure rationale).
+      this._fetchFailWarnedAt.delete(key)
 
       if (result.kind !== 'ok') {
         const now = Date.now()

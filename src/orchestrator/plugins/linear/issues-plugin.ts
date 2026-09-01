@@ -11,7 +11,7 @@ import {
 } from '../../plugin.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
 import { tryClaimPerLinearId, type PerLinearIdCommand } from '../grammar.js'
-import { observeRateLimitFromInfo, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
+import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitInfo, type RateLimitStatics } from '../_rate-limit.js'
 import { LinearClient } from './linear-api.js'
 import { LinearScraper } from './scraper.js'
 import { formatLinearMessage } from './format.js'
@@ -36,6 +36,11 @@ export class LinearIssuesPlugin extends BasePlugin {
 
   private _rateLimitHistory: Array<{ remaining: number; ts: number }> = []
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
+  // Per-entry hard-error cooldown slot (issue #735). Keyed by the watched
+  // identifier, cooldown-gated so a persistent fetch failure posts once per
+  // WARN_COOLDOWN_MS rather than every tick. Distinct from the rate-limit
+  // statics (cross-instance) — this is a per-watcher signal.
+  private _fetchFailWarnedAt = new Map<string, number>()
 
   constructor(
     defaultChannel: string,
@@ -172,21 +177,47 @@ export class LinearIssuesPlugin extends BasePlugin {
       const key = entry.identifier
       const prevEntry: LinearIssueState | null | undefined =
         prev === null ? undefined : (prev.issues[key] ?? null)
-      const { next, events } = await scraper.scrapeIssue(entry.identifier, prevEntry)
-      return { key, next, events, entryChannels: entry.channels ?? [] }
+      try {
+        const { next, events } = await scraper.scrapeIssue(entry.identifier, prevEntry)
+        this._fetchFailWarnedAt.delete(key)  // clean fetch → clear the hard-error cooldown slot
+        return { kind: 'ok' as const, key, next, events, entryChannels: entry.channels ?? [] }
+      } catch (e) {
+        // Per-entry isolation: a hard error is rethrown out of scrapeIssue, so
+        // catch here. One entry failing must not reject the whole Promise.all
+        // and drop every sibling entry's events for the tick — the #602 shape.
+        return { kind: 'error' as const, key, entryChannels: entry.channels ?? [], error: e }
+      }
     }))
 
     const curState: LinearIssuePluginState = { issues: {} }
     const messages: PluginMessage[] = []
-    for (const { key, next, events, entryChannels } of scraped) {
-      curState.issues[key] = next
-      for (const event of events) {
+    for (const item of scraped) {
+      if (item.kind === 'error') {
+        // Preserve the prior watermark so a recovered tick doesn't re-seed the
+        // entry (which would replay the now-watching + backlog events).
+        if (prev != null) curState.issues[item.key] = prev.issues[item.key]
+        const detail = item.error instanceof Error ? item.error.message : String(item.error)
+        this.log(`linear-issues: error fetching issue ${item.key}: ${detail}\n`)
+        const now = Date.now()
+        const lastWarnedAt = this._fetchFailWarnedAt.get(item.key) ?? 0
+        if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
+          this._fetchFailWarnedAt.set(item.key, now)
+          const issueChan = linearIssueChannel(defaultProject(config), item.key)
+          messages.push({
+            channels: this.resolveChannels([issueChan], item.entryChannels),
+            text: `[linear-issues] issue ${item.key} fetch failing: ${detail}`,
+          })
+        }
+        continue
+      }
+      curState.issues[item.key] = item.next
+      for (const event of item.events) {
         if (event.kind === 'linear_issue_added_to_watch') {
-          const issueChan = linearIssueChannel(project, key)
-          const routingChannels = [issueChan, ...entryChannels].filter(ch => ch !== projectChannel)
+          const issueChan = linearIssueChannel(project, item.key)
+          const routingChannels = [issueChan, ...item.entryChannels].filter(ch => ch !== projectChannel)
           messages.push({
             channels: [projectChannel],
-            text: `now watching linear issue ${key} — routing events to ${routingChannels.join(', ')}`,
+            text: `now watching linear issue ${item.key} — routing events to ${routingChannels.join(', ')}`,
           })
           continue
         }
@@ -199,9 +230,9 @@ export class LinearIssuesPlugin extends BasePlugin {
           })
           continue
         }
-        const issueChan = linearIssueChannel(project, key)
+        const issueChan = linearIssueChannel(project, item.key)
         messages.push({
-          channels: this.resolveChannels([issueChan], entryChannels),
+          channels: this.resolveChannels([issueChan], item.entryChannels),
           text: formatLinearMessage(event),
         })
       }
