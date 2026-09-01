@@ -16,6 +16,28 @@ export const RATE_LIMIT_WINDOW_MS = 5 * 60_000
 // Cross-instance warning cooldown: one warning per 10 min per statics handle.
 export const WARN_COOLDOWN_MS = 10 * 60_000
 
+// Cooldown gate — one warning per window per key, so a persistent failure
+// posts once per WARN_COOLDOWN_MS rather than every tick. Keyed by the watch
+// entry key (team, team::project, or issue id) so independent entries each get
+// their own cooldown slot. claim() checks-and-records atomically; clear() drops
+// a key so an outage that clears inside the window warns again rather than
+// staying suppressed.
+export class CooldownGate {
+  private readonly _warnedAt = new Map<string, number>()
+  constructor(private readonly windowMs: number = WARN_COOLDOWN_MS) {}
+  // True when a warning may fire now for key (outside its cooldown); records
+  // the warn on the way out.
+  claim(key: string, now: number): boolean {
+    const last = this._warnedAt.get(key) ?? 0
+    if (now - last <= this.windowMs) return false
+    this._warnedAt.set(key, now)
+    return true
+  }
+  clear(key: string): void {
+    this._warnedAt.delete(key)
+  }
+}
+
 // Mutable handle passed by reference — one per plugin class so GH and Linear
 // warning cooldowns stay independent. Initialized as `{ warnedAt: null }`.
 export interface RateLimitStatics {

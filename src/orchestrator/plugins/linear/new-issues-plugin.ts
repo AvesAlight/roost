@@ -16,9 +16,9 @@ import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.
 import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
 import { resolveProjectChannel } from '../../naming.js'
 import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
-import { observeRateLimitFromInfo, WARN_COOLDOWN_MS, type RateLimitStatics } from '../_rate-limit.js'
+import { CooldownGate, observeRateLimitFromInfo, type RateLimitStatics } from '../_rate-limit.js'
 import { tryClaimPerLinearTeam, type PerLinearTeamCommand } from '../grammar.js'
-import { LinearClient, type FetchTeamIssuesResult, type LinearIssueNode } from './linear-api.js'
+import { LinearClient, LinearError, type FetchTeamIssuesResult, type LinearIssueNode } from './linear-api.js'
 
 export interface LinearNewIssuesWatchEntry {
   team: string
@@ -57,7 +57,10 @@ export class LinearNewIssuesPlugin extends BasePlugin {
   // Keyed by `entryKey(team, linearProject)`, not bare team — two scoped
   // watches on the same team with different (typo'd) project names each get
   // their own cooldown slot, so one doesn't suppress the other's warning.
-  private _notFoundWarnedAt = new Map<string, number>()
+  // One cooldown gate per distinct failure mode so a hard fetch error and a
+  // not-found verdict (different operator actions) never suppress each other.
+  private _notFoundWarnGate = new CooldownGate()
+  private _fetchFailWarnGate = new CooldownGate()
 
   private static readonly _statics: RateLimitStatics = { warnedAt: null }
 
@@ -192,15 +195,30 @@ export class LinearNewIssuesPlugin extends BasePlugin {
       try {
         result = await this.client.fetchTeamOpenIssues(team, linearProject)
       } catch (e) {
-        this.log(`linear-new-issues: error fetching ${watchLabel}: ${e instanceof Error ? e.message : String(e)}\n`)
+        if (!(e instanceof LinearError)) throw e
+        const detail = e instanceof Error ? e.message : String(e)
+        this.log(`linear-new-issues: error fetching ${watchLabel}: ${detail}\n`)
+        // Hard error — nothing was fetched, so the team's prev watermark is
+        // preserved (the key is only written below on success). Surface it to
+        // the watch channel, cooldown-gated so a persistent outage posts once
+        // per window rather than every tick. Distinct from the not-found path:
+        // a hard error's cause (transient vs key-rotation) has no single
+        // clear recovery, so no unwatch hint.
+        if (this._fetchFailWarnGate.claim(key, Date.now())) {
+          messages.push({
+            channels: [...announcementChannels],
+            text: `[linear-new-issues] ${watchLabel} fetch failing: ${detail}`,
+          })
+        }
         continue
       }
+      // Clean fetch → clear the hard-error cooldown slot, so an outage that
+      // clears and returns inside the cooldown warns again rather than staying
+      // suppressed.
+      this._fetchFailWarnGate.clear(key)
 
       if (result.kind !== 'ok') {
-        const now = Date.now()
-        const lastWarnedAt = this._notFoundWarnedAt.get(key) ?? 0
-        if (now - lastWarnedAt > WARN_COOLDOWN_MS) {
-          this._notFoundWarnedAt.set(key, now)
+        if (this._notFoundWarnGate.claim(key, Date.now())) {
           const reason = result.kind === 'team-not-found'
             ? `team ${team} not found`
             : `project "${linearProject}" not found in team ${team}`
