@@ -54,20 +54,25 @@ export class LinearError extends Error {
   readonly code: string | null
   readonly body: string
   readonly attempts: number
-  constructor(msg: string, opts: { status?: number | null; code?: string | null; body?: string; attempts?: number } = {}) {
+  // Operator-facing label for the error shape (e.g. `ratelimited`, `http-401`).
+  // Surfaced in the single catch-handler body log so ops can grep the shape
+  // even after the bespoke per-branch prefixes were collapsed to one.
+  readonly shape: string | null
+  constructor(msg: string, opts: { status?: number | null; code?: string | null; body?: string; attempts?: number; shape?: string | null } = {}) {
     super(msg)
     this.name = 'LinearError'
     this.status = opts.status ?? null
     this.code = opts.code ?? null
     this.body = opts.body ?? ''
     this.attempts = opts.attempts ?? 1
+    this.shape = opts.shape ?? null
   }
 }
 
 // HTTP 401 — surfaced as a distinct type so dispatcher boot can fatal cleanly:
 // `catch (e) { if (e instanceof LinearAuthError) ... }`.
 export class LinearAuthError extends LinearError {
-  constructor(msg: string, opts: { status?: number | null; body?: string } = {}) {
+  constructor(msg: string, opts: { status?: number | null; body?: string; shape?: string | null } = {}) {
     super(msg, opts)
     this.name = 'LinearAuthError'
   }
@@ -76,7 +81,7 @@ export class LinearAuthError extends LinearError {
 // HTTP 400 + `extensions.code == 'RATELIMITED'`. Non-transient — burns budget
 // to retry. Callers log the raw body once + skip-tick.
 export class LinearRateLimitedError extends LinearError {
-  constructor(msg: string, opts: { status?: number | null; body?: string } = {}) {
+  constructor(msg: string, opts: { status?: number | null; body?: string; shape?: string | null } = {}) {
     super(msg, { ...opts, code: 'RATELIMITED' })
     this.name = 'LinearRateLimitedError'
   }
@@ -161,6 +166,13 @@ function filterRateLimitHeaders(headers: Record<string, string>): Record<string,
   return out
 }
 
+// Emit a single `linear-error:` line with the response body verbatim. One prefix
+// + one `shape=` field keeps the verbatim-body shape identical across every throw
+// site so ops can grep a single label and still distinguish shapes.
+function logErrorBody(log: PluginLogger, cmd: string, status: number | null, code: string | null, shape: string | null, body: string) {
+  log(`linear-error: ${cmd} status=${status} code=${code ?? 'unknown'} shape=${shape ?? 'unknown'} — response body verbatim:\n${body}\n`)
+}
+
 // Sole call site for `fetch` against Linear's GraphQL endpoint. Mirrors
 // `spawnGh`'s retry/backoff shape; classifier diverges (HTTP status + GraphQL
 // extensions.code instead of `gh` stderr strings).
@@ -201,7 +213,7 @@ export async function spawnLinear(
 
       // HTTP 401 — bad/revoked key. Non-transient, fatal.
       if (resp.status === 401) {
-        throw new LinearAuthError(REJECTED_KEY_MESSAGE, { status: 401, body: rawText })
+        throw new LinearAuthError(REJECTED_KEY_MESSAGE, { status: 401, body: rawText, shape: 'http-401' })
       }
 
       // HTTP 5xx / 429 — transient. Retry if attempts remain.
@@ -209,8 +221,8 @@ export async function spawnLinear(
         const label = resp.status === 429 ? 'http-429-rate-limit' : 'http-5xx'
         const attemptNum = i + 1
         if (attemptNum >= totalAttempts) {
-          log(`linear-retry: ${cmd} exhausted ${totalAttempts} attempts (matched=${label}, status=${resp.status}) — body verbatim:\n${rawText}\n`)
-          throw new LinearError(`linear graphql failed: HTTP ${resp.status} (after ${totalAttempts} retries)`, { status: resp.status, body: rawText, attempts: totalAttempts })
+          log(`linear-retry: ${cmd} exhausted ${totalAttempts} attempts (matched=${label}, status=${resp.status})\n`)
+          throw new LinearError(`linear graphql failed: HTTP ${resp.status} (after ${totalAttempts} retries)`, { status: resp.status, body: rawText, attempts: totalAttempts, shape: label })
         }
         const backoff = Math.round(baseMs * Math.pow(2, i) * (1 + random() * jitterFraction))
         log(`linear-retry: ${cmd} attempt ${attemptNum}/${totalAttempts} matched=${label} status=${resp.status}, backoff ${backoff}ms before next try\n`)
@@ -224,7 +236,7 @@ export async function spawnLinear(
       try {
         body = JSON.parse(rawText) as LinearGraphqlResponse
       } catch {
-        throw new LinearError(`linear graphql returned non-JSON (status=${resp.status})`, { status: resp.status, body: rawText })
+        throw new LinearError(`linear graphql returned non-JSON (status=${resp.status})`, { status: resp.status, body: rawText, shape: 'non-json' })
       }
 
       // HTTP 400 + extensions.code == RATELIMITED is the documented shape.
@@ -233,12 +245,11 @@ export async function spawnLinear(
       if (resp.status === 400) {
         const code = body.errors?.[0]?.extensions?.code ?? null
         if (code === 'RATELIMITED') {
-          log(`linear-ratelimited: raw body verbatim for shape capture:\n${rawText}\n`)
-          throw new LinearRateLimitedError('linear graphql rate-limited (HTTP 400 RATELIMITED) — skip tick', { status: 400, body: rawText })
+          throw new LinearRateLimitedError('linear graphql rate-limited (HTTP 400 RATELIMITED) — skip tick', { status: 400, body: rawText, shape: 'ratelimited' })
         }
         // Some other 400 — non-transient, surface the extensions.code so callers
         // can branch without re-parsing the body.
-        throw new LinearError(`linear graphql failed: HTTP 400 (code=${code ?? 'unknown'})`, { status: 400, code, body: rawText })
+        throw new LinearError(`linear graphql failed: HTTP 400 (code=${code ?? 'unknown'})`, { status: 400, code, body: rawText, shape: 'http-400' })
       }
 
       // HTTP 2xx but `errors[]` populated — GraphQL-layer failure. Default to
@@ -246,17 +257,23 @@ export async function spawnLinear(
       // be added to the classifier in a follow-up.
       if (resp.status >= 200 && resp.status < 300 && body.errors && body.errors.length > 0) {
         const code = body.errors[0]?.extensions?.code ?? null
-        log(`linear-graphql-error: ${cmd} status=${resp.status} code=${code ?? 'unknown'} body verbatim:\n${rawText}\n`)
-        throw new LinearError(`linear graphql returned errors[] (code=${code ?? 'unknown'})`, { status: resp.status, code, body: rawText })
+        throw new LinearError(`linear graphql returned errors[] (code=${code ?? 'unknown'})`, { status: resp.status, code, body: rawText, shape: 'graphql-errors' })
       }
 
       // Any other non-2xx not classified above — non-transient surface.
       if (resp.status < 200 || resp.status >= 300) {
-        throw new LinearError(`linear graphql failed: HTTP ${resp.status}`, { status: resp.status, body: rawText })
+        throw new LinearError(`linear graphql failed: HTTP ${resp.status}`, { status: resp.status, body: rawText, shape: 'http-other' })
       }
 
       return { body, rateLimit, headers }
     } catch (e) {
+      // Single body-logging site: every response-carrying throw carries a
+      // non-empty body, so log it once here before rethrowing. A future throw
+      // path can't forget it (the failure mode this PR exists to fix). The
+      // body-guard means fetch failures (no body) skip.
+      if (e instanceof LinearError && e.body) {
+        logErrorBody(log, cmd, e.status, e.code, e.shape, e.body)
+      }
       if (e instanceof LinearError) throw e
       // fetch threw — network/timeout/dns. Classify against the message.
       const msg = e instanceof Error ? e.message : String(e)

@@ -138,8 +138,11 @@ describe('spawnLinear (retry-aware)', () => {
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearError).status).toBe(502)
     expect((caught as LinearError).attempts).toBe(3)
-    expect(h.logs.length).toBe(3)
+    expect((caught as LinearError).shape).toBe('http-5xx')
+    // Two retry-exhaustion lines (attempt-count + catch body log) + 2 retry lines = 4.
+    expect(h.logs.length).toBe(4)
     expect(h.logs[2]).toContain('exhausted 3 attempts')
+    expect(h.logs.some(l => l.includes('linear-error') && l.includes('shape=http-5xx') && l.includes('Bad Gateway'))).toBe(true)
   })
 
   it('throws LinearAuthError on HTTP 401 without retrying', async () => {
@@ -158,6 +161,10 @@ describe('spawnLinear (retry-aware)', () => {
     expect((caught as LinearAuthError).status).toBe(401)
     expect(h.sleeps).toEqual([])
     expect(h.fetchCalls.length).toBe(1)
+    // Body must be logged verbatim so operators can see what Linear returned.
+    const logLine = h.logs.find(l => l.includes('linear-error') && l.includes('status=401'))
+    expect(logLine).toBeDefined()
+    expect(logLine).toContain('Unauthorized')
   })
 
   it('throws LinearRateLimitedError on HTTP 400 + RATELIMITED without retrying', async () => {
@@ -175,10 +182,11 @@ describe('spawnLinear (retry-aware)', () => {
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearRateLimitedError).code).toBe('RATELIMITED')
     expect((caught as LinearRateLimitedError).status).toBe(400)
+    expect((caught as LinearRateLimitedError).shape).toBe('ratelimited')
     expect(h.sleeps).toEqual([])
     expect(h.fetchCalls.length).toBe(1)
-    // Raw body must be logged for shape capture (un-empirically-verified per design doc).
-    expect(h.logs.some(l => l.includes('linear-ratelimited') && l.includes('RATELIMITED'))).toBe(true)
+    // Body must be logged verbatim via the single catch-handler log.
+    expect(h.logs.some(l => l.includes('linear-error') && l.includes('shape=ratelimited') && l.includes('rate limited'))).toBe(true)
   })
 
   it('throws plain LinearError on HTTP 400 with non-RATELIMITED code', async () => {
@@ -198,6 +206,12 @@ describe('spawnLinear (retry-aware)', () => {
     expect(caught).not.toBeInstanceOf(LinearAuthError)
     expect((caught as LinearError).code).toBe('INVALID_INPUT')
     expect((caught as LinearError).status).toBe(400)
+    // Body must be logged verbatim so operators can see what Linear returned.
+    const logLine = h.logs.find(l => l.includes('linear-error') && l.includes('INVALID_INPUT'))
+    expect(logLine).toBeDefined()
+    expect(logLine).toContain('status=400')
+    expect(logLine).toContain('INVALID_INPUT')
+    expect(logLine).toContain('bad query')
   })
 
   it('throws LinearError on HTTP 200 with errors[] populated (graphql-layer failure)', async () => {
@@ -214,9 +228,11 @@ describe('spawnLinear (retry-aware)', () => {
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearError).status).toBe(200)
     expect((caught as LinearError).code).toBe('INTERNAL_SERVER_ERROR')
+    expect((caught as LinearError).shape).toBe('graphql-errors')
     expect(h.sleeps).toEqual([])
-    // Raw body logged so the classifier can grow if INTERNAL_SERVER_ERROR turns out to be transient.
-    expect(h.logs.some(l => l.includes('linear-graphql-error') && l.includes('INTERNAL_SERVER_ERROR'))).toBe(true)
+    // Raw body logged via the single catch-handler log so the classifier can
+    // grow if INTERNAL_SERVER_ERROR turns out to be transient.
+    expect(h.logs.some(l => l.includes('linear-error') && l.includes('shape=graphql-errors') && l.includes('oops'))).toBe(true)
   })
 
   it('retries on fetch network error then succeeds', async () => {
@@ -293,6 +309,28 @@ describe('spawnLinear (retry-aware)', () => {
     expect(caught).toBeInstanceOf(LinearError)
     expect((caught as LinearError).message).toMatch(/non-JSON/)
     expect((caught as LinearError).body).toMatch(/proxy intercept/)
+    // Body must be logged verbatim so operators can see what Linear returned.
+    const logLine = h.logs.find(l => l.includes('linear-error') && l.includes('status=200'))
+    expect(logLine).toBeDefined()
+    expect(logLine).toContain('proxy intercept')
+  })
+
+  it('logs the response body for an unclassified non-2xx status', async () => {
+    const h = harness()
+    let caught: unknown = null
+    try {
+      await spawnLinear('k', '{ x }', undefined, {
+        log: h.log,
+        sleep: h.sleep,
+        fetch: mockFetch([{ status: 418, body: 'teapot', headers: OK_HEADERS }], h),
+      })
+    } catch (e) { caught = e }
+    expect(caught).toBeInstanceOf(LinearError)
+    expect((caught as LinearError).status).toBe(418)
+    // Body must be logged verbatim so operators can see what Linear returned.
+    const logLine = h.logs.find(l => l.includes('linear-error') && l.includes('status=418'))
+    expect(logLine).toBeDefined()
+    expect(logLine).toContain('teapot')
   })
 
   it('applies jitter via injected random', async () => {
