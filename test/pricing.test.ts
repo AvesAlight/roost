@@ -47,10 +47,7 @@ describe('costFor resolves dated snapshot ids via fallback', () => {
 })
 
 describe('costFor claude-fable-5-1', () => {
-  // Pins every rate explicitly (input 10, output 50, cache_creation_5m 12.50,
-  // cache_creation_1h 20, cache_read 0.25) rather than just non-null, so a
-  // drift in any field fails the test. cache_read is 0.25 here (0.025x input),
-  // not the 0.1x every other model uses.
+  // Pins every rate explicitly so a drift in any field fails the test.
   it('prices at the Fable 5.1 rates', () => {
     const expected = (
       10 * SAMPLE_USAGE.input

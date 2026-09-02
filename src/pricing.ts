@@ -38,8 +38,7 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   // Fable 5 — higher-powered tier above Opus, priced accordingly.
   'claude-fable-5':             { input: 10, output: 50, cache_creation_5m: 12.50, cache_creation_1h: 20,  cache_read: 1.00 },
   // Fable 5.1 — same input/output/cache-write rates as Fable 5, but cache reads
-  // at 0.025x input this generation (not the usual 0.1x), so cache_read is 0.25,
-  // not 1.00 like the row above.
+  // at 0.025x input this generation (not the usual 0.1x).
   'claude-fable-5-1':           { input: 10, output: 50, cache_creation_5m: 12.50, cache_creation_1h: 20,  cache_read: 0.25 },
   // Opus 5 and Opus 4.x current generation — $5 base input. Opus 4.1 and earlier use the $15 tier.
   'claude-opus-5':              { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
