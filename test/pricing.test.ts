@@ -46,6 +46,25 @@ describe('costFor resolves dated snapshot ids via fallback', () => {
   }
 })
 
+describe('costFor claude-fable-5-1', () => {
+  // Pins every rate explicitly so a drift in any field fails the test.
+  it('prices at the Fable 5.1 rates', () => {
+    const expected = (
+      10 * SAMPLE_USAGE.input
+      + 50 * SAMPLE_USAGE.output
+      + 12.50 * SAMPLE_USAGE.cache_creation_5m
+      + 20 * SAMPLE_USAGE.cache_creation_1h
+      + 0.25 * SAMPLE_USAGE.cache_read
+    ) / 1_000_000
+    expect(costFor('claude-fable-5-1', SAMPLE_USAGE)).toBe(expected)
+  })
+
+  it('resolves the dated transcript form via the normalize fallback', () => {
+    expect(costFor('claude-fable-5-1-20260901', SAMPLE_USAGE)).toBe(costFor('claude-fable-5-1', SAMPLE_USAGE))
+    expect(costFor('claude-fable-5-1-20260901', SAMPLE_USAGE)).not.toBeNull()
+  })
+})
+
 describe('costFor / missCostFor unknown models', () => {
   it('returns null for a wholly unknown model with no date stamp', () => {
     expect(costFor('claude-mystery-9-0', ZERO_USAGE)).toBeNull()
