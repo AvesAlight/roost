@@ -11,6 +11,13 @@
 // print `$?` for that nick and stderr-warn the unknown ID rather than
 // silently defaulting to a rate that could mislead in either direction.
 //
+// Non-Anthropic (ollama-cloud) models are keyed by the exact ollama reference
+// string Claude Code records in `message.model` (the `name:tag` form, e.g.
+// `glm-5.3`). Source: https://ollama.com/pricing, Retrieved: 2026-09-01. Ollama
+// bills cache writes at the input rate and discounts cache reads to the
+// cached-input rate, with no 5m/1h write tier — so cache_creation_5m and
+// cache_creation_1h mirror `input` for these rows.
+//
 // Claude Code often records a dated snapshot id (e.g.
 // `claude-opus-4-8-20260115`) rather than the bare alias. costFor/missCostFor
 // look up the exact id first, then fall back to the id with its trailing
@@ -47,16 +54,47 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   'claude-opus-4-6':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-5':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-1':            { input: 15, output: 75, cache_creation_5m: 18.75, cache_creation_1h: 30,  cache_read: 1.50 },
-  // Sonnet 5 — separate pricing tier from Sonnet 4.x below. Introductory pricing
-  // through 2026-08-31 (this row). Standard pricing from 2026-09-01: input 3,
-  // output 15, cache_creation_5m 3.75, cache_creation_1h 6, cache_read 0.30 — flip
-  // this entry to those numbers then.
+  // Sonnet 5 — separate pricing tier from Sonnet 4.x below. Introductory
+  // pricing (this row) was scheduled to convert to standard pricing on
+  // 2026-09-01, but Anthropic canceled that flip, so the introductory rates
+  // hold.
   'claude-sonnet-5':                { input: 2,  output: 10, cache_creation_5m: 2.50,  cache_creation_1h: 4,   cache_read: 0.20 },
   // Sonnet 4.x.
   'claude-sonnet-4-6':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   'claude-sonnet-4-5':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   // Haiku 4.5.
   'claude-haiku-4-5':          { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
+
+  // --- ollama-cloud models -------------------------------------------------
+  // Keyed by the exact ollama reference string Claude Code records in
+  // `message.model`. Rates from https://ollama.com/pricing (per 1M USD,
+  // retrieved 2026-09-01). Ollama bills cache writes at the input rate and
+  // discounts cache reads to the cached-input rate, with no 5m/1h write tier,
+  // so cache_creation_5m and cache_creation_1h mirror `input`.
+  'deepseek-v4-flash':        { input: 0.44,  output: 1.32,  cache_creation_5m: 0.44,  cache_creation_1h: 0.44,  cache_read: 0.014 },
+  'deepseek-v4-pro':          { input: 1.32,  output: 3.96,  cache_creation_5m: 1.32,  cache_creation_1h: 1.32,  cache_read: 0.044 },
+  'gemma4':                   { input: 0.14,  output: 0.40,  cache_creation_5m: 0.14,  cache_creation_1h: 0.14,  cache_read: 0.05 },
+  'glm-5.3':                  { input: 1.40,  output: 4.40,  cache_creation_5m: 1.40,  cache_creation_1h: 1.40,  cache_read: 0.26 },
+  'glm-5.3-flash':            { input: 0.15,  output: 0.50,  cache_creation_5m: 0.15,  cache_creation_1h: 0.15,  cache_read: 0.03 },
+  'glm-5.2':                  { input: 1.40,  output: 4.40,  cache_creation_5m: 1.40,  cache_creation_1h: 1.40,  cache_read: 0.26 },
+  'glm-5.1':                  { input: 1.00,  output: 3.20,  cache_creation_5m: 1.00,  cache_creation_1h: 1.00,  cache_read: 0.20 },
+  'gpt-oss:120b':             { input: 0.15,  output: 0.60,  cache_creation_5m: 0.15,  cache_creation_1h: 0.15,  cache_read: 0.014 },
+  'gpt-oss:20b':              { input: 0.07,  output: 0.30,  cache_creation_5m: 0.07,  cache_creation_1h: 0.07,  cache_read: 0.035 },
+  'kimi-k3':                  { input: 3.00,  output: 15.00, cache_creation_5m: 3.00,  cache_creation_1h: 3.00,  cache_read: 0.30 },
+  'kimi-k2.7-code':           { input: 0.95,  output: 4.00,  cache_creation_5m: 0.95,  cache_creation_1h: 0.95,  cache_read: 0.19 },
+  'kimi-k2.6':                { input: 0.95,  output: 4.00,  cache_creation_5m: 0.95,  cache_creation_1h: 0.95,  cache_read: 0.16 },
+  'minimax-m3':               { input: 0.60,  output: 2.40,  cache_creation_5m: 0.60,  cache_creation_1h: 0.60,  cache_read: 0.12 },
+  'minimax-m2.7':             { input: 0.30,  output: 1.20,  cache_creation_5m: 0.30,  cache_creation_1h: 0.30,  cache_read: 0.06 },
+  'mistral-large-3':          { input: 0.50,  output: 1.50,  cache_creation_5m: 0.50,  cache_creation_1h: 0.50,  cache_read: 0.50 },
+  'nemotron-3-nano':          { input: 0.06,  output: 0.24,  cache_creation_5m: 0.06,  cache_creation_1h: 0.06,  cache_read: 0.06 },
+  'nemotron-3-super':         { input: 0.015, output: 0.60,  cache_creation_5m: 0.015, cache_creation_1h: 0.015, cache_read: 0.015 },
+  'nemotron-3-ultra':         { input: 0.10,  output: 3.00,  cache_creation_5m: 0.10,  cache_creation_1h: 0.10,  cache_read: 0.10 },
+  'qwen3.5:397b':             { input: 0.60,  output: 3.60,  cache_creation_5m: 0.60,  cache_creation_1h: 0.60,  cache_read: 0.60 },
+  // Local MLX compute, no cloud rate. Counted as $0 API spend (a real tier,
+  // not a skipped placeholder) so token-usage doesn't warn on it. Both recorded
+  // spellings are keyed — `ornith-mlx8:latest` is the dominant transcript form.
+  'ornith-mlx8:latest':       { input: 0,    output: 0,     cache_creation_5m: 0,    cache_creation_1h: 0,    cache_read: 0 },
+  'ornith-mlx8-o:latest':     { input: 0,    output: 0,     cache_creation_5m: 0,    cache_creation_1h: 0,    cache_read: 0 },
 }
 
 // IDs that appear in transcripts but don't represent real API spend —

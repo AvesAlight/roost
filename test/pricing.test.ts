@@ -112,3 +112,62 @@ describe('missCostFor resolves dated snapshot ids via fallback', () => {
     expect(missCostFor('claude-sonnet-4-6-20260301', 500, 250)).not.toBeNull()
   })
 })
+
+// Every ollama.com/pricing table id, keyed exactly as transcripts record it
+// (bare `glm-5.3`, tagged `gpt-oss:120b` — no `:cloud` form is ever recorded).
+describe('ollama-cloud models resolve', () => {
+  const ollamaIds = [
+    'deepseek-v4-flash', 'deepseek-v4-pro', 'gemma4', 'glm-5.3', 'glm-5.3-flash',
+    'glm-5.2', 'glm-5.1', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k3',
+    'kimi-k2.7-code', 'kimi-k2.6', 'minimax-m3', 'minimax-m2.7', 'mistral-large-3',
+    'nemotron-3-nano', 'nemotron-3-super', 'nemotron-3-ultra', 'qwen3.5:397b',
+  ]
+
+  it('prices every ollama table id to a non-null cost', () => {
+    for (const id of ollamaIds) {
+      expect(costFor(id, SAMPLE_USAGE)).not.toBeNull()
+    }
+  })
+
+  it('prices glm-5.3 at its exact table rates (writes bill at input, reads discount to cached)', () => {
+    expect(PRICING['glm-5.3']).toEqual({
+      input: 1.40, output: 4.40, cache_creation_5m: 1.40, cache_creation_1h: 1.40, cache_read: 0.26,
+    })
+    expect(costFor('glm-5.3', SAMPLE_USAGE)).not.toBeNull()
+  })
+})
+
+describe('ornith local-compute tiers are $0 (no $? warning)', () => {
+  it('keys both recorded spellings as zero cost', () => {
+    expect(costFor('ornith-mlx8:latest', SAMPLE_USAGE)).toBe(0)
+    expect(costFor('ornith-mlx8-o:latest', SAMPLE_USAGE)).toBe(0)
+  })
+
+  it('returns 0 (not null) so token-usage never marks them unknown', () => {
+    expect(costFor('ornith-mlx8:latest', ZERO_USAGE)).toBe(0)
+    expect(missCostFor('ornith-mlx8:latest', 100, 100)).toBe(0)
+  })
+})
+
+describe('ollama cache-mapping: writes bill at input, reads discount to cached', () => {
+  // cache_creation mirrors `input` and cache_read is the cached-input rate, so
+  // a cache miss (write instead of read) carries the honest (input - cached)
+  // premium rather than the $0 the read-rate mapping would have produced.
+  it('glm-5.3 miss premium is (input - cached) per miss token', () => {
+    const p = PRICING['glm-5.3']!
+    const expected = (
+      (p.cache_creation_5m - p.cache_read) * 500
+      + (p.cache_creation_1h - p.cache_read) * 250
+    ) / 1_000_000
+    expect(missCostFor('glm-5.3', 500, 250)).toBe(expected)
+    expect(missCostFor('glm-5.3', 500, 250)).not.toBe(0)
+  })
+})
+
+describe('claude-sonnet-5 intro rates hold (2026-09-01 flip canceled)', () => {
+  it('keeps its introductory numbers, not the canceled standard tier', () => {
+    expect(PRICING['claude-sonnet-5']).toEqual({
+      input: 2, output: 10, cache_creation_5m: 2.50, cache_creation_1h: 4, cache_read: 0.20,
+    })
+  })
+})
