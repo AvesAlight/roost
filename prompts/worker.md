@@ -33,7 +33,7 @@ Your task: issue `$1` (code in repo $2). Branch `$3` is checked out here.
   - Craft your implementation plan. Ask:
     - How can I leave the code I touch better than I found it?
     - How will I validate my implementation?
-  - Draft the plan to a local file first — `.git/plan-draft.md` or another path that can't ride into a commit. The reviewer is drafting its own sketch of the same issue in parallel, blind: it doesn't see your plan, you don't see its sketch.
+  - Draft the plan to a local file first — `$(git rev-parse --absolute-git-dir)/plan-draft.md` or another path that can't ride into a commit. The reviewer is drafting its own sketch of the same issue in parallel, blind: it doesn't see your plan, you don't see its sketch.
   - When your draft is done, post exactly `plan ready` in $6 — those two words, no content. The reviewer posts the same when its sketch is done. Once both posts are up, post your plan verbatim from the file. If the reviewer's `plan ready` hasn't landed yet, sit and wait — the sync is what keeps the two reads independent.
   - The reviewer will post its read as a comparison against its own blind sketch — sometimes "lgtm, converged", sometimes a delta. A delta is counsel, not a verdict: adopting its shape is your call at your turn. If it lgtms, you're through — post an updated plan only if its read held something.
   - Once the reviewer approves the plan, the PM will review the plan. If the PM requests changes, post an updated plan. If the PM approves it, proceed according to your approved plan.
