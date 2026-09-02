@@ -11,13 +11,6 @@
 // print `$?` for that nick and stderr-warn the unknown ID rather than
 // silently defaulting to a rate that could mislead in either direction.
 //
-// Non-Anthropic (ollama-cloud) models are keyed by the exact ollama reference
-// string Claude Code records in `message.model` (the `name:tag` form, e.g.
-// `glm-5.3`). Source: https://ollama.com/pricing, Retrieved: 2026-09-01. Ollama
-// bills cache writes at the input rate and discounts cache reads to the
-// cached-input rate, with no 5m/1h write tier — so cache_creation_5m and
-// cache_creation_1h mirror `input` for these rows.
-//
 // Claude Code often records a dated snapshot id (e.g.
 // `claude-opus-4-8-20260115`) rather than the bare alias. costFor/missCostFor
 // look up the exact id first, then fall back to the id with its trailing
@@ -90,9 +83,9 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   'nemotron-3-super':         { input: 0.015, output: 0.60,  cache_creation_5m: 0.015, cache_creation_1h: 0.015, cache_read: 0.015 },
   'nemotron-3-ultra':         { input: 0.10,  output: 3.00,  cache_creation_5m: 0.10,  cache_creation_1h: 0.10,  cache_read: 0.10 },
   'qwen3.5:397b':             { input: 0.60,  output: 3.60,  cache_creation_5m: 0.60,  cache_creation_1h: 0.60,  cache_read: 0.60 },
-  // Local MLX compute, no cloud rate. Counted as $0 API spend (a real tier,
-  // not a skipped placeholder) so token-usage doesn't warn on it. Both recorded
-  // spellings are keyed — `ornith-mlx8:latest` is the dominant transcript form.
+  // Local MLX compute, no cloud rate. Counted as $0 API spend so token-usage
+  // doesn't warn on it. Both recorded spellings are keyed — `ornith-mlx8:latest`
+  // is the dominant transcript form.
   'ornith-mlx8:latest':       { input: 0,    output: 0,     cache_creation_5m: 0,    cache_creation_1h: 0,    cache_read: 0 },
   'ornith-mlx8-o:latest':     { input: 0,    output: 0,     cache_creation_5m: 0,    cache_creation_1h: 0,    cache_read: 0 },
 }

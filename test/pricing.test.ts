@@ -135,6 +135,22 @@ describe('ollama-cloud models resolve', () => {
     })
     expect(costFor('glm-5.3', SAMPLE_USAGE)).not.toBeNull()
   })
+
+  // The two models the issue names for real spend — a transcription slip here
+  // would ship green and misprice spend, so pin their rates too.
+  it('prices deepseek-v4-flash at its exact table rates', () => {
+    expect(PRICING['deepseek-v4-flash']).toEqual({
+      input: 0.44, output: 1.32, cache_creation_5m: 0.44, cache_creation_1h: 0.44, cache_read: 0.014,
+    })
+    expect(costFor('deepseek-v4-flash', SAMPLE_USAGE)).not.toBeNull()
+  })
+
+  it('prices glm-5.2 at its exact table rates', () => {
+    expect(PRICING['glm-5.2']).toEqual({
+      input: 1.40, output: 4.40, cache_creation_5m: 1.40, cache_creation_1h: 1.40, cache_read: 0.26,
+    })
+    expect(costFor('glm-5.2', SAMPLE_USAGE)).not.toBeNull()
+  })
 })
 
 describe('ornith local-compute tiers are $0 (no $? warning)', () => {
@@ -152,7 +168,7 @@ describe('ornith local-compute tiers are $0 (no $? warning)', () => {
 describe('ollama cache-mapping: writes bill at input, reads discount to cached', () => {
   // cache_creation mirrors `input` and cache_read is the cached-input rate, so
   // a cache miss (write instead of read) carries the honest (input - cached)
-  // premium rather than the $0 the read-rate mapping would have produced.
+  // premium.
   it('glm-5.3 miss premium is (input - cached) per miss token', () => {
     const p = PRICING['glm-5.3']!
     const expected = (
