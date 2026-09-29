@@ -31,8 +31,10 @@ describe('normalizeModelId', () => {
 // assumed.
 describe('costFor resolves dated snapshot ids via fallback', () => {
   const cases: [string, string][] = [
+    ['claude-opus-5-5', 'claude-opus-5-5-20260901'],
     ['claude-opus-4-8', 'claude-opus-4-8-20260115'],
     ['claude-opus-4-5', 'claude-opus-4-5-20251101'],
+    ['claude-sonnet-5-5', 'claude-sonnet-5-5-20260901'],
     ['claude-sonnet-5', 'claude-sonnet-5-20260601'],
     ['claude-sonnet-4-5', 'claude-sonnet-4-5-20250929'],
     ['claude-haiku-4-5', 'claude-haiku-4-5-20251001'],
@@ -183,6 +185,20 @@ describe('ollama cache-mapping: writes bill at input, reads discount to cached',
 describe('claude-sonnet-5 intro rates hold (2026-09-01 flip canceled)', () => {
   it('keeps its introductory numbers, not the canceled standard tier', () => {
     expect(PRICING['claude-sonnet-5']).toEqual({
+      input: 2, output: 10, cache_creation_5m: 2.50, cache_creation_1h: 4, cache_read: 0.20,
+    })
+  })
+})
+
+describe('claude-opus-5-5 and claude-sonnet-5-5 rates', () => {
+  it('prices Opus 5.5 at $4/$20 with cache reads at 0.05x input', () => {
+    expect(PRICING['claude-opus-5-5']).toEqual({
+      input: 4, output: 20, cache_creation_5m: 5, cache_creation_1h: 8, cache_read: 0.20,
+    })
+  })
+
+  it('prices Sonnet 5.5 at $2/$10', () => {
+    expect(PRICING['claude-sonnet-5-5']).toEqual({
       input: 2, output: 10, cache_creation_5m: 2.50, cache_creation_1h: 4, cache_read: 0.20,
     })
   })
