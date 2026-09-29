@@ -3,7 +3,7 @@
 // to estimate cost from token counts.
 //
 // Source: https://platform.claude.com/docs/en/about-claude/pricing
-// Retrieved: 2026-09-01
+// Retrieved: 2026-09-29
 //
 // All rates are USD per 1M tokens. When Anthropic publishes new rates or a
 // model ID we don't yet recognize appears in transcripts, bump this table
@@ -40,6 +40,8 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   // Fable 5.1 — same input/output/cache-write rates as Fable 5, but cache reads
   // at 0.025x input this generation (not the usual 0.1x).
   'claude-fable-5-1':           { input: 10, output: 50, cache_creation_5m: 12.50, cache_creation_1h: 20,  cache_read: 0.25 },
+  // Opus 5.5 — $4 base input, cache reads at 0.05x input this generation (not the usual 0.1x).
+  'claude-opus-5-5':            { input: 4,  output: 20, cache_creation_5m: 5,     cache_creation_1h: 8,   cache_read: 0.20 },
   // Opus 5 and Opus 4.x current generation — $5 base input. Opus 4.1 and earlier use the $15 tier.
   'claude-opus-5':              { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-8':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
@@ -47,6 +49,8 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   'claude-opus-4-6':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-5':            { input: 5,  output: 25, cache_creation_5m: 6.25,  cache_creation_1h: 10,  cache_read: 0.50 },
   'claude-opus-4-1':            { input: 15, output: 75, cache_creation_5m: 18.75, cache_creation_1h: 30,  cache_read: 1.50 },
+  // Sonnet 5.5 — same rates as Sonnet 5.
+  'claude-sonnet-5-5':              { input: 2,  output: 10, cache_creation_5m: 2.50,  cache_creation_1h: 4,   cache_read: 0.20 },
   // Sonnet 5 — separate pricing tier from Sonnet 4.x below. Introductory
   // pricing (this row) was scheduled to convert to standard pricing on
   // 2026-09-01, but Anthropic canceled that flip, so the introductory rates
