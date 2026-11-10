@@ -213,8 +213,6 @@ describe('claude-fable-5-2 and claude-haiku-5-5 rates', () => {
     })
   })
 
-  // Haiku 5.5 is tiered by prompt length; the table holds one rate per model, so
-  // the row carries the over-100k-token tier and over-reports short prompts.
   it('prices Haiku 5.5 at the over-100k-token tier', () => {
     expect(PRICING['claude-haiku-5-5']).toEqual({
       input: 0.50, output: 2.50, cache_creation_5m: 0.625, cache_creation_1h: 1, cache_read: 0.05,
