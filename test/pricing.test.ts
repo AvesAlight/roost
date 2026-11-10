@@ -31,12 +31,14 @@ describe('normalizeModelId', () => {
 // assumed.
 describe('costFor resolves dated snapshot ids via fallback', () => {
   const cases: [string, string][] = [
+    ['claude-fable-5-2', 'claude-fable-5-2-20261101'],
     ['claude-opus-5-5', 'claude-opus-5-5-20260901'],
     ['claude-opus-4-8', 'claude-opus-4-8-20260115'],
     ['claude-opus-4-5', 'claude-opus-4-5-20251101'],
     ['claude-sonnet-5-5', 'claude-sonnet-5-5-20260901'],
     ['claude-sonnet-5', 'claude-sonnet-5-20260601'],
     ['claude-sonnet-4-5', 'claude-sonnet-4-5-20250929'],
+    ['claude-haiku-5-5', 'claude-haiku-5-5-20261015'],
     ['claude-haiku-4-5', 'claude-haiku-4-5-20251001'],
   ]
 
@@ -200,6 +202,20 @@ describe('claude-opus-5-5 and claude-sonnet-5-5 rates', () => {
   it('prices Sonnet 5.5 at $2/$10', () => {
     expect(PRICING['claude-sonnet-5-5']).toEqual({
       input: 2, output: 10, cache_creation_5m: 2.50, cache_creation_1h: 4, cache_read: 0.20,
+    })
+  })
+})
+
+describe('claude-fable-5-2 and claude-haiku-5-5 rates', () => {
+  it('prices Fable 5.2 at $8/$40 with cache reads at 0.025x input', () => {
+    expect(PRICING['claude-fable-5-2']).toEqual({
+      input: 8, output: 40, cache_creation_5m: 10, cache_creation_1h: 16, cache_read: 0.20,
+    })
+  })
+
+  it('prices Haiku 5.5 at the over-100k-token tier', () => {
+    expect(PRICING['claude-haiku-5-5']).toEqual({
+      input: 0.50, output: 2.50, cache_creation_5m: 0.625, cache_creation_1h: 1, cache_read: 0.05,
     })
   })
 })
