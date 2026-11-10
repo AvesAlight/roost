@@ -3,7 +3,7 @@
 // to estimate cost from token counts.
 //
 // Source: https://platform.claude.com/docs/en/about-claude/pricing
-// Retrieved: 2026-09-29
+// Retrieved: 2026-11-10
 //
 // All rates are USD per 1M tokens. When Anthropic publishes new rates or a
 // model ID we don't yet recognize appears in transcripts, bump this table
@@ -35,6 +35,8 @@ export interface ModelPricing {
 }
 
 export const PRICING: Readonly<Record<string, ModelPricing>> = {
+  // Fable 5.2 — $8 base input, cache reads at 0.025x input.
+  'claude-fable-5-2':           { input: 8,  output: 40, cache_creation_5m: 10,    cache_creation_1h: 16,  cache_read: 0.20 },
   // Fable 5 — higher-powered tier above Opus, priced accordingly.
   'claude-fable-5':             { input: 10, output: 50, cache_creation_5m: 12.50, cache_creation_1h: 20,  cache_read: 1.00 },
   // Fable 5.1 — same input/output/cache-write rates as Fable 5, but cache reads
@@ -59,6 +61,11 @@ export const PRICING: Readonly<Record<string, ModelPricing>> = {
   // Sonnet 4.x.
   'claude-sonnet-4-6':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
   'claude-sonnet-4-5':              { input: 3,  output: 15, cache_creation_5m: 3.75,  cache_creation_1h: 6,   cache_read: 0.30 },
+  // Haiku 5.5 — priced by prompt length: $0.10 in / $0.50 out up to 100,000
+  // prompt tokens, $0.50 in / $2.50 out above. The table holds one rate per
+  // model, so this row is the over-100k tier. Short-prompt turns read high
+  // (up to 5x) rather than low.
+  'claude-haiku-5-5':          { input: 0.50, output: 2.50, cache_creation_5m: 0.625, cache_creation_1h: 1, cache_read: 0.05 },
   // Haiku 4.5.
   'claude-haiku-4-5':          { input: 1,  output: 5,  cache_creation_5m: 1.25,  cache_creation_1h: 2,   cache_read: 0.10 },
 
