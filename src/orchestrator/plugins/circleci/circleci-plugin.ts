@@ -392,7 +392,9 @@ export class CircleCiPlugin extends BasePlugin {
     for (const [pid, p] of Object.entries(ws.pipelines)) {
       let workflows: CciWorkflow[]
       try {
-        workflows = (await this.client.listWorkflows(pid)).items
+        // The API lists newest first; report in the order they were created.
+        workflows = [...(await this.client.listWorkflows(pid)).items]
+          .sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
       } catch (e) { fail(e); continue }
       if (!p.announced) {
         p.announced = true

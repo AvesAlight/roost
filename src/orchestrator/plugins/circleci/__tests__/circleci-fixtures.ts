@@ -28,7 +28,7 @@ export function pipeline(n: number, over: Record<string, unknown> = {}) {
 }
 
 export function workflow(id: number, pipelineN: number, name: string, status: string) {
-  return { pipeline_id: uuid(pipelineN), id: uuid(id), name, project_slug: SLUG, status, pipeline_number: pipelineN, created_at: '2026-11-10T10:00:01Z' }
+  return { pipeline_id: uuid(pipelineN), id: uuid(id), name, project_slug: SLUG, status, pipeline_number: pipelineN, created_at: `2026-11-10T10:${String(id % 60).padStart(2, '0')}:00Z` }
 }
 
 export function buildJob(id: number, name: string, status: string, jobNumber: number) {

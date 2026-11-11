@@ -83,6 +83,7 @@ export interface CciWorkflow {
   id: string
   name: string
   status: string
+  created_at?: string
 }
 
 export interface CciJob {

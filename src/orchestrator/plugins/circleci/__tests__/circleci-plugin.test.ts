@@ -11,14 +11,15 @@ const APPLY = 102
 // arboretum main merge: terraform workflow then apply, both in one pipeline.
 function arboretum(h: Harness, terraform: string, apply: string | null) {
   h.fx.pipelines = [pipeline(PIPE)]
+  // Newest first, as the API returns them.
   h.fx.workflows[uuid(PIPE)] = [
-    workflow(TF, PIPE, 'terraform', terraform),
     ...(apply ? [workflow(APPLY, PIPE, 'apply', apply)] : []),
+    workflow(TF, PIPE, 'terraform', terraform),
   ]
 }
 
 function setApply(h: Harness, status: string) {
-  h.fx.workflows[uuid(PIPE)] = [workflow(TF, PIPE, 'terraform', 'success'), workflow(APPLY, PIPE, 'apply', status)]
+  h.fx.workflows[uuid(PIPE)] = [workflow(APPLY, PIPE, 'apply', status), workflow(TF, PIPE, 'terraform', 'success')]
 }
 
 const state = (h: Harness) => h.state as CircleCiPluginState
