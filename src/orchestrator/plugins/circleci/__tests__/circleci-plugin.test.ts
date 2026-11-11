@@ -25,6 +25,7 @@ function setApply(h: Harness, status: string) {
 const state = (h: Harness) => h.state as CircleCiPluginState
 const watchState = (h: Harness) => Object.values(state(h).watches)[0]
 const link = `https://app.circleci.com/pipelines/${SLUG}/${PIPE}`
+const wfLink = (id: number) => `https://app.circleci.com/pipelines/workflows/${uuid(id)}`
 
 describe('first observation', () => {
   it('reports workflows that already finished, once', async () => {
@@ -34,8 +35,8 @@ describe('first observation', () => {
     const first = await h.step()
     expect(first).toEqual([
       `pipeline #83 found for ${SLUG}@${SHA} (workflows: terraform, apply) — ${link}`,
-      `workflow terraform success in ${SLUG}@${SHA} (pipeline #83) — ${link}/workflows/${uuid(TF)}`,
-      `workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1202) — ${link}/workflows/${uuid(APPLY)}`,
+      `workflow terraform success in ${SLUG}@${SHA} (pipeline #83) — ${wfLink(TF)}`,
+      `workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1202) — ${wfLink(APPLY)}`,
     ])
     expect(callsMatching(h.fx, /\/job$/)).toBe(1)
     // Nothing repeats; the second settled poll ends the watch.
@@ -50,7 +51,7 @@ describe('first observation', () => {
     arboretum(h, 'success', 'on_hold')
     h.fx.jobs[uuid(APPLY)] = [approvalJob(301, 'hold-apply', 'on_hold'), buildJob(302, 'apply-root', 'blocked', 1301)]
     const first = await h.step()
-    expect(first).toContain(`waiting on human: hold-apply — workflow apply in ${SLUG}@${SHA} (pipeline #83) — ${link}/workflows/${uuid(APPLY)}`)
+    expect(first).toContain(`waiting on human: hold-apply — workflow apply in ${SLUG}@${SHA} (pipeline #83) — ${wfLink(APPLY)}`)
     expect(first.filter(t => t.startsWith('waiting on human'))).toHaveLength(1)
     for (let i = 0; i < 4; i++) expect(await h.step()).toEqual([])
     expect(callsMatching(h.fx, /\/job$/)).toBe(1)
@@ -77,7 +78,7 @@ describe('hold, approval, then failure', () => {
     h.fx.jobs[uuid(APPLY)] = [approvalJob(301, 'hold-apply', 'success'), buildJob(303, 'apply-root', 'failed', 1310)]
     const failed = await h.step()
     expect(failed).toEqual([
-      `workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1310) — ${link}/workflows/${uuid(APPLY)} — ci-o-mat log ${SLUG} 1310 --failed`,
+      `workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1310) — ${wfLink(APPLY)} — ci-o-mat log ${SLUG} 1310 --failed`,
     ])
   })
 
@@ -93,6 +94,21 @@ describe('hold, approval, then failure', () => {
     const again = await h.step()
     expect(again).toHaveLength(1)
     expect(again[0]).toStartWith('waiting on human: hold-apply')
+  })
+
+  it('does not re-announce an approval job that is still pending after the workflow flips back to on_hold', async () => {
+    const h = makeHarness()
+    arboretum(h, 'success', 'on_hold')
+    h.fx.jobs[uuid(APPLY)] = [approvalJob(301, 'hold-a', 'on_hold')]
+    expect((await h.step()).filter(t => t.startsWith('waiting on human: hold-a'))).toHaveLength(1)
+    setApply(h, 'running')
+    await h.step()
+    // Parallel branches: hold-a is still pending when hold-b appears.
+    setApply(h, 'on_hold')
+    h.fx.jobs[uuid(APPLY)] = [approvalJob(301, 'hold-a', 'on_hold'), approvalJob(304, 'hold-b', 'on_hold')]
+    const again = (await h.step()).filter(t => t.startsWith('waiting on human'))
+    expect(again).toHaveLength(1)
+    expect(again[0]).toStartWith('waiting on human: hold-b')
   })
 
   it('omits the failure hint unless configured, and when no failed job has a number', async () => {
@@ -365,6 +381,35 @@ describe('errors and limits', () => {
 })
 
 describe('state and config handling', () => {
+  it('keeps a watch\'s channels desired on the tick it ends, and drops them the tick after', async () => {
+    const h = makeHarness({ watched: [{ slug: SLUG, sha: SHA, started_at: START, channels: ['#issue-1'] }] })
+    arboretum(h, 'success', 'success')
+    const first = await h.plugin.runTick(h.config, null)
+    expect(first.channels).toEqual(['#issue-1'])
+    h.state = first.state as CircleCiPluginState
+    h.clock.t += STEP_MS
+    const ending = await h.plugin.runTick(h.config, h.state)
+    expect(ending.messages[0].text).toStartWith('watch ended')
+    expect(ending.messages[0].channels).toEqual(['#issue-1'])
+    expect(ending.channels).toEqual(['#issue-1'])
+    expect(h.plugin.desiredChannels(h.config)).toEqual(['#issue-1'])
+    h.state = ending.state as CircleCiPluginState
+    h.clock.t += STEP_MS
+    const after = await h.plugin.runTick(h.config, h.state)
+    expect(after.channels).toEqual([])
+    expect(h.plugin.desiredChannels(h.config)).toEqual([])
+  })
+
+  it('also keeps channels desired on the tick a `no pipeline` ending posts', async () => {
+    const h = makeHarness({ watched: [{ slug: SLUG, sha: SHA, started_at: START, channels: ['#issue-1'] }] })
+    const none = await h.plugin.runTick(h.config, null)
+    h.state = none.state as CircleCiPluginState
+    h.clock.t += DISCOVERY_WINDOW_MS
+    const ending = await h.plugin.runTick(h.config, h.state)
+    expect(ending.messages[0].text).toStartWith('no pipeline')
+    expect(ending.channels).toEqual(['#issue-1'])
+  })
+
   it('routes to entry channels, else the project channel', async () => {
     const h = makeHarness({ watched: [{ slug: SLUG, sha: SHA, started_at: START, channels: ['#a', '#b'] }] })
     arboretum(h, 'running', null)

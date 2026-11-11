@@ -115,8 +115,9 @@ function pipelineLink(slug: string, number: number): string {
   return `${CIRCLECI_APP}/pipelines/${slug}/${number}`
 }
 
-function workflowLink(slug: string, number: number, workflowId: string): string {
-  return `${pipelineLink(slug, number)}/workflows/${workflowId}`
+// The slug-free form: the app redirects it to the workflow page.
+function workflowLink(workflowId: string): string {
+  return `${CIRCLECI_APP}/pipelines/workflows/${workflowId}`
 }
 
 function revisionMatches(p: CciPipeline, sha: string): boolean {
@@ -171,6 +172,8 @@ export class CircleCiPlugin extends BasePlugin {
   // Finished watches as of the last tick: key -> the entry `started_at` they ran
   // under. handleCommand reads this because it has no access to state.
   private doneWatches = new Map<string, number | null>()
+  // Keys of watches that finished on the latest tick; see desiredChannels.
+  private endedThisTick = new Set<string>()
   // No calls until this time, after a 429.
   private retryUntil = 0
   private tokenNoted = false
@@ -270,9 +273,14 @@ export class CircleCiPlugin extends BasePlugin {
     ].join('\n')
   }
 
+  // A watch that ended this tick still counts: the dispatcher reconciles channel
+  // membership before it posts the tick's messages, and parting the channel
+  // first would drop the ending line. It drops out on the next tick.
   desiredChannels(config: OrchestratorConfig): string[] {
     const chans = new Set<string>()
-    for (const e of this.liveWatched(config)) {
+    const entries = this.pluginConfig<CircleCiPluginConfig>(config)?.watched ?? []
+    for (const e of entries) {
+      if (this.isDone(e) && !this.endedThisTick.has(entryKey(e))) continue
       for (const c of e.channels ?? []) chans.add(c)
     }
     return [...chans]
@@ -289,6 +297,7 @@ export class CircleCiPlugin extends BasePlugin {
     const messages: PluginMessage[] = []
     const now = this.now()
 
+    this.endedThisTick = new Set()
     if (groups.size === 0) {
       this.doneWatches = new Map()
       return { state, messages, channels: [] }
@@ -350,7 +359,9 @@ export class CircleCiPlugin extends BasePlugin {
 
     this.doneWatches = new Map()
     for (const [key, ws] of Object.entries(state.watches)) {
-      if (ws.done) this.doneWatches.set(key, ws.entry_started_at)
+      if (!ws.done) continue
+      this.doneWatches.set(key, ws.entry_started_at)
+      if (ws.done.at === now) this.endedThisTick.add(key)
     }
     return { state, messages, channels: this.desiredChannels(config) }
   }
@@ -467,7 +478,7 @@ export class CircleCiPlugin extends BasePlugin {
     const prev = p.workflows[wf.id]
     const status = wf.status
     const needJobs = JOB_BEARING.has(status) && prev?.handled_for !== status
-    const link = workflowLink(g.slug, p.number, wf.id)
+    const link = workflowLink(wf.id)
     const where = `in ${g.slug}@${g.sha} (pipeline #${p.number})`
 
     let jobs: CciJob[] = []
