@@ -74,6 +74,22 @@ describe('buildPlugins', () => {
     expect(names).toEqual(['github-commits'])
   })
 
+  it('instantiates circleci without a token, since the token is read lazily', () => {
+    const saved = process.env.CIRCLECI_TOKEN
+    delete process.env.CIRCLECI_TOKEN
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj',
+        repo: 'org/repo',
+        plugins: { circleci: { watched: [] } },
+      }
+      const names = buildPlugins(cfg, '#proj-leads', NOOP_LOG).map(p => p.name)
+      expect(names).toEqual(['circleci'])
+    } finally {
+      if (saved !== undefined) process.env.CIRCLECI_TOKEN = saved
+    }
+  })
+
   it('does not instantiate github-commits when absent from config.plugins (default-off)', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
