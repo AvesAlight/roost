@@ -234,7 +234,11 @@ export class CircleCiClient {
           redirect: 'error',
           signal: controller.signal,
         })
-        if (resp.status === 401 || resp.status === 403) throw new CircleCiAuthError(resp.status)
+        if (resp.status === 401 || resp.status === 403) {
+          // Re-resolve next time, so a rotated token is picked up without a restart.
+          this.cachedToken = null
+          throw new CircleCiAuthError(resp.status)
+        }
         if (resp.status === 404) throw new CircleCiNotFoundError(bare)
         if (resp.status === 429) throw new CircleCiRateLimitError(parseRetryAfter(resp.headers.get('retry-after'), now()))
         if (resp.status >= 500) {

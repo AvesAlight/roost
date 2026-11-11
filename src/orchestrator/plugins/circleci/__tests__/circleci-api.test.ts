@@ -113,6 +113,17 @@ describe('CircleCiClient', () => {
     }
   })
 
+  it('re-resolves the token after a 401, so a rotated token is picked up', async () => {
+    const { fetchImpl, calls } = scripted([json({}, 401), json({ items: [] })])
+    let token = 'old-token'
+    const { c } = client(fetchImpl, { getToken: async () => token })
+    await expect(c.listWorkflows(PIPELINE_ID)).rejects.toBeInstanceOf(CircleCiAuthError)
+    token = 'rotated-token'
+    await c.listWorkflows(PIPELINE_ID)
+    const sent = calls.map(call => (call.init.headers as Record<string, string>)['Circle-Token'])
+    expect(sent).toEqual(['old-token', 'rotated-token'])
+  })
+
   it('does not retry a blocked redirect', async () => {
     const { fetchImpl, calls } = scripted([new TypeError('fetch() redirect mode is set to error')])
     const { c } = client(fetchImpl)
