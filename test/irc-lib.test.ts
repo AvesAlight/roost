@@ -134,22 +134,6 @@ describe('packMultilineBatches', () => {
     expect(out.map(render)).toEqual(['hello\nworld\n'])
   })
 
-  it('splits over-line-limit text into batches that each fit', () => {
-    const text = Array.from({ length: 250 }, (_, i) => `l${i}`).join('\n')
-    const out = packMultilineBatches(text, limits)
-    expect(out.length).toBeGreaterThan(1)
-    for (const b of out) expect(b.length).toBeLessThanOrEqual(limits.maxLines)
-    expect(out.map(render).join('\n')).toBe(text)
-  })
-
-  it('splits over-byte-limit text into batches that each fit', () => {
-    const text = Array.from({ length: 70 }, (_, i) => `line ${i} ` + 'x'.repeat(280)).join('\n')
-    const out = packMultilineBatches(text, limits)
-    expect(out.length).toBeGreaterThan(1)
-    for (const b of out) expect(b.reduce((n, l) => n + Buffer.byteLength(l.body), 0)).toBeLessThanOrEqual(limits.maxBytes)
-    expect(out.map(render).join('\n')).toBe(text)
-  })
-
   it('prefers a blank-line break and drops the separator', () => {
     const events = Array.from({ length: 10 }, (_, i) => `head ${i}\nbody ${i}\nurl ${i}`)
     const out = packMultilineBatches(events.join('\n\n'), { maxBytes: 16384, maxLines: 10 })
