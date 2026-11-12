@@ -480,6 +480,11 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('message', (e: MessageEvent) => this.handleMessage(e))
     this.irc.on('batch end draft/multiline', (e: BatchEndEvent) => this.handleMultilineBatch(e))
     this.irc.on(`batch end ${BATCH_TYPE_CHATHISTORY}`, (e: BatchEndEvent) => this.handleChathistoryBatch(e))
+    // A rejected batch (e.g. FAIL BATCH MULTILINE_MAX_BYTES) is dropped whole by the
+    // server; without this the loss is invisible.
+    this.irc.on('unknown command', (cmd: { command?: string; params?: string[] }) => {
+      if (cmd?.command === 'FAIL') this.log(`server FAIL ${(cmd.params ?? []).join(' ')}`)
+    })
     this.irc.on('socket close', () => this.handleSocketClose())
     this.irc.on('socket error', (err: Error) => this.handleSocketError(err))
     // Forensic lifecycle events — surfaced for permbot's on-disk log. See SystemKind
