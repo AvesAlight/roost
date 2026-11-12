@@ -73,8 +73,9 @@ export function groupMessagesByChannel(messages: PluginMessage[]): Map<string, s
 // Plugin-agnostic. Channels are pre-resolved by the plugin's resolveChannels —
 // trust the input. say() has no delivery ack; a mid-tick disconnect silently
 // drops in-flight messages. All messages for a channel in one tick are joined
-// (blank-line separated) into a single IRC post so a receiving agent sees the
-// full tick's worth of context before replying.
+// (blank-line separated) into one IRC post so a receiving agent sees the
+// full tick's worth of context before replying. say() splits a post that
+// exceeds the server's multiline limits, which a first-tick backlog dump can.
 export async function dispatchMessages(
   messages: PluginMessage[],
   client: RoostIrcClient

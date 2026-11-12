@@ -45,7 +45,7 @@ function makeErgoConfig(port: number, datadir: string): string {
   name: roost-test
 server:
   name: roost-test.local
-  max-sendq: 16k
+  max-sendq: 96k
   listeners:
     "127.0.0.1:${port}":
   sts:
