@@ -2,7 +2,7 @@ import IRC from 'irc-framework'
 import type { IrcFrameworkClient, IrcRawMessage } from 'irc-framework'
 import { MULTILINE_LINE_BYTES } from './constants.js'
 import {
-  splitLineForMultiline,
+  packMultilineBatches,
   newBatchId,
   reassembleMultilineBatch,
 } from './irc-lib.js'
@@ -165,6 +165,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // See installNestedMultilineBatchIntake.
   private readonly nestedMultilineBatches = new Map<string, NestedMultilineBatch>()
   private multilineMaxLines = 100
+  // Spec requires servers to advertise max-bytes; 4096 is the floor ergo ships with.
+  private multilineMaxBytes = 4096
   private readonly history = new Map<string, IrcMessage[]>()
   private readonly unread = new Map<string, UnreadInfo>()
   private readonly seenFingerprints = new Map<string, Set<string>>()
@@ -241,29 +243,27 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       return { chunks: 1, mode: 'single' }
     }
 
-    const id = newBatchId()
-    const logicalLines = text.split('\n')
-    const wireLines: Array<{ body: string; concat: boolean }> = []
-    for (const line of logicalLines) {
-      const chunks = splitLineForMultiline(line)
-      chunks.forEach((chunk, idx) => {
-        wireLines.push({ body: chunk, concat: idx > 0 })
-      })
+    const batches = packMultilineBatches(text, { maxBytes: this.multilineMaxBytes, maxLines: this.multilineMaxLines })
+    let wireCount = 0
+    for (const lines of batches) {
+      wireCount += lines.length
+      const only = lines[0]
+      if (lines.length === 1 && only) {
+        // A one-line batch is just a message.
+        this.irc.say(target, only.body)
+        continue
+      }
+      const id = newBatchId()
+      this.irc.raw('BATCH', `+${id}`, 'draft/multiline', target)
+      for (const { body, concat } of lines) {
+        const tagStr = concat ? `batch=${id};draft/multiline-concat` : `batch=${id}`
+        this.irc.connection.write(`@${tagStr} PRIVMSG ${target} :${body}`)
+      }
+      this.irc.raw('BATCH', `-${id}`)
+      this.log(`multiline outbound to ${target} as batch ${id} (${lines.length} lines, ${lines.reduce((n, l) => n + Buffer.byteLength(l.body, 'utf8'), 0)} bytes)`)
     }
-
-    if (wireLines.length > this.multilineMaxLines) {
-      this.log(`multiline target=${target} would emit ${wireLines.length} lines, exceeds server max ${this.multilineMaxLines}; sending anyway`)
-    }
-
-    this.irc.raw('BATCH', `+${id}`, 'draft/multiline', target)
-    for (const { body, concat } of wireLines) {
-      const tagStr = concat ? `batch=${id};draft/multiline-concat` : `batch=${id}`
-      this.irc.connection.write(`@${tagStr} PRIVMSG ${target} :${body}`)
-    }
-    this.irc.raw('BATCH', `-${id}`)
-    this.log(`multiline outbound to ${target} as batch ${id} (${wireLines.length} lines, ${text.length} bytes)`)
     this.recordOwnMessage(target, text)
-    return { chunks: wireLines.length, mode: 'multiline' }
+    return { chunks: wireCount, mode: 'multiline' }
   }
 
   // Our own messages never come back to us: handleMessage drops self and we don't
@@ -480,6 +480,11 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('message', (e: MessageEvent) => this.handleMessage(e))
     this.irc.on('batch end draft/multiline', (e: BatchEndEvent) => this.handleMultilineBatch(e))
     this.irc.on(`batch end ${BATCH_TYPE_CHATHISTORY}`, (e: BatchEndEvent) => this.handleChathistoryBatch(e))
+    // A rejected batch (e.g. FAIL BATCH MULTILINE_MAX_BYTES) is dropped whole by the
+    // server; without this the loss is invisible.
+    this.irc.on('unknown command', (cmd: { command?: string; params?: string[] }) => {
+      if (cmd?.command === 'FAIL') this.log(`server FAIL ${(cmd.params ?? []).join(' ')}`)
+    })
     this.irc.on('socket close', () => this.handleSocketClose())
     this.irc.on('socket error', (err: Error) => this.handleSocketError(err))
     // Forensic lifecycle events — surfaced for permbot's on-disk log. See SystemKind
@@ -652,8 +657,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
           continue
         }
         if (k === 'max-lines') this.multilineMaxLines = n
+        if (k === 'max-bytes') this.multilineMaxBytes = n
       }
-      this.log(`draft/multiline enabled (max-lines=${this.multilineMaxLines})`)
+      this.log(`draft/multiline enabled (max-lines=${this.multilineMaxLines}, max-bytes=${this.multilineMaxBytes})`)
       return true
     } else {
       this.log(`draft/multiline NOT enabled (server caps: ${enabled.join(',') || '(none)'})`)
