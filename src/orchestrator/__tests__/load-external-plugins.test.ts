@@ -37,6 +37,21 @@ registerPlugin('${pluginName}', (dc) => new P(dc))
   await writeFile(absPath, src, 'utf8')
 }
 
+// Imports the documented `roost/plugin` specifier, like a real project plugin.
+async function writeBarePluginModule(absPath: string, pluginName: string): Promise<void> {
+  await mkdir(join(absPath, '..'), { recursive: true })
+  const src = `
+import { registerPlugin, BasePlugin } from 'roost/plugin'
+class P extends BasePlugin {
+  name = '${pluginName}'
+  desiredChannels() { return [] }
+  async runTick() { return { state: null, messages: [], channels: [] } }
+}
+registerPlugin('${pluginName}', (dc) => new P(dc))
+`
+  await writeFile(absPath, src, 'utf8')
+}
+
 describe('loadExternalPlugins', () => {
   it('is a no-op when plugin_paths is undefined', async () => {
     await loadExternalPlugins(workDir, undefined)
@@ -92,5 +107,52 @@ describe('loadExternalPlugins', () => {
     } finally {
       unregisterPlugin(name)
     }
+  })
+
+  it('resolves `roost/plugin` to the dispatcher\'s own registry with no node_modules', async () => {
+    const name = uniquePluginName()
+    const file = join(workDir, 'bare-plugin.ts')
+    await writeBarePluginModule(file, name)
+    try {
+      await loadExternalPlugins(workDir, [file])
+      expect(getPluginFactory(name)).toBeTypeOf('function')
+    } finally {
+      unregisterPlugin(name)
+    }
+  })
+
+  it('prefers the dispatcher over a project-local copy of roost', async () => {
+    const name = uniquePluginName()
+    // A separate roost copy whose registerPlugin would land in the wrong registry.
+    const copyDir = join(workDir, 'node_modules', 'roost')
+    await mkdir(join(copyDir, 'src'), { recursive: true })
+    await writeFile(join(copyDir, 'package.json'), JSON.stringify({
+      name: 'roost',
+      exports: { './plugin': './src/plugin-api.ts' },
+    }), 'utf8')
+    await writeFile(
+      join(copyDir, 'src', 'plugin-api.ts'),
+      'export const registerPlugin = () => { throw new Error("project copy used") }\nexport class BasePlugin {}\n',
+      'utf8',
+    )
+    const file = join(workDir, 'copy-plugin.ts')
+    await writeBarePluginModule(file, name)
+    try {
+      await loadExternalPlugins(workDir, [file])
+      expect(getPluginFactory(name)).toBeTypeOf('function')
+    } finally {
+      unregisterPlugin(name)
+    }
+  })
+
+  it('fails loudly when a module registers nothing', async () => {
+    const file = join(workDir, 'empty-plugin.ts')
+    await writeFile(file, 'export {}\n', 'utf8')
+    const err = await loadExternalPlugins(workDir, [file]).then(() => null, (e: unknown) => e as Error)
+    expect(err).not.toBeNull()
+    expect(err!.message).toContain(file)
+    expect(err!.message).toMatch(/registered no plugin/)
+    expect(err!.message).toContain('roost/plugin')
+    expect(err!.message).toContain('roost root')
   })
 })

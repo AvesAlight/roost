@@ -189,16 +189,20 @@ Mock IO at the boundary your plugin owns. Assert on `state` and `messages`.
 
 ## Installing `roost/plugin`
 
-Roost ships via Homebrew tap, not npm. The import path `'roost/plugin'` doesn't resolve out of the box. Two ways to fix it:
+You don't need roost installed at runtime. When the dispatcher loads a `plugin_paths` module, it resolves `roost/plugin` to its own `plugin-api.ts`, so your plugin registers into the registry the dispatcher reads. That holds even if your project has its own copy of roost in `node_modules`.
+
+Install roost as a dev dependency if you want types and typecheck. Roost ships via Homebrew tap, not npm, so the import path doesn't resolve out of the box for `tsc`. Two ways:
 
 - **`bun link`.** Clone roost, `bun link` in its root, `bun link roost` in your project.
 - **Git dependency.** Pin roost in your `package.json`:
 
   ```json
-  { "dependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
+  { "devDependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
   ```
 
 Both expose only `roost/plugin`. Deep imports may change.
+
+If a `plugin_paths` module registers nothing, the dispatcher fails at boot and names the file. Check that the file calls `registerPlugin` from `roost/plugin`.
 
 ## Versioning
 
