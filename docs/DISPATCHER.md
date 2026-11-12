@@ -209,13 +209,16 @@ Notes:
 - pipeline found, with its workflows
 - workflow finished (`success`, `failed`, `error`, `canceled`), naming the failed jobs on a failure
 - `waiting on human: <job>` when an approval job is on hold, once per hold
+- `settled with a failed workflow; watching for a re-run until <time>`, once, when a failure leaves the watch open
 - watch ended, with every workflow's final status
 
 A watch that starts after a workflow already finished, or while one is on hold, reports that state on its first poll. It does not seed silently.
 
 A watch ends by itself when every workflow on every matched pipeline is terminal and none is on hold for two polls in a row, when no pipeline appears within 15 minutes, or after 24 hours. A workflow on hold keeps the watch open. Pipeline discovery runs for the first 15 minutes, so a later pipeline on the same sha is picked up. Ended watches are removed from `config.local.json` on the next DM to this plugin, and are hidden from `watch list` straight away.
 
-Each poll makes one pipeline-list call while discovering, one workflow call per tracked pipeline, and a job call only when a workflow enters `on_hold`, `failed` or `error`. That is about 40 calls an hour per watch at a 90s `irc.interval_seconds`, and scales with the interval. A 429 pauses the plugin for the `Retry-After` time.
+A watch that settles with a failed (or `error`) workflow does not end. A re-run adds a new workflow with the same name to the same pipeline, so the watch keeps listing that pipeline's workflows for 2 hours and reports the re-run like any other workflow. Only the newest workflow per name counts, so a green re-run ends the watch and the old failure is not listed. A re-run that fails again opens a fresh 2 hours. With no re-run the watch ends with `no re-run in 2h`. A cancelled workflow does not wait. `unwatch` stops a waiting watch.
+
+Each poll makes one pipeline-list call while discovering, one workflow call per tracked pipeline (a watch waiting for a re-run keeps making it), and a job call only when a workflow enters `on_hold`, `failed` or `error`. That is about 40 calls an hour per watch at a 90s `irc.interval_seconds`, and scales with the interval. A 429 pauses the plugin for the `Retry-After` time.
 
 Known gap: a workflow that goes on hold, is approved, and holds again within one poll interval looks like a single hold.
 
