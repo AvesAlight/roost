@@ -3,9 +3,11 @@ import { writeFile, readFile } from 'node:fs/promises'
 
 // Atomic exclusive-create primitives for two lock flavors used in this project:
 //
-// Sentinel locks (mkdir-based, shell-only) — the lock has no content; existence
-// == "held". Used when you just need mutual exclusion with no data to store.
-// See bin/_lock-lib.sh for the shell API; it points here for the full rationale.
+// Sentinel locks (O_EXCL-create based, shell-only) — the lock has no content;
+// existence == "held". Used when you just need mutual exclusion with no data to
+// store. The shell claim is a builtin exclusive create (`set -C; : > file`), not
+// `mkdir`: uutils coreutils (Ubuntu 25.10+) lets two concurrent mkdir calls on
+// one path both succeed. See bin/_lock-lib.sh for the shell API.
 //
 // Data-bearing locks (O_EXCL writeFile, this module) — the lock file carries
 // content (a PID record, a session ID). O_EXCL / `wx` makes the create atomic:
