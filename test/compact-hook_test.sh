@@ -211,7 +211,7 @@ wait_until 10 inject_done
 if [ "$exit_code" -eq 0 ] \
     && echo "$out" | grep -q '"decision":"block"' \
     && grep -q "load-buffer" "$TRACE" 2>/dev/null \
-    && [ -d "$TDIR/compact-inject.lock.d" ]; then
+    && [ -e "$TDIR/compact-inject.lock.d" ]; then
   ok "debounce: stale lock → inject fires, lock re-claimed"
 else
   fail "debounce: stale lock → inject fires, lock re-claimed" "exit=$exit_code out=$out trace=$(cat "$TRACE" 2>/dev/null)"

@@ -85,14 +85,21 @@ if [ "$trigger" = "auto" ] && [ -n "$nick" ]; then
     # Debounce: if a prior inject is still in flight, block without re-injecting.
     if [ -n "${ROOST_DATA_DIR:-}" ]; then
       lock_dir="${ROOST_DATA_DIR}/compact-inject.lock.d"
-      if [ -d "$lock_dir" ]; then
+      if [ -e "$lock_dir" ]; then
         if dir_lock_fresh "$lock_dir" "$LOCK_TTL_MIN"; then
           log "auto-trigger: inject in flight (lock fresh), debouncing"
           printf '%s\n' '{"decision":"block","reason":"roost: compact inject in flight, debouncing re-inject"}'
           exit 0
         fi
         # Stale lock — prior session likely died before PostCompact fired.
-        release_dir_lock "$lock_dir"
+        # Concurrent invocations all see the same stale lock, and a plain rm
+        # here would delete the fresh lock one of them just re-claimed, so
+        # reclaim through the lib's token-guarded helper.
+        if ! reclaim_stale_dir_lock "$lock_dir" "$LOCK_TTL_MIN"; then
+          log "auto-trigger: lock reclaimed by concurrent invocation, debouncing"
+          printf '%s\n' '{"decision":"block","reason":"roost: compact inject in flight, debouncing re-inject"}'
+          exit 0
+        fi
       fi
       if ! acquire_dir_lock "$lock_dir"; then
         # Race: a concurrent invocation just claimed the lock.
