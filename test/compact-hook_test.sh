@@ -49,6 +49,35 @@ teardown_tmpdir() {
   trap - EXIT
 }
 
+# Poll until a command succeeds. Fixed sleeps flake on loaded runners; a poll
+# returns as soon as the condition holds and only burns its cap on a real
+# failure. Usage: wait_until <timeout_s> <cmd...>
+wait_until() {
+  local n=$(( $1 * 50 ))
+  shift
+  while [ "$n" -gt 0 ]; do
+    "$@" && return 0
+    sleep 0.02
+    n=$((n-1))
+  done
+  return 1
+}
+
+# The inject chain ends with delete-buffer, so its line means the whole
+# load-buffer/paste-buffer/send-keys chain ran.
+inject_done() { grep -qs "delete-buffer" "$TRACE"; }
+
+# Start a perl sentinel that traps <sig> by writing <marker> and exiting. It
+# creates $TDIR/ready only once the trap is installed, so a signal sent after
+# wait_until can't hit perl's default action. Sets victim_pid.
+start_sentinel() {
+  local sig="$1" marker="$2"
+  perl -e '$SIG{'"$sig"'} = sub { open my $fh, ">", "'"$TDIR"'/'"$marker"'" or die $!; close $fh; exit 0 }; open my $r, ">", "'"$TDIR"'/ready" or die $!; close $r; sleep 5' &
+  victim_pid=$!
+  wait_until 10 test -f "$TDIR/ready"
+  echo "$victim_pid" > "$TDIR/mcp.pid"
+}
+
 # -- Test 1: trigger=auto → block + injected ----------------------------------
 
 setup_tmpdir
@@ -63,10 +92,10 @@ else
   fail "auto: stdout carries decision:block" "exit=$exit_code out=$out err=$(cat "$TDIR/err" 2>/dev/null)"
 fi
 
-# Backgrounded subshell sleeps 0.15s before invoking tmux. Wait a touch
-# longer than that, then assert tmux was called with load-buffer + paste +
+# Backgrounded subshell sleeps 0.15s before invoking tmux. Wait for the inject
+# chain to finish, then assert tmux was called with load-buffer + paste +
 # /compact + the baked-in directive's leading "retain:" marker.
-sleep 0.5
+wait_until 10 inject_done
 if [ -s "$TRACE" ] \
     && grep -q "has-session" "$TRACE" \
     && grep -q "load-buffer" "$TRACE" \
@@ -101,13 +130,10 @@ teardown_tmpdir
 # trap). The sentinel writes a marker on USR1 and exits.
 
 setup_tmpdir
-perl -e '$SIG{USR1} = sub { open my $fh, ">", "'"$TDIR"'/sigusr1-received" or die $!; close $fh; exit 0 }; sleep 5' &
-victim_pid=$!
-sleep 0.1
-echo "$victim_pid" > "$TDIR/mcp.pid"
+start_sentinel USR1 sigusr1-received
 input='{"trigger":"manual"}'
 printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>"$TDIR/err"
-sleep 0.2
+wait_until 10 test -f "$TDIR/sigusr1-received"
 
 if [ -f "$TDIR/sigusr1-received" ]; then
   ok "pass-through: SIGUSR1 delivered to mcp.pid"
@@ -141,7 +167,7 @@ printf 'custom-session-name' > "$TDIR/session-name.txt"
 input='{"trigger":"auto","custom_instructions":null}'
 out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
-sleep 0.5
+wait_until 10 inject_done
 
 if [ "$exit_code" -eq 0 ] \
     && echo "$out" | grep -q '"decision":"block"' \
@@ -180,7 +206,7 @@ touch -t 197001010000.00 "$TDIR/compact-inject.lock.d"
 input='{"trigger":"auto","custom_instructions":null}'
 out="$(printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" 2>"$TDIR/err")"
 exit_code=$?
-sleep 0.5
+wait_until 10 inject_done
 
 if [ "$exit_code" -eq 0 ] \
     && echo "$out" | grep -q '"decision":"block"' \
@@ -198,10 +224,7 @@ POST_HOOK="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )/bin/roost-post-c
 
 setup_tmpdir
 mkdir "$TDIR/compact-inject.lock.d"
-perl -e '$SIG{USR2} = sub { exit 0 }; sleep 5' &
-victim_pid=$!
-sleep 0.1
-echo "$victim_pid" > "$TDIR/mcp.pid"
+start_sentinel USR2 sigusr2-received
 env -i ROOST_DATA_DIR="$TDIR" "$POST_HOOK" >/dev/null 2>/dev/null
 kill "$victim_pid" 2>/dev/null || true
 wait 2>/dev/null || true
@@ -229,23 +252,104 @@ fi
 teardown_tmpdir
 
 # -- Test 10: concurrent invocations — only one inject fires ------------------
-# mkdir is POSIX-atomic: two simultaneous hook invocations can't both claim
-# the lock. Exactly one should inject; the other should debounce.
+# Four hook invocations that start at the same instant must not both claim the
+# lock: exactly one injects, the rest debounce. A single race is rarely
+# lost, so run many rounds at once (each in its own dir) and count the rounds
+# where the inject count != 1.
+#
+# race_rounds <rounds> <stale:0|1>  — sets RACE_BAD (rounds with count != 1) and
+# RACE_COUNTS (the counts seen, space-separated).
+race_rounds() {
+  local rounds="$1" stale="$2" i rd pids k c
+  local in='{"trigger":"auto","custom_instructions":null}'
+  # Rounds run one after another so only a handful of processes spin at a
+  # time. The inject chains finish in the background; counted after the loop.
+  for i in $(seq 1 "$rounds"); do
+    rd="$TDIR/r$i"
+    make_mock_tmux "$rd/mock" "$rd/trace"
+    if [ "$stale" = 1 ]; then
+      mkdir "$rd/compact-inject.lock.d"
+      touch -t 197001010000.00 "$rd/compact-inject.lock.d"
+    fi
+    pids=""
+    for k in 1 2 3 4; do
+      ( until [ -e "$rd/go" ]; do :; done
+        printf '%s' "$in" | env -i PATH="$rd/mock:$PATH" ROOST_DATA_DIR="$rd" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>/dev/null ) &
+      pids="$pids $!"
+    done
+    touch "$rd/go"
+    # shellcheck disable=SC2086
+    wait $pids
+  done
+  # Let every round's inject chain finish, then a settle for a would-be second.
+  for i in $(seq 1 "$rounds"); do
+    TRACE="$TDIR/r$i/trace" wait_until 10 inject_done
+  done
+  sleep 0.5
+  RACE_BAD=0
+  RACE_COUNTS=""
+  for i in $(seq 1 "$rounds"); do
+    c="$(grep -c "load-buffer" "$TDIR/r$i/trace" 2>/dev/null)"
+    c="${c:-0}"
+    RACE_COUNTS="$RACE_COUNTS $c"
+    [ "$c" -eq 1 ] || RACE_BAD=$((RACE_BAD+1))
+  done
+}
 
 setup_tmpdir
-input='{"trigger":"auto","custom_instructions":null}'
-printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>/dev/null &
-pid1=$!
-printf '%s' "$input" | env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$HOOK" >/dev/null 2>/dev/null &
-pid2=$!
-wait $pid1 $pid2
-sleep 0.5
-
-inject_count=$(grep -c "load-buffer" "$TRACE" 2>/dev/null || echo 0)
-if [ "$inject_count" -eq 1 ]; then
-  ok "concurrent: exactly one inject (mkdir atomicity)"
+race_rounds 10 0
+if [ "$RACE_BAD" -eq 0 ]; then
+  ok "concurrent: exactly one inject per round (10 rounds x 4 hooks)"
 else
-  fail "concurrent: exactly one inject (mkdir atomicity)" "inject_count=$inject_count trace=$(cat "$TRACE" 2>/dev/null)"
+  fail "concurrent: exactly one inject per round (10 rounds x 4 hooks)" "bad_rounds=$RACE_BAD counts=$RACE_COUNTS"
+fi
+teardown_tmpdir
+
+# -- Test 10b: concurrent invocations on a stale lock — only one inject --------
+# Same contention, but the lock is already stale, so both invocations take the
+# reclaim path. Reclaiming must not let both win.
+
+setup_tmpdir
+race_rounds 40 1
+if [ "$RACE_BAD" -eq 0 ]; then
+  ok "concurrent: stale lock, exactly one inject per round (40 rounds x 4 hooks)"
+else
+  fail "concurrent: stale lock, exactly one inject per round (40 rounds x 4 hooks)" "bad_rounds=$RACE_BAD counts=$RACE_COUNTS"
+fi
+teardown_tmpdir
+
+# -- Test 10c: lib-level N-way acquire — exactly one winner -------------------
+# acquire_dir_lock is the primitive under the hook's debounce and
+# start-dispatcher's single-start guard. Race 8 claimants per round at one path;
+# exactly one must win. This isolates the primitive from the hook's timing.
+
+setup_tmpdir
+LIB="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )/bin/_lock-lib.sh"
+rounds=100
+for i in $(seq 1 "$rounds"); do
+  mkdir "$TDIR/a$i"
+  pids=""
+  for k in 1 2 3 4 5 6 7 8; do
+    ( until [ -e "$TDIR/a$i/go" ]; do :; done
+      # shellcheck disable=SC1090
+      . "$LIB"
+      acquire_dir_lock "$TDIR/a$i/lock" && : > "$TDIR/a$i/win.$k" ) &
+    pids="$pids $!"
+  done
+  touch "$TDIR/a$i/go"
+  # shellcheck disable=SC2086
+  wait $pids
+done
+bad=0
+counts=""
+for i in $(seq 1 "$rounds"); do
+  w="$(find "$TDIR/a$i" -name 'win.*' | wc -l | tr -d ' ')"
+  [ "$w" -eq 1 ] || { bad=$((bad+1)); counts="$counts $w"; }
+done
+if [ "$bad" -eq 0 ]; then
+  ok "acquire_dir_lock: exactly one winner per round (100 rounds x 8 claimants)"
+else
+  fail "acquire_dir_lock: exactly one winner per round (100 rounds x 8 claimants)" "bad_rounds=$bad winner_counts=$counts"
 fi
 teardown_tmpdir
 
@@ -255,12 +359,9 @@ teardown_tmpdir
 # channel_list verification directive.
 
 setup_tmpdir
-perl -e '$SIG{USR2} = sub { exit 0 }; sleep 5' &
-victim_pid=$!
-sleep 0.1
-echo "$victim_pid" > "$TDIR/mcp.pid"
+start_sentinel USR2 sigusr2-received
 env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$POST_HOOK" >/dev/null 2>/dev/null
-sleep 0.5
+wait_until 10 inject_done
 kill "$victim_pid" 2>/dev/null || true
 wait 2>/dev/null || true
 
@@ -283,7 +384,7 @@ teardown_tmpdir
 setup_tmpdir
 # no mcp.pid written — SIGUSR2 skipped but inject should still fire
 env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" ROOST_IRC_NICK="testnick" "$POST_HOOK" >/dev/null 2>/dev/null
-sleep 0.5
+wait_until 10 inject_done
 
 if [ -s "$TRACE" ] \
     && grep -q "load-buffer" "$TRACE" \
@@ -297,11 +398,10 @@ teardown_tmpdir
 # -- Test 13: ROOST_IRC_NICK unset → no tmux call ----------------------------
 
 setup_tmpdir
-perl -e '$SIG{USR2} = sub { exit 0 }; sleep 5' &
-victim_pid=$!
-sleep 0.1
-echo "$victim_pid" > "$TDIR/mcp.pid"
+start_sentinel USR2 sigusr2-received
 env -i PATH="$MOCK:$PATH" ROOST_DATA_DIR="$TDIR" "$POST_HOOK" >/dev/null 2>/dev/null
+# Negative assertion: nothing to poll for, so a settle. It can only miss a
+# bug (a late inject), never fail a healthy run.
 sleep 0.5
 kill "$victim_pid" 2>/dev/null || true
 wait 2>/dev/null || true
