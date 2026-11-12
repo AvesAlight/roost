@@ -99,7 +99,7 @@ export const GIVE_UP_MS = 24 * 60 * 60_000
 // one stops.
 export const SETTLE_TICKS = 2
 // How long a watch that settled with a failed workflow keeps waiting for a
-// re-run. Re-runs of a failed deploy have been seen 15 and 93 minutes later.
+// re-run. Long enough for a human re-run of a failed deploy.
 export const RERUN_WINDOW_MS = 2 * 60 * 60_000
 // Pipeline-list pages read per poll while nothing has matched yet.
 export const MAX_LIST_PAGES = 3
