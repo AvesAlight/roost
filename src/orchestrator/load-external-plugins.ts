@@ -8,11 +8,9 @@ import { plugin } from 'bun'
 import * as pluginApi from './plugin-api.js'
 import { registeredPluginNames } from './plugin.js'
 
-// Plugin files import `registerPlugin` from `roost/plugin`. That specifier must
-// resolve to the running dispatcher's own plugin-api, or the plugin registers
-// into a different registry than the one buildPlugins reads. `build.module`
-// intercepts the bare specifier at runtime, even when the project has its own
-// copy of roost in node_modules. `onResolve` does not.
+// `roost/plugin` must resolve to this process's plugin-api, or plugins register
+// into a registry buildPlugins never reads. build.module wins over a
+// project-local copy in node_modules.
 let specifierInstalled = false
 function installRoostPluginSpecifier(): void {
   if (specifierInstalled) return
@@ -36,7 +34,7 @@ export async function loadExternalPlugins(stateDir: string, paths: string[] | un
     if (registeredPluginNames().length === before) {
       throw new Error(
         `plugin_paths module registered no plugin: ${abs}. ` +
-        `Does its \`roost/plugin\` import resolve to $(roost root)?`
+        `Does it call registerPlugin at top level, and does its \`roost/plugin\` import resolve to $(roost root)?`
       )
     }
   }

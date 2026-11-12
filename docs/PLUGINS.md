@@ -72,7 +72,7 @@ Plugins that used to receive every `Command` via `handleCommand` (the central pa
 
 ## Register on load
 
-Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory, description?)` at the top level. If you bury the call in a function or a default export, the dispatcher fails with `unknown plugin in config: <name>`. The optional `description` string appears in `help plugins` output, so operators discovering plugins before touching config get a one-liner for each.
+Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory, description?)` at the top level. If you bury the call in a function or a default export, the module registers nothing and the dispatcher fails at boot with `plugin_paths module registered no plugin: <path>`. The optional `description` string appears in `help plugins` output, so operators discovering plugins before touching config get a one-liner for each.
 
 `registerPlugin` throws on duplicate names. Built-in names are reserved. Pick a unique slug like `acme-deploys` or `linear-issues`.
 
@@ -127,6 +127,7 @@ Relative `plugin_paths` resolve against `.orchestrator/`. Absolute paths work to
 ## Failure modes (all fatal at boot)
 
 - `plugin_paths` entry won't import: missing file, syntax error, top-level throw.
+- `plugin_paths` module that registers nothing: `plugin_paths module registered no plugin: <path>`. Check that it calls `registerPlugin` from `roost/plugin` at top level.
 - Duplicate `registerPlugin` name.
 - `config.plugins[name]` with no matching registration: `unknown plugin in config: <name>. available: ...`.
 
@@ -201,8 +202,6 @@ Install roost as a dev dependency if you want types and typecheck. Roost ships v
   ```
 
 Both expose only `roost/plugin`. Deep imports may change.
-
-If a `plugin_paths` module registers nothing, the dispatcher fails at boot and names the file. Check that the file calls `registerPlugin` from `roost/plugin`.
 
 ## Versioning
 
