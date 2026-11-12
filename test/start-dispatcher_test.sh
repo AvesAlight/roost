@@ -130,7 +130,7 @@ rm -rf "$TDIR"
 
 # -- Test 5: concurrent-start serialization -------------------------------
 # Two parallel start-dispatcher calls — exactly one daemon survives, both
-# exit 0, PID file points at the survivor. Exercises the mkdir lock and
+# exit 0, PID file points at the survivor. Exercises the start lock and
 # wait_for_winner path; the daemon-side exclusive PID claim is covered by
 # the unit tests in dispatcher-pid.test.ts.
 

@@ -582,12 +582,28 @@ machine.
 **Debounce required for long milestones (added in fix/precompact-debounce).**
 Context pressure can re-trigger PreCompact multiple times before the
 injected `/compact` drains — observed 24+ queued lines in the pane,
-agent hung. Fix: atomic mkdir lock (`${ROOST_DATA_DIR}/compact-inject.lock.d`).
+agent hung. Fix: exclusive-create sentinel lock (`${ROOST_DATA_DIR}/compact-inject.lock.d`;
+see the 2026-11 note below on why it is not `mkdir`).
 `LOCK_TTL_MIN=3` (in `bin/roost-compact-hook`) is the knob — must stay
 above observed compact duration (~1m48s). If this regresses (agent hung
 with `compact-inject.lock.d` fresh and stale), raise `LOCK_TTL_MIN`.
 Trade-off: dead sessions leave stale locks that block re-inject for up
 to TTL minutes; PostCompact normally clears them.
+
+**`mkdir` is not an atomic claim on Ubuntu 25.10+ (2026-11).** GitHub's
+`ubuntu-latest` moved to 26.04, where `/usr/bin/mkdir` is uutils coreutils.
+Two concurrent `mkdir` calls on one path both exit 0 there (about half of
+paired attempts in a bare loop), so the debounce let two hooks inject and
+`start-dispatcher`'s single-start guard could double-start. CI showed it as
+`concurrent: exactly one inject` failing with `inject_count=2`; it never
+reproduced on ubuntu:24.04 or macOS. `bin/_lock-lib.sh` now claims with a
+shell-builtin O_EXCL create (`set -C; : > file`) and the stale-lock reclaim
+goes through a token-guarded helper (a bare `rm` after the staleness check
+could delete a fresh lock another invocation had just re-claimed). Repro
+recipe: `docker run ubuntu:26.04`, then `test/compact-hook_test.sh` — the
+contention cases fail on the old lib and pass on the new one. Any new
+primitive that relies on an external binary being atomic needs the same
+check on that image.
 
 **Operational footgun surfaced during the v3 rebase (2026-05-17):**
 GitHub stopped firing CI on this PR after the v2 push. Root cause:

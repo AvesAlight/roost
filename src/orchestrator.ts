@@ -164,7 +164,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   }
 
   // In-daemon source of truth for "this dispatcher owns this stateDir";
-  // bin/start-dispatcher has a cheaper mkdir lock for the front-door check.
+  // bin/start-dispatcher has a cheaper exclusive-create lock for the front-door check.
   const pidInfo = await writeDispatcherPid(stateDir)
   log(`orchestrator[daemon]: pid ${pidInfo.pid} written to ${stateDir}/dispatcher.pid\n`)
 

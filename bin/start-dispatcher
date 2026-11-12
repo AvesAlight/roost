@@ -6,7 +6,7 @@
 # multiple agents (APM, dispatcher) at the same time.
 #
 # Lifecycle:
-#   1. Take a mkdir lock at <config-dir>/.dispatcher.start.lock. Loser polls
+#   1. Take an exclusive-create lock at <config-dir>/.dispatcher.start.lock. Loser polls
 #      <config-dir>/dispatcher.pid (≤2s) for the winner's PID.
 #   2. With the lock held, read dispatcher.pid. If the PID is alive AND its
 #      cmdline mentions <config-dir>, exit 0 ("already running").

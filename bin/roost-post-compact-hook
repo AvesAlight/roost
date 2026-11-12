@@ -21,7 +21,7 @@ fi
 # Clear the debounce lock regardless of SIGUSR2 path success — lock cleanup
 # is independent of whether the MCP pid is present or reachable.
 _lock_dir="${ROOST_DATA_DIR}/compact-inject.lock.d"
-[ -d "$_lock_dir" ] && echo "roost-post-compact-hook: cleared compact-inject.lock.d" >&2
+[ -e "$_lock_dir" ] && echo "roost-post-compact-hook: cleared compact-inject.lock.d" >&2
 release_dir_lock "$_lock_dir"
 pid_file="$ROOST_DATA_DIR/mcp.pid"
 if [ ! -f "$pid_file" ]; then
