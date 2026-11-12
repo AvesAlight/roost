@@ -7,6 +7,11 @@
 // [#chan ...]`. A sha prefix of 7+ hex chars is accepted. Watches end on their
 // own; `unwatch` is for stopping one early.
 //
+// A watch ends when everything in its pipelines has settled and nothing failed.
+// A pipeline that settles with a failed workflow stays watched for a bounded
+// window, because a re-run adds a new workflow (same name, new id) to the same
+// pipeline. Only the latest workflow per name counts toward the outcome.
+//
 // Config slice: `{ watched: [{ slug, sha, channels?, started_at? }],
 // failure_hint?: string }`. `started_at` (epoch ms) is stamped on DM-created
 // entries; hand-edited entries fall back to the first tick that sees them.
@@ -52,6 +57,8 @@ interface WorkflowState {
   // The status for which this workflow's jobs were last fetched and reported.
   // Null until a job-bearing status (on_hold, failed, error) has been handled.
   handled_for: string | null
+  // Orders workflows that share a name: a re-run supersedes the one before it.
+  created_at: string | null
 }
 
 interface PipelineState {
@@ -71,6 +78,9 @@ export interface WatchState {
   holds: string[]
   // Consecutive polls on which everything was terminal and nothing on hold.
   settled_ticks: number
+  // Set once the watch has settled with a failed workflow: the epoch ms the
+  // wait for a re-run runs out. Cleared when anything is running again.
+  rerun_until?: number
   done?: { at: number; reason: EndReason }
 }
 
@@ -78,7 +88,7 @@ export interface CircleCiPluginState {
   watches: Record<string, WatchState>
 }
 
-type EndReason = 'settled' | 'no-pipeline' | 'gave-up'
+type EndReason = 'settled' | 'no-pipeline' | 'no-rerun' | 'gave-up'
 
 // Discovery runs for this long after the watch starts, so a later pipeline on
 // the same sha (a rerun, a tag) is picked up.
@@ -88,6 +98,9 @@ export const GIVE_UP_MS = 24 * 60 * 60_000
 // dynamic-config pipeline can create its second workflow just after the first
 // one stops.
 export const SETTLE_TICKS = 2
+// How long a watch that settled with a failed workflow keeps waiting for a
+// re-run. Re-runs of a failed deploy have been seen 15 and 93 minutes later.
+export const RERUN_WINDOW_MS = 2 * 60 * 60_000
 // Pipeline-list pages read per poll while nothing has matched yet.
 export const MAX_LIST_PAGES = 3
 // Failed polls in a row before a per-watch note is posted.
@@ -97,6 +110,9 @@ const MAX_FAILED_JOBS_LISTED = 5
 const TERMINAL_WORKFLOW = new Set(['success', 'failed', 'error', 'canceled', 'not_run', 'unauthorized'])
 // Workflow statuses whose jobs are fetched, once per entry into the status.
 const JOB_BEARING = new Set(['on_hold', 'failed', 'error'])
+// Latest-workflow statuses that make a watch wait for a re-run. A cancel is a
+// deliberate stop, not a failure to retry.
+const FAILED_WORKFLOW = new Set(['failed', 'error'])
 const FAILED_JOB = new Set(['failed', 'infrastructure_fail', 'timedout', 'terminated-unknown', 'unauthorized'])
 
 function entryKey(e: { slug: string; sha: string }): string {
@@ -120,8 +136,23 @@ function workflowLink(workflowId: string): string {
   return `${CIRCLECI_APP}/pipelines/workflows/${workflowId}`
 }
 
+// The workflows that decide a pipeline's outcome: the newest per name. A
+// re-run leaves the failed workflow in place beside its replacement.
+function latestWorkflows(p: PipelineState): WorkflowState[] {
+  const byName = new Map<string, WorkflowState>()
+  for (const w of Object.values(p.workflows)) {
+    const cur = byName.get(w.name)
+    if (!cur || (w.created_at ?? '') >= (cur.created_at ?? '')) byName.set(w.name, w)
+  }
+  return [...byName.values()]
+}
+
 function revisionMatches(p: CciPipeline, sha: string): boolean {
   return typeof p.vcs?.revision === 'string' && p.vcs.revision.toLowerCase().startsWith(sha)
+}
+
+function formatUntil(ms: number): string {
+  return `${new Date(ms).toISOString().slice(11, 16)} UTC`
 }
 
 function formatHint(template: string | undefined, slug: string, jobNumber: number | undefined): string {
@@ -439,9 +470,22 @@ export class CircleCiPlugin extends BasePlugin {
       return wfs.every(w => TERMINAL_WORKFLOW.has(w.status))
     })
     ws.settled_ticks = settled ? ws.settled_ticks + 1 : 0
-    if (ws.settled_ticks >= SETTLE_TICKS) {
-      emit(`watch ended ${watchLabel}: ${this.summarize(g.slug, ws)}`)
-      return { ws: this.finish(ws, 'settled', now), messages, error: null }
+    if (!settled) {
+      // Something is running again (a re-run): the next failure gets a fresh window.
+      delete ws.rerun_until
+    } else if (ws.settled_ticks >= SETTLE_TICKS) {
+      const failed = pipelines.some(p => latestWorkflows(p).some(w => FAILED_WORKFLOW.has(w.status)))
+      if (!failed) {
+        emit(`watch ended ${watchLabel}: ${this.summarize(g.slug, ws)}`)
+        return { ws: this.finish(ws, 'settled', now), messages, error: null }
+      }
+      if (ws.rerun_until === undefined) {
+        ws.rerun_until = now + RERUN_WINDOW_MS
+        emit(`${watchLabel} settled with a failed workflow; watching for a re-run until ${formatUntil(ws.rerun_until)}. To stop: unwatch ${label(g.slug, g.sha)}`)
+      } else if (now >= ws.rerun_until) {
+        emit(`watch ended ${watchLabel}: no re-run in ${RERUN_WINDOW_MS / 3_600_000}h: ${this.summarize(g.slug, ws)}`)
+        return { ws: this.finish(ws, 'no-rerun', now), messages, error: null }
+      }
     }
     return { ws, messages, error: null }
   }
@@ -511,19 +555,20 @@ export class CircleCiPlugin extends BasePlugin {
       name: wf.name,
       status,
       handled_for: needJobs ? status : (prev?.status === status ? prev.handled_for : null),
+      created_at: wf.created_at ?? null,
     }
   }
 
   private summarize(slug: string, ws: WatchState): string {
     const parts = Object.values(ws.pipelines).map(p => {
-      const wfs = Object.values(p.workflows).map(w => `${w.name} ${w.status}`).join(', ') || 'no workflows'
+      const wfs = latestWorkflows(p).map(w => `${w.name} ${w.status}`).join(', ') || 'no workflows'
       return `#${p.number} ${wfs} (${pipelineLink(slug, p.number)})`
     })
     return parts.join('; ') || 'no pipelines'
   }
 
   private finish(ws: WatchState, reason: EndReason, now: number): WatchState {
-    return { ...ws, pipelines: {}, holds: [], settled_ticks: 0, done: { at: now, reason } }
+    return { ...ws, pipelines: {}, holds: [], settled_ticks: 0, rerun_until: undefined, done: { at: now, reason } }
   }
 
   // ---- per-watch failure notes -------------------------------------------

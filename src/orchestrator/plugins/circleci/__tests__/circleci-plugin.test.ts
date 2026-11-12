@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { CircleCiPlugin, DISCOVERY_WINDOW_MS, GIVE_UP_MS, MAX_LIST_PAGES, type CircleCiPluginState } from '../circleci-plugin.js'
+import { CircleCiPlugin, DISCOVERY_WINDOW_MS, GIVE_UP_MS, MAX_LIST_PAGES, RERUN_WINDOW_MS, type CircleCiPluginState } from '../circleci-plugin.js'
 import {
   SLUG, SHA, START, STEP_MS, uuid, pipeline, workflow, buildJob, approvalJob, makeHarness, makeConfig, callsMatching, type Harness,
 } from './circleci-fixtures.js'
@@ -7,6 +7,7 @@ import {
 const PIPE = 83
 const TF = 101
 const APPLY = 102
+const RERUN = 103
 
 // arboretum main merge: terraform workflow then apply, both in one pipeline.
 function arboretum(h: Harness, terraform: string, apply: string | null) {
@@ -39,10 +40,12 @@ describe('first observation', () => {
       `workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1202) — ${wfLink(APPLY)}`,
     ])
     expect(callsMatching(h.fx, /\/job$/)).toBe(1)
-    // Nothing repeats; the second settled poll ends the watch.
+    // Nothing repeats. The second settled poll does not end a failed watch: it
+    // starts waiting for a re-run.
     const second = await h.step()
     expect(second).toHaveLength(1)
-    expect(second[0]).toStartWith(`watch ended ${SLUG}@${SHA}: #83 terraform success, apply failed (${link})`)
+    expect(second[0]).toStartWith(`${SLUG}@${SHA} settled with a failed workflow; watching for a re-run until `)
+    expect(watchState(h).done).toBeUndefined()
     expect(callsMatching(h.fx, /\/job$/)).toBe(1)
   })
 
@@ -556,5 +559,107 @@ describe('DM handling', () => {
     expect(watched[0].started_at).toBe(h.clock.t)
     h.plugin.handleCommand(local, local, { kind: 'help' })
     expect((local.plugins!.circleci as { watched: unknown[] }).watched).toHaveLength(1)
+  })
+})
+
+// A re-run of a failed workflow adds a new workflow with the same name to the
+// same pipeline. The failed one stays failed.
+function rerunOf(h: Harness, status: string) {
+  h.fx.workflows[uuid(PIPE)] = [
+    workflow(RERUN, PIPE, 'apply', status),
+    workflow(APPLY, PIPE, 'apply', 'failed'),
+    workflow(TF, PIPE, 'terraform', 'success'),
+  ]
+}
+
+function failedApply(): Harness {
+  const h = makeHarness()
+  arboretum(h, 'success', 'failed')
+  h.fx.jobs[uuid(APPLY)] = [buildJob(201, 'apply-root', 'failed', 1202)]
+  return h
+}
+
+describe('a failed watch waits for a re-run', () => {
+  it('announces the wait once, then stays quiet at one workflow listing per poll', async () => {
+    const h = failedApply()
+    await h.step()
+    const waiting = await h.step()
+    expect(waiting).toEqual([`${SLUG}@${SHA} settled with a failed workflow; watching for a re-run until 00:16 UTC. To stop: unwatch pipeline ${SLUG}@${SHA}`])
+    expect(watchState(h).rerun_until).toBe(h.clock.t + RERUN_WINDOW_MS)
+    const before = h.fx.calls.length
+    for (let i = 0; i < 3; i++) expect(await h.step()).toEqual([])
+    expect(h.fx.calls.slice(before).filter(c => /\/workflow$/.test(c))).toHaveLength(3)
+    expect(callsMatching(h.fx, /\/job$/)).toBe(1)
+    expect(watchState(h).done).toBeUndefined()
+  })
+
+  it('ends when the re-run succeeds, judging only the latest workflow per name', async () => {
+    const h = failedApply()
+    await h.step()
+    await h.step()
+    rerunOf(h, 'running')
+    expect(await h.step()).toEqual([])
+    expect(watchState(h).settled_ticks).toBe(0)
+    expect(watchState(h).rerun_until).toBeUndefined()
+    rerunOf(h, 'success')
+    expect(await h.step()).toEqual([`workflow apply success in ${SLUG}@${SHA} (pipeline #83) — ${wfLink(RERUN)}`])
+    // The old failed workflow is still failed, but it no longer counts.
+    const ended = await h.step()
+    expect(ended).toEqual([`watch ended ${SLUG}@${SHA}: #83 terraform success, apply success (${link})`])
+    expect(watchState(h).done?.reason).toBe('settled')
+  })
+
+  it('opens a fresh window when the re-run fails too', async () => {
+    const h = failedApply()
+    await h.step()
+    await h.step()
+    const firstUntil = watchState(h).rerun_until!
+    rerunOf(h, 'running')
+    await h.step()
+    h.fx.jobs[uuid(RERUN)] = [buildJob(203, 'apply-root', 'failed', 1204)]
+    rerunOf(h, 'failed')
+    const failed = await h.step()
+    expect(failed).toEqual([`workflow apply failed in ${SLUG}@${SHA} (pipeline #83) — failed jobs: apply-root (#1204) — ${wfLink(RERUN)}`])
+    const waiting = await h.step()
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0]).toContain('watching for a re-run until')
+    expect(watchState(h).rerun_until!).toBeGreaterThan(firstUntil)
+    expect(watchState(h).done).toBeUndefined()
+  })
+
+  it('ends when the window runs out with no re-run, then makes no calls', async () => {
+    const h = failedApply()
+    await h.step()
+    await h.step()
+    expect(await h.step(RERUN_WINDOW_MS - STEP_MS)).toEqual([])
+    const ended = await h.step(STEP_MS)
+    expect(ended).toEqual([`watch ended ${SLUG}@${SHA}: no re-run in 2h: #83 terraform success, apply failed (${link})`])
+    expect(watchState(h).done?.reason).toBe('no-rerun')
+    const before = h.fx.calls.length
+    expect(await h.step()).toEqual([])
+    expect(h.fx.calls.length).toBe(before)
+  })
+
+  it('keeps the watch channels desired through the tick the `no re-run` ending posts', async () => {
+    const h = makeHarness({ watched: [{ slug: SLUG, sha: SHA, started_at: START, channels: ['#issue-1'] }] })
+    arboretum(h, 'success', 'failed')
+    h.fx.jobs[uuid(APPLY)] = [buildJob(201, 'apply-root', 'failed', 1202)]
+    await h.step()
+    await h.step()
+    expect(h.plugin.desiredChannels(h.config)).toEqual(['#issue-1'])
+    h.clock.t += RERUN_WINDOW_MS
+    const ending = await h.plugin.runTick(h.config, h.state)
+    expect(ending.messages[0].text).toStartWith('watch ended')
+    expect(ending.messages[0].channels).toEqual(['#issue-1'])
+    expect(ending.channels).toEqual(['#issue-1'])
+  })
+
+  it('does not wait on a canceled workflow: a cancel is not a failure to retry', async () => {
+    const h = makeHarness()
+    arboretum(h, 'success', 'canceled')
+    await h.step()
+    const ended = await h.step()
+    expect(ended).toEqual([`watch ended ${SLUG}@${SHA}: #83 terraform success, apply canceled (${link})`])
+    expect(watchState(h).done?.reason).toBe('settled')
   })
 })
