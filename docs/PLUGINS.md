@@ -72,7 +72,7 @@ Plugins that used to receive every `Command` via `handleCommand` (the central pa
 
 ## Register on load
 
-Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory, description?)` at the top level. If you bury the call in a function or a default export, the dispatcher fails with `unknown plugin in config: <name>`. The optional `description` string appears in `help plugins` output, so operators discovering plugins before touching config get a one-liner for each.
+Each `plugin_paths` entry is imported for its side effects. The module must call `registerPlugin(name, factory, description?)` at the top level. If you bury the call in a function or a default export, the module registers nothing and the dispatcher fails at boot with `plugin_paths module registered no plugin: <path>`. The optional `description` string appears in `help plugins` output, so operators discovering plugins before touching config get a one-liner for each.
 
 `registerPlugin` throws on duplicate names. Built-in names are reserved. Pick a unique slug like `acme-deploys` or `linear-issues`.
 
@@ -127,6 +127,7 @@ Relative `plugin_paths` resolve against `.orchestrator/`. Absolute paths work to
 ## Failure modes (all fatal at boot)
 
 - `plugin_paths` entry won't import: missing file, syntax error, top-level throw.
+- `plugin_paths` module that registers nothing: `plugin_paths module registered no plugin: <path>`. Check that it calls `registerPlugin` from `roost/plugin` at top level.
 - Duplicate `registerPlugin` name.
 - `config.plugins[name]` with no matching registration: `unknown plugin in config: <name>. available: ...`.
 
@@ -189,13 +190,15 @@ Mock IO at the boundary your plugin owns. Assert on `state` and `messages`.
 
 ## Installing `roost/plugin`
 
-Roost ships via Homebrew tap, not npm. The import path `'roost/plugin'` doesn't resolve out of the box. Two ways to fix it:
+You don't need roost installed at runtime. When the dispatcher loads a `plugin_paths` module, it resolves `roost/plugin` to its own `plugin-api.ts`, so your plugin registers into the registry the dispatcher reads. That holds even if your project has its own copy of roost in `node_modules`.
+
+Install roost as a dev dependency if you want types and typecheck. Roost ships via Homebrew tap, not npm, so the import path doesn't resolve out of the box for `tsc`. Two ways:
 
 - **`bun link`.** Clone roost, `bun link` in its root, `bun link roost` in your project.
 - **Git dependency.** Pin roost in your `package.json`:
 
   ```json
-  { "dependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
+  { "devDependencies": { "roost": "github:AvesAlight/roost#<tag>" } }
   ```
 
 Both expose only `roost/plugin`. Deep imports may change.
