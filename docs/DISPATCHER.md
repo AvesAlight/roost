@@ -66,6 +66,8 @@ Fields:
 | `plugins.github-new-issues.watched` | `[{"repo": "OWNER/NAME", "channels"?: [...]}]`. Multi-repo new-issue feed — `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-new-prs.watched` | Same shape as `plugins.github-new-issues.watched`. Multi-repo new-PR feed — announces newly-opened PRs not authored by `agent_logins`. `repo` required per entry, `channels` defaults to the project channel. |
 | `plugins.github-commits.watched` | `[{"repo": "OWNER/NAME", "branch"?: "main", "path"?: "Formula/x.rb", "channels"?: [...]}]`. Multi-repo commit feed — `repo` required per entry, `branch` defaults to `main`, optional `path` filters to commits touching that file, `channels` defaults to the project channel. State key is `<repo>@<branch>` (or `<repo>@<branch>:<path>` when path is set). |
+| `plugins.circleci.watched` | `[{"slug": "gh/ORG/REPO", "sha": "<7-40 hex chars>", "channels"?: [...], "started_at"?: <epoch ms>}]`. Follows the CircleCI pipeline built for a commit. `channels` defaults to the project channel. DM-created entries get `started_at` stamped; a hand-edited entry starts timing at its first tick. Needs `CIRCLECI_TOKEN` in the dispatcher's env, or `token:` in `~/.circleci/cli.yml`; it is read lazily, so a missing token posts one error and does not stop the dispatcher. Not part of `bin/roost init`'s default set. |
+| `plugins.circleci.failure_hint` | Optional template appended to a failed-workflow line, e.g. `"my-tool log {slug} {job}"`. `{slug}` is the project slug and `{job}` the first failed job's number. Unset by default. |
 
 For watched entries, `repo` defaults to the top-level in single mode and is
 required per entry in multi mode. `channels` adds destinations on top of the
@@ -86,7 +88,7 @@ B. Each linked-issue channel is slugged from its own repo, not the PR's:
   (gh did return a linked issue, just not addressable) — read stderr when in doubt.
 
 A plugin not listed under `plugins` is not instantiated. First-party set:
-`github-prs`, `github-issues`, `github-new-issues`, `github-new-prs`, `github-commits`. External
+`github-prs`, `github-issues`, `github-new-issues`, `github-new-prs`, `github-commits`, `circleci`. External
 plugins load via `plugin_paths` (see [PLUGINS.md](./PLUGINS.md)) before the
 registry walks.
 
@@ -172,6 +174,8 @@ watch [<target>] <N> [<owner>/<repo>] [#chan ...]      # github-prs, github-issu
 unwatch [<target>] <N> [<owner>/<repo>]
 watch <target> <owner>/<repo>[@<branch>[:<path>]] [#chan ...]  # github-commits (target=repo), github-new-issues (target=new-issues; no @/: allowed), github-new-prs (target=new-prs; no @/: allowed)
 unwatch <target> <owner>/<repo>[@<branch>[:<path>]]
+watch pipeline gh/<org>/<repo>@<sha> [#chan ...]       # circleci
+unwatch pipeline gh/<org>/<repo>@<sha>
 watch list      # every plugin's active entries
 help            # synopsis + per-plugin help
 help plugins    # all registered plugin classes (enabled or not)
@@ -186,6 +190,7 @@ Target keywords currently claimed by first-party plugins:
 | `repo` | `github-commits` | `watch repo <owner>/<repo>[@<branch>[:<path>]] [#chan ...]` |
 | `new-issues` | `github-new-issues` | `watch new-issues <owner>/<repo> [#chan ...]` |
 | `new-prs` | `github-new-prs` | `watch new-prs <owner>/<repo> [#chan ...]` |
+| `pipeline` | `circleci` | `watch pipeline gh/<org>/<repo>@<sha> [#chan ...]` |
 
 Notes:
 
@@ -196,6 +201,26 @@ Notes:
   line copy-pastes into a DM. Branch defaults to `main`; path is optional.
 - DMs mutate `config.local.json` only. Re-watching a tracked entry is
   idempotent; unwatching one is refused with `… hand-edit to remove`.
+
+### CircleCI pipeline watches
+
+`watch pipeline gh/<org>/<repo>@<sha>` follows the pipeline CircleCI builds for a commit, including pipelines with no PR (post-merge applies, rolls, promotes). Each event is one line with an app link, sent to the entry's channels or the project channel:
+
+- pipeline found, with its workflows
+- workflow finished (`success`, `failed`, `error`, `canceled`), naming the failed jobs on a failure
+- `waiting on human: <job>` when an approval job is on hold, once per hold
+- `settled with a failed workflow; watching for a re-run until <time>`, once, when a failure leaves the watch open
+- watch ended, with every workflow's final status
+
+A watch that starts after a workflow already finished, or while one is on hold, reports that state on its first poll. It does not seed silently.
+
+A watch ends by itself when every workflow on every matched pipeline is terminal and none is on hold for two polls in a row, when no pipeline appears within 15 minutes, or after 24 hours. A workflow on hold keeps the watch open. Pipeline discovery runs for the first 15 minutes, so a later pipeline on the same sha is picked up. Ended watches are removed from `config.local.json` on the next DM to this plugin, and are hidden from `watch list` straight away.
+
+A watch that settles with a failed (or `error`) workflow does not end. A re-run adds a new workflow with the same name to the same pipeline, so the watch keeps listing that pipeline's workflows for 2 hours and reports the re-run like any other workflow. Only the newest workflow per name counts, so a green re-run ends the watch and the old failure is not listed. A re-run that fails again opens a fresh 2 hours. With no re-run the watch ends with `no re-run in 2h`. A cancelled workflow does not wait. `unwatch` stops a waiting watch.
+
+Each poll makes one pipeline-list call while discovering, one workflow call per tracked pipeline (a watch waiting for a re-run keeps making it), and a job call only when a workflow enters `on_hold`, `failed` or `error`. That is about 40 calls an hour per watch at a 90s `irc.interval_seconds`, and scales with the interval. A 429 pauses the plugin for the `Retry-After` time.
+
+Known gap: a workflow that goes on hold, is approved, and holds again within one poll interval looks like a single hold.
 
 ### Repo-mode invariant — tracked-strict, local-loose
 

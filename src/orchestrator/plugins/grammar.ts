@@ -280,6 +280,56 @@ export function tryClaimPerLinearTeam(target: string, line: string): ParseResult
   return { kind: 'ok', cmd: { verb, team: specTok, project, channels } }
 }
 
+export interface PerPipelineCommand {
+  verb: Verb
+  slug: string
+  sha: string
+  channels: string[]
+}
+
+// CircleCI project slug (`gh/<org>/<repo>`) plus a commit sha. A prefix of 7+
+// hex chars is accepted; the sha is lowercased so `ABC1234` and `abc1234`
+// name the same watch.
+const PIPELINE_SPEC_RE = /^(gh\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)@([0-9A-Fa-f]{7,40})$/
+
+// Try to claim a per-pipeline line for `target` (`pipeline`): `watch pipeline
+// gh/<org>/<repo>@<sha> [#chan ...]`. Returns:
+//   - `null` if the line isn't watch/unwatch, or doesn't lead with this target.
+//   - `{kind:'ok',cmd}` on a clean claim.
+//   - `{kind:'error',msg}` when the line claimed the target but the spec or a
+//     channel is malformed. The target keyword is unambiguous, so there is no
+//     shape-based defer to another plugin.
+export function tryClaimPerPipeline(target: string, line: string): ParseResult<PerPipelineCommand> | null {
+  const parsed = tokenizeVerbLine(line)
+  if (!parsed) return null
+  const { verb, tokens } = parsed
+  const targetMatch = matchTarget(target, tokens)
+  if (targetMatch === null) return null
+  const rest = tokens.slice(targetMatch)
+
+  const specTok = rest[0]
+  if (specTok === undefined) {
+    return { kind: 'error', message: `${verb} ${target} requires a gh/<org>/<repo>@<sha> spec` }
+  }
+  const m = specTok.match(PIPELINE_SPEC_RE)
+  if (!m) {
+    return { kind: 'error', message: `${verb} ${target}: "${specTok}" is not a valid gh/<org>/<repo>@<sha> spec (sha must be 7-40 hex chars)` }
+  }
+  const slug = m[1]
+  const sha = m[2].toLowerCase()
+  const channels = rest.slice(1)
+  if (verb === 'unwatch') {
+    if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
+    return { kind: 'ok', cmd: { verb, slug, sha, channels: [] } }
+  }
+  for (const c of channels) {
+    if (!CHANNEL_RE.test(c)) {
+      return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
+    }
+  }
+  return { kind: 'ok', cmd: { verb, slug, sha, channels } }
+}
+
 // Returns the index of the first non-target token in `tokens`, or null when
 // `target` is set but doesn't appear at position 0. `target=null` means the
 // plugin claims bare verbs; we still reject a leading reserved verb so

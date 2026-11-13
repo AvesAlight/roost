@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, tryClaimPerLinearTeam, splitCommands } from '../grammar.js'
+import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, tryClaimPerLinearTeam, tryClaimPerPipeline, splitCommands } from '../grammar.js'
 
 // ---- splitCommands --------------------------------------------------------
 
@@ -415,5 +415,70 @@ describe('tryClaimPerLinearTeam — target=linear-team', () => {
 
   it('defers on non-watch/unwatch verbs', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'help linear-team C')).toBeNull()
+  })
+})
+
+// ---- tryClaimPerPipeline --------------------------------------------------
+
+describe('tryClaimPerPipeline', () => {
+  const SHA = 'abc1234def5678'
+
+  it('claims watch with slug, sha and channels', () => {
+    expect(tryClaimPerPipeline('pipeline', `watch pipeline gh/GoCarrot/arboretum@${SHA} #a #b`)).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', slug: 'gh/GoCarrot/arboretum', sha: SHA, channels: ['#a', '#b'] },
+    })
+  })
+
+  it('claims unwatch', () => {
+    expect(tryClaimPerPipeline('pipeline', `unwatch pipeline gh/o/r@${SHA}`)).toEqual({
+      kind: 'ok', cmd: { verb: 'unwatch', slug: 'gh/o/r', sha: SHA, channels: [] },
+    })
+  })
+
+  it('accepts a 7-char prefix and a full 40-char sha, lowercasing both', () => {
+    const r7 = tryClaimPerPipeline('pipeline', 'watch pipeline gh/o/r@ABC1234')
+    expect(r7).toEqual({ kind: 'ok', cmd: { verb: 'watch', slug: 'gh/o/r', sha: 'abc1234', channels: [] } })
+    const full = 'a'.repeat(40)
+    const r40 = tryClaimPerPipeline('pipeline', `watch pipeline gh/o/r@${full}`)
+    expect(r40).toEqual({ kind: 'ok', cmd: { verb: 'watch', slug: 'gh/o/r', sha: full, channels: [] } })
+  })
+
+  it('rejects a sha shorter than 7, longer than 40, or non-hex', () => {
+    for (const bad of ['abc123', 'a'.repeat(41), 'abc123g']) {
+      const r = tryClaimPerPipeline('pipeline', `watch pipeline gh/o/r@${bad}`)
+      expect(r?.kind).toBe('error')
+    }
+  })
+
+  it('rejects a missing sha, a non-gh slug, and a bare repo', () => {
+    for (const bad of ['gh/o/r', 'bb/o/r@abc1234', 'o/r@abc1234', 'gh/o@abc1234']) {
+      const r = tryClaimPerPipeline('pipeline', `watch pipeline ${bad}`)
+      expect(r?.kind).toBe('error')
+    }
+  })
+
+  it('errors when the spec is missing', () => {
+    expect(tryClaimPerPipeline('pipeline', 'watch pipeline')).toEqual({
+      kind: 'error', message: 'watch pipeline requires a gh/<org>/<repo>@<sha> spec',
+    })
+  })
+
+  it('rejects a malformed channel and channels on unwatch', () => {
+    expect(tryClaimPerPipeline('pipeline', `watch pipeline gh/o/r@${SHA} nochan`)?.kind).toBe('error')
+    expect(tryClaimPerPipeline('pipeline', `unwatch pipeline gh/o/r@${SHA} #a`)).toEqual({
+      kind: 'error', message: 'unwatch takes no channel arguments',
+    })
+  })
+
+  it('does not claim other targets or non-watch lines', () => {
+    expect(tryClaimPerPipeline('pipeline', 'watch 5')).toBeNull()
+    expect(tryClaimPerPipeline('pipeline', 'watch pr 5')).toBeNull()
+    expect(tryClaimPerPipeline('pipeline', `watch repo gh/o/r@${SHA}`)).toBeNull()
+    expect(tryClaimPerPipeline('pipeline', 'help')).toBeNull()
+  })
+
+  it('is not claimed by the per-N or per-repo parsers', () => {
+    expect(tryClaimPerN(null, `watch pipeline gh/o/r@${SHA}`)).toBeNull()
+    expect(tryClaimPerRepo('repo', `watch pipeline gh/o/r@${SHA}`)).toBeNull()
   })
 })
