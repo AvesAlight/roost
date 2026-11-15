@@ -417,3 +417,12 @@ describe('tryClaimPerLinearTeam — target=linear-team', () => {
     expect(tryClaimPerLinearTeam('linear-team', 'help linear-team C')).toBeNull()
   })
 })
+
+// ---- pipeline lines and the shared parsers --------------------------------
+
+describe('pipeline lines', () => {
+  it('are not claimed by the per-N or per-repo parsers', () => {
+    expect(tryClaimPerN(null, 'watch pipeline gh/o/r@abc1234def5678')).toBeNull()
+    expect(tryClaimPerRepo('repo', 'watch pipeline gh/o/r@abc1234def5678')).toBeNull()
+  })
+})

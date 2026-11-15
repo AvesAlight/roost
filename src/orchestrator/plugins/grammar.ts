@@ -5,7 +5,7 @@
 
 import type { ParseResult } from '../plugin.js'
 
-const CHANNEL_RE = /^#[^\s,#]+$/
+export const CHANNEL_RE = /^#[^\s,#]+$/
 
 // Bare `<owner>/<repo>` — optional repo positional in the per-N grammar.
 // Disambiguated from channels (start with `#`) and numbers (all digits) on shape.
@@ -60,8 +60,8 @@ export function splitCommands(text: string): string[] {
 
 // Tokenize a single line: lowercase verb + raw tail tokens. Returns null
 // when the line doesn't start with watch/unwatch so plugins short-circuit
-// on lines they obviously don't own. Private to this module.
-function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
+// on lines they obviously don't own. Exported for plugins that own their own claim.
+export function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
   const tokens = line.split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
   const verb = tokens[0].toLowerCase()
@@ -284,7 +284,7 @@ export function tryClaimPerLinearTeam(target: string, line: string): ParseResult
 // `target` is set but doesn't appear at position 0. `target=null` means the
 // plugin claims bare verbs; we still reject a leading reserved verb so
 // `watch unwatch 5` (almost certainly a typo) doesn't silently become target=unwatch.
-function matchTarget(target: string | null, tokens: string[]): number | null {
+export function matchTarget(target: string | null, tokens: string[]): number | null {
   if (target === null) {
     const first = tokens[0]
     if (first === undefined) return 0

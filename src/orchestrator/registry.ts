@@ -6,6 +6,7 @@ import { GitHubIssuesPlugin } from './plugins/github/issues-plugin.js'
 import { GitHubNewIssuesPlugin } from './plugins/github/new-issues-plugin.js'
 import { GitHubNewPrsPlugin } from './plugins/github/new-prs-plugin.js'
 import { GitHubCommitsPlugin } from './plugins/github/commits-plugin.js'
+import { CircleCiPlugin } from './plugins/circleci/circleci-plugin.js'
 import { LinearIssuesPlugin } from './plugins/linear/issues-plugin.js'
 import { LinearNewIssuesPlugin } from './plugins/linear/new-issues-plugin.js'
 
@@ -16,3 +17,4 @@ registerPlugin('github-new-prs', (defaultChannel, log) => new GitHubNewPrsPlugin
 registerPlugin('github-commits', (defaultChannel, log) => new GitHubCommitsPlugin(defaultChannel, log), 'announces commits to watched repos/branches/paths')
 registerPlugin('linear-issues', (defaultChannel, log) => new LinearIssuesPlugin(defaultChannel, log), 'watches Linear issue activity for tracked issue keys')
 registerPlugin('linear-new-issues', (defaultChannel, log) => new LinearNewIssuesPlugin(defaultChannel, log), 'announces new Linear issues in watched teams')
+registerPlugin('circleci', (defaultChannel, log) => new CircleCiPlugin(defaultChannel, log), 'follows the CircleCI pipeline for a commit sha (workflow results, approval holds)')
