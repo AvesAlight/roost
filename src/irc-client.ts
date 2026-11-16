@@ -82,6 +82,8 @@ export type MembershipKind = 'join' | 'leave' | 'nick'
 export interface JoinResult {
   ok: boolean
   members: string[]
+  // Set when ok is false: the server's rejection (e.g. "405 too many channels") or "timeout".
+  reason?: string
 }
 
 export interface RoostIrcClient {

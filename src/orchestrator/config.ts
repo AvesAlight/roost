@@ -168,6 +168,32 @@ export async function writeState(stateDir: string, state: OrchestratorState): Pr
   await writeAtomicJson(stateDir, 'state.json', state)
 }
 
+// Messages the dispatcher couldn't post (target channel not joined). state.json
+// advances past an event once it's derived, so this file is the only copy.
+// Retried each tick in queue order. One entry per plugin message per channel.
+export interface OutboxEntry {
+  channel: string
+  text: string
+  queued_at: string
+}
+
+export async function loadOutbox(stateDir: string): Promise<OutboxEntry[]> {
+  const file = Bun.file(join(stateDir, 'outbox.json'))
+  if (!(await file.exists())) return []
+  const text = (await file.text()).trim()
+  if (!text) return []
+  const parsed = JSON.parse(text) as { entries?: OutboxEntry[] }
+  return Array.isArray(parsed.entries) ? parsed.entries : []
+}
+
+export async function writeOutbox(stateDir: string, entries: OutboxEntry[]): Promise<void> {
+  if (!entries.length) {
+    try { await unlink(join(stateDir, 'outbox.json')) } catch { /* ignore if missing */ }
+    return
+  }
+  await writeAtomicJson(stateDir, 'outbox.json', { entries })
+}
+
 // `bin/roost init` and tests write config.json directly — dispatcher mutations
 // go through mutateConfig (which targets config.local.json).
 export async function writeConfig(stateDir: string, config: OrchestratorConfig): Promise<void> {

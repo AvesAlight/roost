@@ -129,6 +129,7 @@ describe('registry + plugin-owned events + per-plugin config (end-to-end)', () =
     // the stub's message content — it just writes channels × text.
     const sent: Array<{ target: string; text: string }> = []
     const client = {
+      isJoined: () => true,
       say: (target: string, text: string) => {
         sent.push({ target, text })
         return { chunks: 1, mode: 'single' as const }

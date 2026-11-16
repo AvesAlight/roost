@@ -40,7 +40,12 @@ function getFreePort(): Promise<number> {
   })
 }
 
-function makeErgoConfig(port: number, datadir: string): string {
+export interface ErgoOptions {
+  /** ergo `channels.max-channels-per-client`. Unset keeps ergo's default. */
+  maxChannelsPerClient?: number
+}
+
+function makeErgoConfig(port: number, datadir: string, opts: ErgoOptions = {}): string {
   return `network:
   name: roost-test
 server:
@@ -66,7 +71,7 @@ accounts:
     enabled: false
 channels:
   default-modes: +nt
-  registration:
+${opts.maxChannelsPerClient ? `  max-channels-per-client: ${opts.maxChannelsPerClient}\n` : ''}  registration:
     enabled: false
 logging:
   - method: stderr
@@ -210,7 +215,7 @@ async function spawnErgoProcess(
  * The caller owns cleanup — no afterAll is registered.
  * Returns null if ergo binary is not available (test should skip).
  */
-export async function startErgoDedicated(): Promise<ErgoLifecycle | null> {
+export async function startErgoDedicated(opts: ErgoOptions = {}): Promise<ErgoLifecycle | null> {
   const ergo = findErgoBin()
   if (!ergo) return null
 
@@ -219,7 +224,7 @@ export async function startErgoDedicated(): Promise<ErgoLifecycle | null> {
   const configPath = join(datadir, 'ircd.yaml')
   const lockPath = join(datadir, 'ircd.lock')
 
-  await writeFile(configPath, makeErgoConfig(port, datadir))
+  await writeFile(configPath, makeErgoConfig(port, datadir, opts))
 
   const init = Bun.spawnSync([ergo, 'initdb', '--conf', configPath], { cwd: datadir })
   if (init.exitCode !== 0) {
