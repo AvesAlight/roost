@@ -1,4 +1,4 @@
-import type { RoostIrcClient } from '../irc-client.js'
+import { targetIsDirect, type RoostIrcClient } from '../irc-client.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
 import type { PluginMessage } from './plugin.js'
 
@@ -79,8 +79,6 @@ export interface DispatchOutcome {
   posted: number
 }
 
-const isChannelTarget = (target: string): boolean => target.startsWith('#') || target.startsWith('&')
-
 // Plugin-agnostic. Channels are pre-resolved by the plugin's resolveChannels.
 // All messages for a channel in one tick are joined (blank-line separated)
 // into one IRC post so a receiving agent sees the full tick's worth of context
@@ -89,8 +87,9 @@ const isChannelTarget = (target: string): boolean => target.startsWith('#') || t
 //
 // A post to a channel the client isn't in goes nowhere, and the server says
 // nothing. So a channel target that isn't joined is held, not sent. Held
-// texts come back in the outcome for the caller to queue. say() has no
-// delivery ack, so a disconnect mid-post can still drop a message.
+// texts come back in the outcome for the caller to queue. A DM that fails to
+// send is reported, not held: there's no membership for it to wait on. say()
+// has no delivery ack, so a disconnect mid-post can still drop a message.
 export async function dispatchMessages(
   messages: PluginMessage[],
   client: RoostIrcClient
@@ -99,7 +98,7 @@ export async function dispatchMessages(
   const failures: string[] = []
   let posted = 0
   for (const [target, texts] of groupMessagesByChannel(messages)) {
-    if (isChannelTarget(target) && !client.isJoined(target)) {
+    if (!targetIsDirect(target) && !client.isJoined(target)) {
       held.set(target, texts)
       continue
     }
@@ -108,7 +107,7 @@ export async function dispatchMessages(
       posted++
     } catch (e) {
       failures.push(`${target}: ${e}`)
-      held.set(target, texts)
+      if (!targetIsDirect(target)) held.set(target, texts)
     }
   }
   return { held, failures, posted }

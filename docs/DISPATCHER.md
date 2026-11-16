@@ -151,7 +151,10 @@ Cheapest to most informative:
 
    A watched channel missing from this file means the join failed. The
    dispatcher posts `[dispatcher_error] can't join #<ch>: <reason>` to
-   `#<project>-leads` once per failure, and `daemon.log` logs it every tick.
+   `#<project>-leads` when a channel starts failing or its reason changes.
+   `daemon.log` logs it every tick. The dispatcher joins `#<project>-leads`
+   first, so the limit lands on other channels. If leads itself can't be
+   joined, the notices only reach `daemon.log`.
    The usual reason is `405`: the dispatcher hit the server's
    `max-channels-per-client`. Unwatch finished issues and PRs, or raise the
    limit. Events for that channel wait in `outbox.json` until the join works.

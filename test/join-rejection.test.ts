@@ -42,8 +42,34 @@ describe('join rejection numerics (offline)', () => {
   }
 })
 
+describe('join rejection edge cases (offline)', () => {
+  it('a 403 with no pending join (e.g. a PART reply) is not logged as a join rejection', () => {
+    const client = makeClient()
+    const write = quietStderr()
+    try {
+      client.irc.command_handler.dispatch({ command: '403', params: ['test-bot', '#nope', 'No such channel'], tags: {} })
+      const logged = write.mock.calls.map(x => String(x[0])).join('')
+      expect(logged).not.toContain('rejected')
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('a socket close resolves pending joins with reason "disconnected"', async () => {
+    const client = makeClient()
+    const write = quietStderr()
+    try {
+      const pending = client.join('#x')
+      client.handleSocketClose()
+      expect(await pending).toEqual({ ok: false, members: [], reason: 'disconnected' })
+    } finally {
+      write.mockRestore()
+    }
+  })
+})
+
 describe.if(isErgoAvailable())('channel limit (real ergo, max-channels-per-client: 2)', () => {
-  it('third join fails fast with 405; a message for it is queued, not lost', async () => {
+  it('the join past the limit fails fast with 405; a message for it is queued, not lost', async () => {
     const ergo = await startErgoDedicated({ maxChannelsPerClient: 2 })
     if (!ergo) return
     const stateDir = await mkdtemp(join(tmpdir(), 'roost-outbox-'))
@@ -51,22 +77,25 @@ describe.if(isErgoAvailable())('channel limit (real ergo, max-channels-per-clien
     const client = new RoostIrcClientImpl({ nick: 'limit-bot', autoJoin: [], historySize: 0, joinHistoryLines: 0, joinHistoryMinutes: 0 })
     try {
       await connectAndWait(client, { host: ergo.host, port: ergo.port, nick: 'limit-bot' }, [])
-      const desired = new Set(['#lim-a', '#lim-b', '#lim-c'])
+      // '#lim-z' sorts last but is joined first, so it gets a slot over '#lim-b'.
+      const desired = new Set(['#lim-a', '#lim-b', '#lim-z'])
 
       const started = Date.now()
-      const failed = await joinDesired(client, desired)
+      const { failed, complete } = await joinDesired(client, desired, '#lim-z')
       expect(Date.now() - started).toBeLessThan(4000)
-      expect([...failed.keys()]).toEqual(['#lim-c'])
-      expect(failed.get('#lim-c')).toContain('405')
+      expect(complete).toBe(true)
+      expect([...failed.keys()]).toEqual(['#lim-b'])
+      expect(failed.get('#lim-b')).toContain('405')
+      expect(client.isJoined('#lim-z')).toBe(true)
 
       const logs: string[] = []
       const d = await deliver(stateDir, client, [
         { channels: ['#lim-a'], text: 'to a' },
-        { channels: ['#lim-c'], text: 'to c' },
+        { channels: ['#lim-b'], text: 'to b' },
       ], desired, l => logs.push(l))
       expect(d.posted).toBe(1)
       expect(d.held).toBe(1)
-      expect((await loadOutbox(stateDir)).map(e => [e.channel, e.text])).toEqual([['#lim-c', 'to c']])
+      expect((await loadOutbox(stateDir)).map(e => [e.channel, e.text])).toEqual([['#lim-b', 'to b']])
     } finally {
       write.mockRestore()
       client.quit()

@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { outboxMessages, nextOutbox } from '../outbox.js'
 import { loadOutbox, writeOutbox, type OutboxEntry } from '../config.js'
-import { deliver } from '../../orchestrator.js'
-import type { RoostIrcClient } from '../../irc-client.js'
+import { deliver, joinDesired, withFirst } from '../../orchestrator.js'
+import type { JoinResult, RoostIrcClient } from '../../irc-client.js'
 
 const entry = (channel: string, text: string, queued_at = '2026-01-01T00:00:00.000Z'): OutboxEntry => ({ channel, text, queued_at })
 
@@ -77,5 +77,55 @@ describe('deliver', () => {
     expect(sent).toEqual([])
     expect(await loadOutbox(dir)).toEqual([])
     expect(logs.some(l => l.includes('outbox drop #gone'))).toBe(true)
+  })
+})
+
+describe('loadOutbox', () => {
+  let dir: string
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }) })
+
+  it('moves an unreadable file aside and returns empty instead of throwing', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'roost-outbox-'))
+    await writeFile(join(dir, 'outbox.json'), '{"entries": [tru')
+    const logs: string[] = []
+    expect(await loadOutbox(dir, l => logs.push(l))).toEqual([])
+    const files = await readdir(dir)
+    expect(files).not.toContain('outbox.json')
+    expect(files.some(f => f.startsWith('outbox.json.corrupt-'))).toBe(true)
+    expect(logs.some(l => l.includes('outbox.json unreadable'))).toBe(true)
+  })
+})
+
+describe('joinDesired', () => {
+  function joinClient(results: Record<string, JoinResult>) {
+    const order: string[] = []
+    return {
+      order,
+      client: {
+        isJoined: () => false,
+        join: async (ch: string) => { order.push(ch); return results[ch] ?? { ok: true, members: [] } },
+      },
+    }
+  }
+
+  it('joins `first` before the rest', async () => {
+    const { client, order } = joinClient({})
+    await joinDesired(client, ['#a-issue', '#b-issue', '#p-leads'], '#p-leads')
+    expect(order).toEqual(['#p-leads', '#a-issue', '#b-issue'])
+  })
+
+  it('stops on a disconnect and reports the pass incomplete, without counting it a rejection', async () => {
+    const { client, order } = joinClient({
+      '#a': { ok: false, members: [], reason: '405 too many' },
+      '#b': { ok: false, members: [], reason: 'disconnected' },
+    })
+    const r = await joinDesired(client, ['#a', '#b', '#c'])
+    expect(r.complete).toBe(false)
+    expect([...r.failed.keys()]).toEqual(['#a'])
+    expect(order).toEqual(['#a', '#b'])
+  })
+
+  it('withFirst moves the channel to the front without duplicating it', () => {
+    expect(withFirst('#p', ['#a', '#p', '#b'])).toEqual(['#p', '#a', '#b'])
   })
 })

@@ -6,7 +6,7 @@ import {
   newBatchId,
   reassembleMultilineBatch,
 } from './irc-lib.js'
-import { historicalMeta } from './irc-client.js'
+import { historicalMeta, targetIsDirect } from './irc-client.js'
 import type {
   RoostIrcClient,
   ClientConfig,
@@ -65,13 +65,6 @@ const UNMAPPED_JOIN_ERRORS = new Set(['403', '476', '477'])
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
-
-// Canonical "is this a DM" predicate: an IRC PRIVMSG target is a channel iff it
-// starts with '#' (we don't care about '&'/'+'/'!' in this codebase). Used by
-// both the live message path (event.target) and the chathistory-batch path
-// (the original query target). Keeping a single derivation drops the risk of
-// the two paths drifting on the DM/channel boundary.
-const targetIsDirect = (target: string): boolean => !target.startsWith('#')
 
 // Mirrors IrcCommand.getServerTime(), including its znc.in/server-time numeric-unix
 // fallback, so a synthesized command's time tag parses identically to a real one.
@@ -760,9 +753,11 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private handleJoinRejected(rawChannel: string, reason: string): void {
     const channel = rawChannel.toLowerCase()
-    this.log(`join ${channel} rejected: ${reason}`)
+    // These numerics also answer PART, MODE, etc. Only a pending join makes
+    // this a join rejection. A duplicate JOIN's second reply finds none, too.
     const list = this.joinResolvers.get(channel)
     if (!list?.length) return
+    this.log(`join ${channel} rejected: ${reason}`)
     for (const r of list) r({ ok: false, members: [], reason })
     this.joinResolvers.delete(channel)
   }
@@ -1025,7 +1020,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.channelUsers.clear()
     }
     // Pre-empt pending resolvers; stale setTimeouts still fire but calling resolve() again is a no-op.
-    for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [] })
+    for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [], reason: 'disconnected' })
     this.joinResolvers.clear()
     for (const list of this.partResolvers.values()) for (const r of list) r(false)
     this.partResolvers.clear()

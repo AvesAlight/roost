@@ -177,13 +177,25 @@ export interface OutboxEntry {
   queued_at: string
 }
 
-export async function loadOutbox(stateDir: string): Promise<OutboxEntry[]> {
-  const file = Bun.file(join(stateDir, 'outbox.json'))
+// An unreadable outbox is moved aside and treated as empty. Throwing here
+// would stall every tick until someone deleted the file.
+export async function loadOutbox(stateDir: string, log: (msg: string) => void = m => process.stderr.write(m)): Promise<OutboxEntry[]> {
+  const path = join(stateDir, 'outbox.json')
+  const file = Bun.file(path)
   if (!(await file.exists())) return []
   const text = (await file.text()).trim()
   if (!text) return []
-  const parsed = JSON.parse(text) as { entries?: OutboxEntry[] }
-  return Array.isArray(parsed.entries) ? parsed.entries : []
+  try {
+    const parsed = JSON.parse(text) as { entries?: unknown }
+    if (!Array.isArray(parsed.entries)) throw new Error('no entries array')
+    return parsed.entries.filter((e): e is OutboxEntry =>
+      typeof e?.channel === 'string' && typeof e?.text === 'string' && typeof e?.queued_at === 'string')
+  } catch (e) {
+    const aside = `${path}.corrupt-${Date.now()}`
+    try { await rename(path, aside) } catch { /* next tick retries the move */ }
+    log(`orchestrator: outbox.json unreadable (${e}), moved to ${aside}; its queued messages are not retried\n`)
+    return []
+  }
 }
 
 export async function writeOutbox(stateDir: string, entries: OutboxEntry[]): Promise<void> {

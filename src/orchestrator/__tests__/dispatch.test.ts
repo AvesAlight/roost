@@ -189,4 +189,14 @@ describe('dispatchMessages', () => {
     expect([...out.held.entries()]).toEqual([['#a', ['x']]])
     expect(out.failures).toEqual(['#a: Error: not connected'])
   })
+
+  it('reports a failed DM without holding it (a nick has no membership to wait on)', async () => {
+    const client = {
+      isJoined: () => true,
+      say() { throw new Error('not connected') },
+    } as unknown as RoostIrcClient
+    const out = await dispatchMessages([msg(['some-nick'], 'x')], client)
+    expect(out.held.size).toBe(0)
+    expect(out.failures).toEqual(['some-nick: Error: not connected'])
+  })
 })
