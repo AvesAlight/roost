@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { exclusiveCreate } from '../fs-lock.js'
+import type { PluginConfig } from './plugin.js'
 
 const execFileP = promisify(execFile)
 
@@ -15,7 +16,7 @@ export interface WatchedEntry {
   channels?: string[]
 }
 
-export interface OrchestratorConfig {
+export interface OrchestratorConfig extends PluginConfig {
   // See src/orchestrator/naming.ts for shape + fallback rules.
   project?: string
   repo?: string

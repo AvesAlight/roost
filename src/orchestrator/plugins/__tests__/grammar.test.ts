@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, tryClaimPerLinearTeam, splitCommands } from '../grammar.js'
+import { tryClaimWatch, tryClaimPerN, tryClaimPerRepo, tryClaimPerLinearId, tryClaimPerLinearTeam, splitCommands, type ClaimWatchOptions } from '../grammar.js'
 
 // ---- splitCommands --------------------------------------------------------
 
@@ -424,5 +424,49 @@ describe('pipeline lines', () => {
   it('are not claimed by the per-N or per-repo parsers', () => {
     expect(tryClaimPerN(null, 'watch pipeline gh/o/r@abc1234def5678')).toBeNull()
     expect(tryClaimPerRepo('repo', 'watch pipeline gh/o/r@abc1234def5678')).toBeNull()
+  })
+})
+
+// ---- tryClaimWatch (generic claim) ----------------------------------------
+
+describe('tryClaimWatch', () => {
+  const opts: ClaimWatchOptions<{ env: string }> = {
+    missingSpec: verb => `${verb} env requires a name`,
+    matchSpec: (rest, verb) => {
+      if (rest[0] === 'defer') return null
+      if (!/^[a-z]+$/.test(rest[0])) return { error: `${verb} env: bad "${rest[0]}"` }
+      return { spec: { env: rest[0] }, consumed: 1 }
+    },
+  }
+
+  it('claims with channels, spreading the spec', () => {
+    expect(tryClaimWatch('env', 'watch env prod #a #b', opts)).toEqual({
+      kind: 'ok', cmd: { verb: 'watch', env: 'prod', channels: ['#a', '#b'] },
+    })
+  })
+
+  it('ignores lines with another target or no verb', () => {
+    expect(tryClaimWatch('env', 'watch pr 5', opts)).toBeNull()
+    expect(tryClaimWatch('env', 'help', opts)).toBeNull()
+  })
+
+  it('returns null when the matcher defers', () => {
+    expect(tryClaimWatch('env', 'watch env defer', opts)).toBeNull()
+  })
+
+  it('uses the caller text for a missing spec', () => {
+    expect(tryClaimWatch('env', 'unwatch env', opts)).toEqual({ kind: 'error', message: 'unwatch env requires a name' })
+  })
+
+  it('surfaces matcher errors', () => {
+    expect(tryClaimWatch('env', 'watch env PROD', opts)).toEqual({ kind: 'error', message: 'watch env: bad "PROD"' })
+  })
+
+  it('rejects channels on unwatch', () => {
+    expect(tryClaimWatch('env', 'unwatch env prod #a', opts)).toEqual({ kind: 'error', message: 'unwatch takes no channel arguments' })
+  })
+
+  it('rejects a malformed channel', () => {
+    expect(tryClaimWatch('env', 'watch env prod nochan', opts)?.kind).toBe('error')
   })
 })
