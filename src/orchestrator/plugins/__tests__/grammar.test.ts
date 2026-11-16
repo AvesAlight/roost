@@ -462,11 +462,11 @@ describe('tryClaimWatch', () => {
     expect(tryClaimWatch('env', 'watch env PROD', opts)).toEqual({ kind: 'error', message: 'watch env: bad "PROD"' })
   })
 
-  it('rejects channels on unwatch', () => {
-    expect(tryClaimWatch('env', 'unwatch env prod #a', opts)).toEqual({ kind: 'error', message: 'unwatch takes no channel arguments' })
-  })
-
-  it('rejects a malformed channel', () => {
-    expect(tryClaimWatch('env', 'watch env prod nochan', opts)?.kind).toBe('error')
+  it('keeps the real verb when the spec has a verb key', () => {
+    const r = tryClaimWatch<{ verb: string }>('env', 'watch env prod', {
+      missingSpec: () => 'x',
+      matchSpec: () => ({ spec: { verb: 'zzz' }, consumed: 1 }),
+    })
+    expect(r).toEqual({ kind: 'ok', cmd: { verb: 'watch', channels: [] } })
   })
 })

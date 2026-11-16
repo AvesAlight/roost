@@ -55,7 +55,7 @@ The dispatcher writes each `PluginMessage`'s text to every channel in `message.c
 
 The dispatcher knows only three global verbs (`help`, `help plugins`, `watch list`) and an allowlist. Everything else — `watch <N>`, `watch pr 5`, `watch repo org/r@main`, your own `watch deploy …` — is parsed by the plugin that claims the shape. The canonical semantics live on `Plugin.parseCommand` in `src/orchestrator/plugin.ts` (defer with `null`, claim with `{kind:'ok',cmd}`, fail with `{kind:'error',message}`).
 
-`tryClaimWatch(target, line, { missingSpec, matchSpec })` handles the shared parts: the verb, your target keyword, `unwatch` taking no channels, and channel validation. You supply the spec shape. `matchSpec(rest, verb)` gets the tokens after the target and returns `{ spec, consumed }` to claim, `{ error }` to fail, or `null` to defer to another plugin. The command is `{ verb, ...spec, channels }`.
+`tryClaimWatch(target, line, { missingSpec, matchSpec })` handles the shared parts: the verb, your target keyword, `unwatch` taking no channels, and channel validation. You supply the spec shape. `matchSpec(rest, verb)` gets the tokens after the target and returns `{ spec, consumed }` to claim, `{ error }` to fail, or `null` to defer to another plugin. The command is `{ ...spec, verb, channels }`. The target keyword must be lowercase. A `null` target only claims bare `watch <N>` and `watch <owner>/<repo>`, so a custom spec shape needs a keyword.
 
 ```ts
 parseCommand(line: string) {

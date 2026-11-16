@@ -5,7 +5,7 @@
 
 import type { ParseResult } from '../plugin.js'
 
-export const CHANNEL_RE = /^#[^\s,#]+$/
+const CHANNEL_RE = /^#[^\s,#]+$/
 
 // Bare `<owner>/<repo>` — optional repo positional in the per-N grammar.
 // Disambiguated from channels (start with `#`) and numbers (all digits) on shape.
@@ -61,7 +61,7 @@ export function splitCommands(text: string): string[] {
 // Tokenize a single line: lowercase verb + raw tail tokens. Returns null
 // when the line doesn't start with watch/unwatch so plugins short-circuit
 // on lines they obviously don't own. Internal: plugins claim via tryClaimWatch.
-export function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
+function tokenizeVerbLine(line: string): { verb: Verb; tokens: string[] } | null {
   const tokens = line.split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
   const verb = tokens[0].toLowerCase()
@@ -85,10 +85,12 @@ export interface ClaimWatchOptions<S> {
 
 export type WatchCommand<S> = { verb: Verb } & S & { channels: string[] }
 
-// Generic watch/unwatch claim. Owns the shared grammar: verb, target keyword
-// (null = bare verb), the missing-spec error, `unwatch` taking no channels,
+// Generic watch/unwatch claim. Owns the shared grammar: verb, target keyword,
+// the missing-spec error, `unwatch` taking no channels,
 // and channel validation. The plugin supplies only its spec shape. Returns
 // null when the line isn't ours, `{kind:'error'}` when claimed but malformed.
+// `target` must be lowercase. `null` only claims bare `watch <N>` and
+// `watch <owner>/<repo>`; a custom spec shape needs a keyword.
 export function tryClaimWatch<S extends object>(
   target: string | null,
   line: string,
@@ -109,14 +111,14 @@ export function tryClaimWatch<S extends object>(
   const channels = rest.slice(m.consumed)
   if (verb === 'unwatch') {
     if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
-    return { kind: 'ok', cmd: { verb, ...m.spec, channels: [] } }
+    return { kind: 'ok', cmd: { ...m.spec, verb, channels: [] } }
   }
   for (const c of channels) {
     if (!CHANNEL_RE.test(c)) {
       return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
     }
   }
-  return { kind: 'ok', cmd: { verb, ...m.spec, channels } }
+  return { kind: 'ok', cmd: { ...m.spec, verb, channels } }
 }
 
 // Try to claim a per-N line for `target` (null = bare `watch <N>`). Returns
@@ -227,7 +229,7 @@ export function tryClaimPerLinearTeam(target: string, line: string): ParseResult
 // `target` is set but doesn't appear at position 0. `target=null` means the
 // plugin claims bare verbs; we still reject a leading reserved verb so
 // `watch unwatch 5` (almost certainly a typo) doesn't silently become target=unwatch.
-export function matchTarget(target: string | null, tokens: string[]): number | null {
+function matchTarget(target: string | null, tokens: string[]): number | null {
   if (target === null) {
     const first = tokens[0]
     if (first === undefined) return 0

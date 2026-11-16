@@ -7,7 +7,7 @@ import type { OrchestratorConfig } from './config.js'
 // The config view plugins see. OrchestratorConfig extends it, so the
 // dispatcher passes its full config wherever a plugin takes this.
 export interface PluginConfig {
-  // See naming.ts for the project fallback rules.
+  // See src/orchestrator/naming.ts for shape + fallback rules.
   project?: string
   repo?: string
   irc?: {

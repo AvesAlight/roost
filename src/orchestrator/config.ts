@@ -17,9 +17,6 @@ export interface WatchedEntry {
 }
 
 export interface OrchestratorConfig extends PluginConfig {
-  // See src/orchestrator/naming.ts for shape + fallback rules.
-  project?: string
-  repo?: string
   agent_logins?: string[]
   irc?: {
     nick?: string
