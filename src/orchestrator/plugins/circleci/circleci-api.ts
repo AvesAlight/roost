@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { PluginLogger } from '../../plugin.js'
+import type { PluginLogger } from '../../plugin-api.js'
 
 // The only host the token is ever sent to. Every request URL is built from
 // this constant plus validated path segments, never from a response field.

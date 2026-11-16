@@ -4,9 +4,15 @@
 import type { Command } from './dispatcher-dm-handler.js'
 import type { OrchestratorConfig } from './config.js'
 
-// Narrow view of OrchestratorConfig surfaced to external plugins — only the
-// `plugins.<name>` slice path, not the wider shape.
+// The config view plugins see. OrchestratorConfig extends it, so the
+// dispatcher passes its full config wherever a plugin takes this.
 export interface PluginConfig {
+  // See src/orchestrator/naming.ts for shape + fallback rules.
+  project?: string
+  repo?: string
+  irc?: {
+    project_channel?: string
+  }
   plugins?: Record<string, unknown>
 }
 
@@ -45,10 +51,10 @@ export interface Plugin {
   readonly name: string
   // Config-only channel view at boot, before first tick. Excludes the project
   // channel — orchestrator unions that in.
-  desiredChannels(config: OrchestratorConfig): string[]
+  desiredChannels(config: PluginConfig): string[]
   // Per tick: next state slice, messages, and the live channel set
   // (post-scrape, including dynamic discoveries). `prevState === null` signals seed.
-  runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
+  runTick(config: PluginConfig, prevState: unknown): Promise<PluginTickResult>
   // Try to claim a single watch/unwatch DM line. The dispatcher iterates
   // plugins in `grammarPriority` order (higher first; ties → `config.plugins`
   // Object.keys order) and takes the first non-null result:
@@ -74,7 +80,7 @@ export interface Plugin {
   // deterministic failures come back as `"error: ..."`. `list`/`help` broadcast
   // to every plugin; replies join with `\n\n`. Plugin-claimed commands arrive
   // as `{kind:'plugin', plugin:this.name, cmd:<your parsed shape>}`.
-  handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
+  handleCommand?(merged: PluginConfig, local: PluginConfig, cmd: Command): string | null | Promise<string | null>
   // Optional repo-mode check for plugins that own a `watched`/`repo` shape.
   // Throws on violation. Called after every config load.
   //
@@ -82,15 +88,15 @@ export interface Plugin {
   // the DM parser validates OWNER/REPO shape at write time, leaving the
   // overlay parser-clean by construction. Single source of truth for the
   // tracked-vs-overlay distinction lives here — call sites cite this JSDoc.
-  assertRepoMode?(base: OrchestratorConfig): void
+  assertRepoMode?(base: PluginConfig): void
 }
 
 export abstract class BasePlugin implements Plugin {
   abstract readonly name: string
   constructor(protected readonly defaultChannel: string) {}
-  abstract desiredChannels(config: OrchestratorConfig): string[]
-  abstract runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult>
-  handleCommand?(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null | Promise<string | null>
+  abstract desiredChannels(config: PluginConfig): string[]
+  abstract runTick(config: PluginConfig, prevState: unknown): Promise<PluginTickResult>
+  handleCommand?(merged: PluginConfig, local: PluginConfig, cmd: Command): string | null | Promise<string | null>
 
   // Union auto-detected channels with declared channels; fall back to the
   // default channel if both are empty (defensive for any entity-less event).
@@ -100,13 +106,13 @@ export abstract class BasePlugin implements Plugin {
   }
 
   // This plugin's config slice from `config.plugins[name]` — shape is plugin-private.
-  protected pluginConfig<T>(config: OrchestratorConfig): T | undefined {
+  protected pluginConfig<T>(config: PluginConfig): T | undefined {
     return config.plugins?.[this.name] as T | undefined
   }
 
   // Read-or-create the typed slice under `local.plugins[name]`. The one
   // mutation seam shared by every watch-list plugin.
-  protected localSlice<T extends object>(local: OrchestratorConfig): T {
+  protected localSlice<T extends object>(local: PluginConfig): T {
     local.plugins ??= {}
     const existing = local.plugins[this.name]
     if (existing && typeof existing === 'object') return existing as T

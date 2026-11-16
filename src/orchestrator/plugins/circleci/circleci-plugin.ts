@@ -26,25 +26,18 @@
 //
 // There is no seeding: a watch that starts after a workflow finished, or while
 // one is on hold, reports that state on its first poll.
-import type { Command } from '../../dispatcher-dm-handler.js'
-import type { OrchestratorConfig } from '../../config.js'
-import type { ParseResult, PluginTickResult, PluginMessage } from '../../plugin.js'
-import { BasePlugin, defaultPluginLogger, type PluginLogger } from '../../plugin.js'
-import { resolveProjectChannel } from '../../naming.js'
-import { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from '../_shared.js'
-import { CooldownGate } from '../_rate-limit.js'
-import { CHANNEL_RE, matchTarget, tokenizeVerbLine, type Verb } from '../grammar.js'
+import {
+  BasePlugin, CooldownGate, addChannelsToEntry, applyUnwatchEntry, defaultPluginLogger, resolveProjectChannel,
+  trackedRefusal, tryClaimWatch,
+  type Command, type ParseResult, type PluginConfig, type PluginLogger, type PluginMessage, type PluginTickResult,
+  type WatchCommand,
+} from '../../plugin-api.js'
 import {
   CircleCiClient, CircleCiError, CircleCiAuthError, CircleCiMissingTokenError, CircleCiNotFoundError, CircleCiRateLimitError,
   CIRCLECI_APP, MISSING_TOKEN_MESSAGE, type CciJob, type CciPipeline, type CciWorkflow,
 } from './circleci-api.js'
 
-interface PerPipelineCommand {
-  verb: Verb
-  slug: string
-  sha: string
-  channels: string[]
-}
+type PerPipelineCommand = WatchCommand<{ slug: string; sha: string }>
 
 // CircleCI project slug (`gh/<org>/<repo>`) plus a commit sha. A prefix of 7+
 // hex chars is accepted; the sha is lowercased so `ABC1234` and `abc1234`
@@ -52,41 +45,19 @@ interface PerPipelineCommand {
 const PIPELINE_SPEC_RE = /^(gh\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)@([0-9A-Fa-f]{7,40})$/
 
 // Try to claim a per-pipeline line for `target` (`pipeline`): `watch pipeline
-// gh/<org>/<repo>@<sha> [#chan ...]`. Returns:
-//   - `null` if the line isn't watch/unwatch, or doesn't lead with this target.
-//   - `{kind:'ok',cmd}` on a clean claim.
-//   - `{kind:'error',msg}` when the line claimed the target but the spec or a
-//     channel is malformed. The target keyword is unambiguous, so there is no
-//     shape-based defer to another plugin.
+// gh/<org>/<repo>@<sha> [#chan ...]`. The target keyword is unambiguous, so
+// there is no shape-based defer to another plugin.
 export function tryClaimPerPipeline(target: string, line: string): ParseResult<PerPipelineCommand> | null {
-  const parsed = tokenizeVerbLine(line)
-  if (!parsed) return null
-  const { verb, tokens } = parsed
-  const targetMatch = matchTarget(target, tokens)
-  if (targetMatch === null) return null
-  const rest = tokens.slice(targetMatch)
-
-  const specTok = rest[0]
-  if (specTok === undefined) {
-    return { kind: 'error', message: `${verb} ${target} requires a gh/<org>/<repo>@<sha> spec` }
-  }
-  const m = specTok.match(PIPELINE_SPEC_RE)
-  if (!m) {
-    return { kind: 'error', message: `${verb} ${target}: "${specTok}" is not a valid gh/<org>/<repo>@<sha> spec (sha must be 7-40 hex chars)` }
-  }
-  const slug = m[1]
-  const sha = m[2].toLowerCase()
-  const channels = rest.slice(1)
-  if (verb === 'unwatch') {
-    if (channels.length) return { kind: 'error', message: 'unwatch takes no channel arguments' }
-    return { kind: 'ok', cmd: { verb, slug, sha, channels: [] } }
-  }
-  for (const c of channels) {
-    if (!CHANNEL_RE.test(c)) {
-      return { kind: 'error', message: `channels must match ${CHANNEL_RE.source}: got "${c}"` }
-    }
-  }
-  return { kind: 'ok', cmd: { verb, slug, sha, channels } }
+  return tryClaimWatch<{ slug: string; sha: string }>(target, line, {
+    missingSpec: verb => `${verb} ${target} requires a gh/<org>/<repo>@<sha> spec`,
+    matchSpec: (rest, verb) => {
+      const m = rest[0].match(PIPELINE_SPEC_RE)
+      if (!m) {
+        return { error: `${verb} ${target}: "${rest[0]}" is not a valid gh/<org>/<repo>@<sha> spec (sha must be 7-40 hex chars)` }
+      }
+      return { spec: { slug: m[1], sha: m[2].toLowerCase() }, consumed: 1 }
+    },
+  })
 }
 
 export interface PipelineWatchEntry {
@@ -280,7 +251,7 @@ export class CircleCiPlugin extends BasePlugin {
 
   // ---- DM command handling --------------------------------------------
 
-  handleCommand(merged: OrchestratorConfig, local: OrchestratorConfig, cmd: Command): string | null {
+  handleCommand(merged: PluginConfig, local: PluginConfig, cmd: Command): string | null {
     this.pruneDone(local)
     if (cmd.kind === 'list') return this.formatListSection(merged)
     if (cmd.kind === 'help') return this.formatHelpSection()
@@ -299,17 +270,17 @@ export class CircleCiPlugin extends BasePlugin {
 
   // Finished entries drop out of the local overlay. Only a write DM persists
   // this; list/help read-only batches discard it, so list filters too.
-  private pruneDone(local: OrchestratorConfig): void {
+  private pruneDone(local: PluginConfig): void {
     const slice = this.pluginConfig<CircleCiPluginConfig>(local)
     if (!slice?.watched?.length) return
     slice.watched = slice.watched.filter(e => !this.isDone(e))
   }
 
-  private liveWatched(config: OrchestratorConfig): PipelineWatchEntry[] {
+  private liveWatched(config: PluginConfig): PipelineWatchEntry[] {
     return (this.pluginConfig<CircleCiPluginConfig>(config)?.watched ?? []).filter(e => !this.isDone(e))
   }
 
-  private applyWatch(merged: OrchestratorConfig, local: OrchestratorConfig, slug: string, sha: string, channels: string[]): string {
+  private applyWatch(merged: PluginConfig, local: PluginConfig, slug: string, sha: string, channels: string[]): string {
     const labelStr = label(slug, sha)
     const match = (e: PipelineWatchEntry) => sameWatch(e, slug, sha)
     if (!this.liveWatched(merged).some(match)) {
@@ -325,7 +296,7 @@ export class CircleCiPlugin extends BasePlugin {
     return addChannelsToEntry(localEntry, channels, labelStr)
   }
 
-  private applyUnwatch(merged: OrchestratorConfig, local: OrchestratorConfig, slug: string, sha: string): string {
+  private applyUnwatch(merged: PluginConfig, local: PluginConfig, slug: string, sha: string): string {
     return applyUnwatchEntry<PipelineWatchEntry>(
       this.liveWatched(merged),
       this.pluginConfig<CircleCiPluginConfig>(local)?.watched ?? [],
@@ -334,7 +305,7 @@ export class CircleCiPlugin extends BasePlugin {
     )
   }
 
-  private formatListSection(merged: OrchestratorConfig): string {
+  private formatListSection(merged: PluginConfig): string {
     const groups = groupEntries(this.liveWatched(merged))
     const header = `${this.name} (${groups.size}):`
     if (!groups.size) return `${header}\n  (none)`
@@ -357,7 +328,7 @@ export class CircleCiPlugin extends BasePlugin {
   // A watch that ended this tick still counts: the dispatcher reconciles channel
   // membership before it posts the tick's messages, and parting the channel
   // first would drop the ending line. It drops out on the next tick.
-  desiredChannels(config: OrchestratorConfig): string[] {
+  desiredChannels(config: PluginConfig): string[] {
     const chans = new Set<string>()
     const entries = this.pluginConfig<CircleCiPluginConfig>(config)?.watched ?? []
     for (const e of entries) {
@@ -369,7 +340,7 @@ export class CircleCiPlugin extends BasePlugin {
 
   // ---- tick -------------------------------------------------------------
 
-  async runTick(config: OrchestratorConfig, prevState: unknown): Promise<PluginTickResult> {
+  async runTick(config: PluginConfig, prevState: unknown): Promise<PluginTickResult> {
     const slice = this.pluginConfig<CircleCiPluginConfig>(config) ?? {}
     const prev = prevState as CircleCiPluginState | null
     const projectChannel = resolveProjectChannel(config)

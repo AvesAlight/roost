@@ -22,7 +22,21 @@ import {
 } from 'roost/plugin'
 ```
 
-`PluginConfig` is `{ plugins?: Record<string, unknown> }`. The dispatcher passes the full config at runtime. Type your method parameters as `PluginConfig` and read your slice via `BasePlugin.pluginConfig<T>(config)`. Put everything else you need in your slice.
+`PluginConfig` is `{ project?, repo?, irc?: { project_channel? }, plugins? }`. The dispatcher passes the full config at runtime. Type your method parameters as `PluginConfig` and read your slice via `BasePlugin.pluginConfig<T>(config)`. Put everything else you need in your slice.
+
+Shared helpers, so you don't copy the built-ins' internals:
+
+| Export | Use |
+|---|---|
+| `tryClaimWatch`, `tryClaimPerN`, `tryClaimPerRepo` | DM grammar. See "DM grammar" below. |
+| `addChannelsToEntry(entry, channels, label)` | Watch reply when the entry already exists locally: unions channels in. |
+| `applyUnwatchEntry(merged, local, match, label)` | Unwatch reply: removes a local entry, refuses a tracked one. |
+| `trackedRefusal(label, action)` | Reply when a DM tries to change an entry in tracked `config.json`. |
+| `CooldownGate` | One warning per window per key. `claim(key, now)` checks and records; `clear(key)` resets. |
+| `resolveProjectChannel(config)` | The project channel. Your constructor already gets it as `defaultChannel`, so use this only on config-only paths. |
+| `defaultPluginLogger` | Stderr logger, for constructing a plugin directly in tests. |
+
+The built-in `circleci` plugin imports only from this surface. It's a working example.
 
 ## Contract
 
@@ -41,7 +55,21 @@ The dispatcher writes each `PluginMessage`'s text to every channel in `message.c
 
 The dispatcher knows only three global verbs (`help`, `help plugins`, `watch list`) and an allowlist. Everything else — `watch <N>`, `watch pr 5`, `watch repo org/r@main`, your own `watch deploy …` — is parsed by the plugin that claims the shape. The canonical semantics live on `Plugin.parseCommand` in `src/orchestrator/plugin.ts` (defer with `null`, claim with `{kind:'ok',cmd}`, fail with `{kind:'error',message}`).
 
-Shared parser helpers cover the two shipped shapes:
+`tryClaimWatch(target, line, { missingSpec, matchSpec })` handles the shared parts: the verb, your target keyword, `unwatch` taking no channels, and channel validation. You supply the spec shape. `matchSpec(rest, verb)` gets the tokens after the target and returns `{ spec, consumed }` to claim, `{ error }` to fail, or `null` to defer to another plugin. The command is `{ ...spec, verb, channels }`. The target keyword must be lowercase. A `null` target only claims bare `watch <N>` and `watch <owner>/<repo>`, so a custom spec shape needs a keyword.
+
+```ts
+parseCommand(line: string) {
+  // Claims `watch deploy <env> [#chan ...]`.
+  return tryClaimWatch('deploy', line, {
+    missingSpec: verb => `${verb} deploy requires an environment`,
+    matchSpec: (rest, verb) => /^[a-z]+$/.test(rest[0])
+      ? { spec: { env: rest[0] }, consumed: 1 }
+      : { error: `${verb} deploy: "${rest[0]}" is not an environment` },
+  })
+}
+```
+
+Two shipped shapes are built on it:
 
 ```ts
 import { tryClaimPerN, tryClaimPerRepo } from 'roost/plugin'

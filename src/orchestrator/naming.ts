@@ -2,8 +2,9 @@
 // operator-facing description lives in DISPATCHER.md.
 
 import type { OrchestratorConfig } from './config.js'
+import type { PluginConfig } from './plugin.js'
 
-export function resolveProjectChannel(config: OrchestratorConfig): string {
+export function resolveProjectChannel(config: PluginConfig): string {
   return config.irc?.project_channel ?? leadsChannel(defaultProject(config))
 }
 
@@ -29,7 +30,7 @@ function normalizeBasename(base: string): string {
 
 // Falls back to the basename of `repo` if `project` is unset. Multi-mode
 // (no `config.repo`) requires `config.project` set — no inherit target.
-export function defaultProject(config: OrchestratorConfig): string {
+export function defaultProject(config: PluginConfig): string {
   if (config.project) {
     validateProject(config.project)
     return config.project
