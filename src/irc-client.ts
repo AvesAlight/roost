@@ -82,6 +82,8 @@ export type MembershipKind = 'join' | 'leave' | 'nick'
 export interface JoinResult {
   ok: boolean
   members: string[]
+  // Set when ok is false: the server's rejection (e.g. "405 too many channels") or "timeout".
+  reason?: string
 }
 
 export interface RoostIrcClient {
@@ -119,3 +121,10 @@ export interface RoostIrcClient {
   on(event: 'membership', handler: (kind: MembershipKind, nick: string, channel: string, extras: MembershipExtras) => void): void
   on(event: 'system',     handler: (kind: SystemKind, content: SystemContent) => void): void
 }
+
+// Canonical "is this a DM" predicate: an IRC PRIVMSG target is a channel iff it
+// starts with '#' (we don't care about '&'/'+'/'!' in this codebase). Used by
+// the client's live and chathistory message paths and the dispatcher's
+// hold-unjoined check. Keeping a single derivation drops the risk of them
+// drifting on the DM/channel boundary.
+export const targetIsDirect = (target: string): boolean => !target.startsWith('#')

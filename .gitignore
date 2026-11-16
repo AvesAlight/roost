@@ -22,6 +22,8 @@ coverage/
 .orchestrator/.state.*.tmp
 .orchestrator/daemon.log
 .orchestrator/joined-channels.txt
+.orchestrator/outbox.json
+.orchestrator/.outbox.json.*.tmp
 .orchestrator/dispatcher-boot.log
 .orchestrator/.dispatcher.start.lock/
 .orchestrator/token-snapshots.json

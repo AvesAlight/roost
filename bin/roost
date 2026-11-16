@@ -431,7 +431,7 @@ _init_config_local_json() {
 }
 
 _init_gitignore() {
-  printf 'config.local.json\nstate.json\nlast-tick.txt\nlast-error.txt\ndispatcher.pid\njoined-channels.txt\ndispatcher-boot.log\ndaemon.log\n.dispatcher.start.lock\ntoken-snapshots.json\n.token-snapshots.*.tmp\n'
+  printf 'config.local.json\nstate.json\nlast-tick.txt\nlast-error.txt\ndispatcher.pid\njoined-channels.txt\ndispatcher-boot.log\ndaemon.log\n.dispatcher.start.lock\ntoken-snapshots.json\n.token-snapshots.*.tmp\noutbox.json\n.outbox.json.*.tmp\n'
 }
 
 cmd_init() {

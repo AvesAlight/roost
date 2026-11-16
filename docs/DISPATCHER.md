@@ -131,7 +131,8 @@ State files in `.orchestrator/`:
 | `last-error.txt` | Last fatal tick error. Cleared on success. |
 | `daemon.log` | Per-tick log line. Tail this when debugging. |
 | `dispatcher.pid` | PID file for the running daemon (JSON `{pid, started_at_ms, cmdline}`). Written on boot via exclusive create, removed on graceful exit. |
-| `joined-channels.txt` | Channels the dispatcher believes it's joined to, one per line. Refreshed each tick — freshness is "as of last successful poll", not "right now". |
+| `joined-channels.txt` | Channels the dispatcher is actually in, one per line. A channel whose join the server rejected is left out. Refreshed each tick, so it's "as of the last tick", not "right now". |
+| `outbox.json` | Messages the dispatcher couldn't post because it wasn't in the target channel. Retried each tick, oldest first. Dropped when the channel is unwatched, or past 200 per channel. Absent when empty. |
 
 ### Readiness check (three signals)
 
@@ -147,6 +148,16 @@ Cheapest to most informative:
    contain `#<project>-leads` and every `#<project>-issue-N` for currently-
    watched items. Snapshot is "last successful tick" — may lag reality during
    an IRC blip.
+
+   A watched channel missing from this file means the join failed. The
+   dispatcher posts `[dispatcher_error] can't join #<ch>: <reason>` to
+   `#<project>-leads` when a channel starts failing or its reason changes.
+   `daemon.log` logs it every tick. The dispatcher joins `#<project>-leads`
+   first, so the limit lands on other channels. If leads itself can't be
+   joined, the notices only reach `daemon.log`.
+   The usual reason is `405`: the dispatcher hit the server's
+   `max-channels-per-client`. Unwatch finished issues and PRs, or raise the
+   limit. Events for that channel wait in `outbox.json` until the join works.
 
 ### Stopping
 

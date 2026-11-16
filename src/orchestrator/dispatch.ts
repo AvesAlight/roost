@@ -1,4 +1,4 @@
-import type { RoostIrcClient } from '../irc-client.js'
+import { targetIsDirect, type RoostIrcClient } from '../irc-client.js'
 import type { SystemKind, ConnectOpts } from '../irc-client.js'
 import type { PluginMessage } from './plugin.js'
 
@@ -70,23 +70,45 @@ export function groupMessagesByChannel(messages: PluginMessage[]): Map<string, s
   return byChannel
 }
 
-// Plugin-agnostic. Channels are pre-resolved by the plugin's resolveChannels —
-// trust the input. say() has no delivery ack; a mid-tick disconnect silently
-// drops in-flight messages. All messages for a channel in one tick are joined
-// (blank-line separated) into one IRC post so a receiving agent sees the
-// full tick's worth of context before replying. say() splits a post that
-// exceeds the server's multiline limits, which a first-tick backlog dump can.
+export interface DispatchOutcome {
+  // Per channel, the texts that weren't posted, in post order.
+  held: Map<string, string[]>
+  // say() errors, as "<target>: <error>".
+  failures: string[]
+  // Channel posts that went out.
+  posted: number
+}
+
+// Plugin-agnostic. Channels are pre-resolved by the plugin's resolveChannels.
+// All messages for a channel in one tick are joined (blank-line separated)
+// into one IRC post so a receiving agent sees the full tick's worth of context
+// before replying. say() splits a post that exceeds the server's multiline
+// limits, which a first-tick backlog dump can.
+//
+// A post to a channel the client isn't in goes nowhere, and the server says
+// nothing. So a channel target that isn't joined is held, not sent. Held
+// texts come back in the outcome for the caller to queue. A DM that fails to
+// send is reported, not held: there's no membership for it to wait on. say()
+// has no delivery ack, so a disconnect mid-post can still drop a message.
 export async function dispatchMessages(
   messages: PluginMessage[],
   client: RoostIrcClient
-): Promise<void> {
+): Promise<DispatchOutcome> {
+  const held = new Map<string, string[]>()
   const failures: string[] = []
+  let posted = 0
   for (const [target, texts] of groupMessagesByChannel(messages)) {
+    if (!targetIsDirect(target) && !client.isJoined(target)) {
+      held.set(target, texts)
+      continue
+    }
     try {
       client.say(target, texts.join('\n\n'))
+      posted++
     } catch (e) {
       failures.push(`${target}: ${e}`)
+      if (!targetIsDirect(target)) held.set(target, texts)
     }
   }
-  if (failures.length) throw new Error(failures.join('; '))
+  return { held, failures, posted }
 }

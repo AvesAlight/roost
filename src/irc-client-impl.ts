@@ -6,7 +6,7 @@ import {
   newBatchId,
   reassembleMultilineBatch,
 } from './irc-lib.js'
-import { historicalMeta } from './irc-client.js'
+import { historicalMeta, targetIsDirect } from './irc-client.js'
 import type {
   RoostIrcClient,
   ClientConfig,
@@ -51,15 +51,20 @@ const OWN_MESSAGE_DEDUPE_WINDOW_MS = 5000
 // Ergo-specific; extend if other servers ship similar services.
 const HISTORY_SERVICE_SENDERS = new Set(['histserv'])
 
+// JOIN rejection numerics. irc-framework emits the mapped ones as 'irc error'
+// with a named error; the rest arrive as 'unknown command' with the bare numeric.
+const MAPPED_JOIN_ERRORS: Record<string, string> = {
+  too_many_channels: '405',
+  channel_is_full: '471',
+  invite_only_channel: '473',
+  banned_from_channel: '474',
+  bad_channel_key: '475',
+}
+// 403 ERR_NOSUCHCHANNEL, 476 ERR_BADCHANMASK, 477 ERR_NEEDREGGEDNICK.
+const UNMAPPED_JOIN_ERRORS = new Set(['403', '476', '477'])
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
-
-// Canonical "is this a DM" predicate: an IRC PRIVMSG target is a channel iff it
-// starts with '#' (we don't care about '&'/'+'/'!' in this codebase). Used by
-// both the live message path (event.target) and the chathistory-batch path
-// (the original query target). Keeping a single derivation drops the risk of
-// the two paths drifting on the DM/channel boundary.
-const targetIsDirect = (target: string): boolean => !target.startsWith('#')
 
 // Mirrors IrcCommand.getServerTime(), including its znc.in/server-time numeric-unix
 // fallback, so a synthesized command's time tag parses identically to a real one.
@@ -217,11 +222,21 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     channel = channel.toLowerCase()
     if (this.channelUsers.has(channel)) return { ok: true, members: this.getUsers(channel) }
     return new Promise<JoinResult>((resolve) => {
+      let settled = false
+      const settle = (result: JoinResult) => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
       const list = this.joinResolvers.get(channel) ?? []
-      list.push(resolve)
+      list.push(settle)
       this.joinResolvers.set(channel, list)
       this.irc.join(channel)
-      setTimeout(() => resolve({ ok: false, members: [] }), 5000).unref?.()
+      setTimeout(() => {
+        if (settled) return
+        this.log(`join ${channel} timed out`)
+        settle({ ok: false, members: [], reason: 'timeout' })
+      }, 5000).unref?.()
     })
   }
 
@@ -484,6 +499,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     // server; without this the loss is invisible.
     this.irc.on('unknown command', (cmd: { command?: string; params?: string[] }) => {
       if (cmd?.command === 'FAIL') this.log(`server FAIL ${(cmd.params ?? []).join(' ')}`)
+      // Join rejections irc-framework has no named event for. Params: <me> <channel> :<reason>.
+      const code = cmd?.command ?? ''
+      if (UNMAPPED_JOIN_ERRORS.has(code)) {
+        const params = cmd.params ?? []
+        if (params[1]) this.handleJoinRejected(params[1], `${code} ${params[params.length - 1] ?? ''}`.trim())
+      }
+    })
+    // Join rejections irc-framework maps to named 'irc error' events. Without
+    // this a rejected JOIN looks like a 5s timeout and the reason is lost.
+    this.irc.on('irc error', (e: { error?: string; channel?: string; reason?: string }) => {
+      const code = e?.error ? MAPPED_JOIN_ERRORS[e.error] : undefined
+      if (code && e.channel) this.handleJoinRejected(e.channel, `${code} ${e.reason ?? e.error}`.trim())
     })
     this.irc.on('socket close', () => this.handleSocketClose())
     this.irc.on('socket error', (err: Error) => this.handleSocketError(err))
@@ -722,6 +749,17 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     }
     this.ensureChannelSet(channel).add(event.nick)
     this.emitMembership('join', event.nick, channel)
+  }
+
+  private handleJoinRejected(rawChannel: string, reason: string): void {
+    const channel = rawChannel.toLowerCase()
+    // These numerics also answer PART, MODE, etc. Only a pending join makes
+    // this a join rejection. A duplicate JOIN's second reply finds none, too.
+    const list = this.joinResolvers.get(channel)
+    if (!list?.length) return
+    this.log(`join ${channel} rejected: ${reason}`)
+    for (const r of list) r({ ok: false, members: [], reason })
+    this.joinResolvers.delete(channel)
   }
 
   private handleUserlist(event: UserlistEvent): void {
@@ -982,7 +1020,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.channelUsers.clear()
     }
     // Pre-empt pending resolvers; stale setTimeouts still fire but calling resolve() again is a no-op.
-    for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [] })
+    for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [], reason: 'disconnected' })
     this.joinResolvers.clear()
     for (const list of this.partResolvers.values()) for (const r of list) r(false)
     this.partResolvers.clear()

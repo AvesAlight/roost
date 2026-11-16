@@ -209,7 +209,7 @@ Before you ack the merge, verify the approval is real and human: `gh pr view <N>
      The `--force` is required because a worker's build leaves the tree dirty with untracked artifacts — which means **a clean tree is not evidence you have the right tree.** Cleanliness was never the property that mattered; the branch field is. If no record matches the branch, stop and flag it rather than guessing.
 
      After removing, confirm `git worktree list` no longer shows the paths. If they're still there the removal didn't take — resolve and retry. Then delete the reviewer's throwaway branch, which outlives its worktree: `git branch -D review/<N>`. Leave the worker's branch alone; it's merged history.
-   - DM `<project>-dispatcher`: `unwatch <N>` (if an issue watch was set) then `unwatch pr <N>`. Scope it to the merged PR — the daemon keeps running across issues, and full shutdown is the teardown dance below.
+   - DM `<project>-dispatcher` to unwatch everything you watched for this issue. That's `unwatch pr <N>`, plus the issue watch if one was set. A GitHub issue watch is `unwatch <N>`. Other trackers use their own shape (e.g. `unwatch linear <TEAM>-<N>`). The dispatcher's `help` lists them. Then DM `watch list` and confirm none of this issue's watches remain. Each stale watch holds dispatcher channels. Enough of them push it past the server's channel limit. Scope this to the merged PR. The daemon keeps running across issues. Full shutdown is the teardown dance below.
    - Gather the token-cost report. Both are per-issue, so both get a full-lifetime total. Capture the output once and reuse it for both the IRC post and the issue comment:
      ```
      cost_block=$("$(roost root)/bin/roost-token-usage" report "$(pwd)/.orchestrator" <N> \

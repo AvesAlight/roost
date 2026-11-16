@@ -8,9 +8,10 @@ function msg(channels: string[], text: string): PluginMessage {
 }
 
 // Capture say() calls with a minimal RoostIrcClient stub.
-function captureClient(): { client: RoostIrcClient; sent: Array<{ target: string; text: string }> } {
+function captureClient(joined?: Set<string>): { client: RoostIrcClient; sent: Array<{ target: string; text: string }> } {
   const sent: Array<{ target: string; text: string }> = []
   const client = {
+    isJoined: (ch: string) => joined?.has(ch) ?? true,
     say(target: string, text: string) {
       sent.push({ target, text })
       return { chunks: 1, mode: 'single' as const }
@@ -161,5 +162,41 @@ describe('dispatchMessages', () => {
     const { client, sent } = captureClient()
     await dispatchMessages([msg(['#a'], '')], client)
     expect(sent).toEqual([])
+  })
+
+  it('holds texts for a channel the client is not in instead of posting into the void', async () => {
+    const { client, sent } = captureClient(new Set(['#a']))
+    const out = await dispatchMessages([msg(['#a', '#b'], 'x'), msg(['#b'], 'y')], client)
+    expect(sent).toEqual([{ target: '#a', text: 'x' }])
+    expect([...out.held.entries()]).toEqual([['#b', ['x', 'y']]])
+    expect(out.posted).toBe(1)
+    expect(out.failures).toEqual([])
+  })
+
+  it('does not gate nick (DM) targets on channel membership', async () => {
+    const { client, sent } = captureClient(new Set())
+    const out = await dispatchMessages([msg(['some-nick'], 'hi')], client)
+    expect(sent).toEqual([{ target: 'some-nick', text: 'hi' }])
+    expect(out.held.size).toBe(0)
+  })
+
+  it('holds texts when say() throws and reports the failure', async () => {
+    const client = {
+      isJoined: () => true,
+      say() { throw new Error('not connected') },
+    } as unknown as RoostIrcClient
+    const out = await dispatchMessages([msg(['#a'], 'x')], client)
+    expect([...out.held.entries()]).toEqual([['#a', ['x']]])
+    expect(out.failures).toEqual(['#a: Error: not connected'])
+  })
+
+  it('reports a failed DM without holding it (a nick has no membership to wait on)', async () => {
+    const client = {
+      isJoined: () => true,
+      say() { throw new Error('not connected') },
+    } as unknown as RoostIrcClient
+    const out = await dispatchMessages([msg(['some-nick'], 'x')], client)
+    expect(out.held.size).toBe(0)
+    expect(out.failures).toEqual(['some-nick: Error: not connected'])
   })
 })

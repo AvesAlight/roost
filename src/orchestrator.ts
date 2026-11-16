@@ -13,6 +13,8 @@ import {
   removeDispatcherPid,
   writeLastError,
   clearLastError,
+  loadOutbox,
+  writeOutbox,
   getPluginState,
   SCHEMA_VERSION,
   type OrchestratorConfig,
@@ -20,6 +22,7 @@ import {
 } from './orchestrator/config.js'
 
 import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
+import { outboxMessages, nextOutbox } from './orchestrator/outbox.js'
 import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage, type PluginTickResult } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
@@ -27,12 +30,15 @@ import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
 import { resolveProjectChannel, dispatcherNick, defaultProject } from './orchestrator/naming.js'
 import { handleDm } from './orchestrator/dispatcher-dm-handler.js'
 import { RoostIrcClientImpl } from './irc-client-impl.js'
+import type { RoostIrcClient } from './irc-client.js'
 
 const DEFAULT_STATE_DIR = join(process.cwd(), '.orchestrator')
 
 interface TickResult {
   messages: PluginMessage[]
   channels: string[]
+  // null when the tick failed and there's nothing to commit.
+  state: OrchestratorState | null
 }
 
 // Boot dance shared by daemon / --dispatch-irc / one-shot: load config + external
@@ -106,7 +112,10 @@ export async function runOneTick(
   stateDir: string,
   config: OrchestratorConfig,
   plugins: Plugin[],
-  opts: { seed: boolean; dryRun: boolean },
+  // deferCommit: the caller runs commitTick itself, after delivery. Writing
+  // state first marks events seen before they're posted, so a failed post
+  // loses them for good.
+  opts: { seed: boolean; dryRun: boolean; deferCommit?: boolean },
   log: PluginLogger = defaultPluginLogger,
 ): Promise<TickResult> {
   const prev = opts.seed ? null : await loadState(stateDir)
@@ -145,13 +154,62 @@ export async function runOneTick(
     for (const c of result.channels) allChannels.add(c)
   }
 
-  if (!opts.dryRun) {
-    await writeState(stateDir, curState)
-    await writeHeartbeat(stateDir)
-    await clearLastError(stateDir)
-  }
+  if (!opts.dryRun && !opts.deferCommit) await commitTick(stateDir, curState)
 
-  return { messages: allMessages, channels: [...allChannels] }
+  return { messages: allMessages, channels: [...allChannels], state: curState }
+}
+
+export async function commitTick(stateDir: string, state: OrchestratorState): Promise<void> {
+  await writeState(stateDir, state)
+  await writeHeartbeat(stateDir)
+  await clearLastError(stateDir)
+}
+
+// `first` leads the list. Under a per-client channel limit, whichever JOINs
+// arrive last are the ones rejected, so the channel that carries
+// [dispatcher_error] notices has to go first.
+export function withFirst(first: string, channels: Iterable<string>): string[] {
+  return [first, ...[...channels].filter(c => c !== first)]
+}
+
+// Joins every desired channel the client isn't in, `first` before the rest.
+// Returns the rejected ones with the server's reason. Callers must not trust
+// `desired` as the joined set. A join dropped by a disconnect isn't a
+// rejection: it stops the pass and isn't reported. `complete` is false then.
+export async function joinDesired(
+  client: Pick<RoostIrcClient, 'isJoined' | 'join'>,
+  desired: Iterable<string>,
+  first?: string,
+): Promise<{ failed: Map<string, string>; complete: boolean }> {
+  const failed = new Map<string, string>()
+  for (const ch of first ? withFirst(first, desired) : desired) {
+    if (client.isJoined(ch)) continue
+    const r = await client.join(ch)
+    if (r.ok) continue
+    if (r.reason === 'disconnected') return { failed, complete: false }
+    failed.set(ch, r.reason ?? 'unknown')
+  }
+  return { failed, complete: true }
+}
+
+// Posts this tick's messages plus anything queued from earlier ticks, then
+// rewrites the outbox with whatever still couldn't go out. Run before
+// commitTick: if the process dies in between, events re-derive and repeat
+// rather than vanish.
+export async function deliver(
+  stateDir: string,
+  client: RoostIrcClient,
+  fresh: PluginMessage[],
+  desired: ReadonlySet<string>,
+  log: PluginLogger,
+): Promise<{ posted: number; held: number; failures: string[] }> {
+  const queued = outboxMessages(await loadOutbox(stateDir, log), desired)
+  for (const e of queued.dropped) log(`orchestrator: outbox drop ${e.channel} (no longer watched), queued ${e.queued_at}\n`)
+  const outcome = await dispatchMessages([...queued.messages, ...fresh], client)
+  const next = nextOutbox(queued.kept, outcome.held, new Date().toISOString())
+  for (const [ch, n] of next.overflow) log(`orchestrator: outbox full for ${ch}, dropped ${n} oldest message(s)\n`)
+  await writeOutbox(stateDir, next.entries)
+  return { posted: outcome.posted, held: next.entries.length, failures: outcome.failures }
 }
 
 async function runDaemon(stateDir: string): Promise<void> {
@@ -175,12 +233,19 @@ async function runDaemon(stateDir: string): Promise<void> {
   const initialChannels = bootChannels(plugins, config, projectChannel, log)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
-  const client = newIrcClient(nick, initialChannels)
-  await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, initialChannels)
+  const bootOrder = withFirst(projectChannel, initialChannels)
+  const client = newIrcClient(nick, bootOrder)
+  await connectAndWait(client, { host: server, port, nick, autoReconnect: true, autoReconnectMaxRetries: 30 }, bootOrder)
   log('orchestrator[daemon]: connected\n')
 
   const trySay = (ch: string, text: string) => {
     try { client.say(ch, text) } catch { /* best-effort */ }
+  }
+  // A post to the project channel while the dispatcher isn't in it goes
+  // nowhere, so the notice falls back to daemon.log.
+  const notifyProject = (text: string) => {
+    if (client.isJoined(projectChannel)) trySay(projectChannel, text)
+    else log(`orchestrator[daemon]: not in ${projectChannel}, notice not posted: ${text}\n`)
   }
 
   const dmHandlerDeps = {
@@ -189,7 +254,7 @@ async function runDaemon(stateDir: string): Promise<void> {
     dm: (target: string, text: string) => {
       try { client.say(target, text) } catch (e) { log(`orchestrator[daemon]: dm reply failed: ${e}\n`) }
     },
-    postProjectError: (text: string) => trySay(projectChannel, text),
+    postProjectError: (text: string) => notifyProject(text),
     log: (line: string) => log(`${line}\n`),
   }
 
@@ -217,7 +282,11 @@ async function runDaemon(stateDir: string): Promise<void> {
       stopController.signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
     })
 
-  const tickOpts = { seed: false, dryRun: false }
+  const tickOpts = { seed: false, dryRun: false, deferCommit: true }
+  // Channel -> reason for joins that failed on the last complete pass. A
+  // [dispatcher_error] posts when a channel starts failing or its reason
+  // changes, not every tick.
+  let unjoinable = new Map<string, string>()
 
   while (!stop) {
     const tickStart = Date.now()
@@ -235,43 +304,72 @@ async function runDaemon(stateDir: string): Promise<void> {
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
-      trySay(projectChannel, `[dispatcher_error] ${msg}`)
+      notifyProject(`[dispatcher_error] ${msg}`)
       // Fall back to the config-only channel view so a transient GH/scrape
       // blip doesn't part every #issue-N until the next success.
-      result = { messages: [], channels: bootChannels(plugins, config, projectChannel, log) }
+      result = { messages: [], channels: bootChannels(plugins, config, projectChannel, log), state: null }
     }
 
-    // Reconcile IRC membership against plugins' desired set, then snapshot.
-    // On reconcile failure, re-query so the snapshot reflects reality.
+    // Reconcile IRC membership against plugins' desired set, then snapshot
+    // what the client is actually in. A rejected join (e.g. the server's
+    // per-client channel limit) leaves that channel out of the snapshot.
     const desired = new Set<string>(reconcileDesiredChannels(plugins, config, projectChannel, result.channels))
-    let joined: string[] | null = null
-    try {
-      for (const ch of (await client.whoisChannels()) ?? []) {
-        if (!desired.has(ch)) await client.leave(ch)
+    // Offline, every join fails for the same non-actionable reason. Skip the
+    // sync and keep last tick's failure view. Delivery still runs: with no
+    // channels joined, it queues everything.
+    if (client.isReady()) {
+      try {
+        for (const ch of (await client.whoisChannels()) ?? []) {
+          if (!desired.has(ch)) await client.leave(ch)
+        }
+        const { failed, complete } = await joinDesired(client, desired, projectChannel)
+        if (complete) {
+          for (const [ch, reason] of failed) {
+            log(`orchestrator[daemon]: can't join ${ch}: ${reason}\n`)
+            if (unjoinable.get(ch) !== reason) notifyProject(`[dispatcher_error] can't join ${ch}: ${reason}. Its events are queued until the join works.`)
+          }
+          for (const ch of unjoinable.keys()) {
+            if (!failed.has(ch) && client.isJoined(ch)) log(`orchestrator[daemon]: joined ${ch} after earlier failure\n`)
+          }
+          unjoinable = failed
+        }
+      } catch (e) {
+        log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
       }
-      for (const ch of desired) {
-        if (!client.isJoined(ch)) await client.join(ch)
-      }
-      joined = [...desired].sort()
-    } catch (e) {
-      log(`orchestrator[daemon]: channel sync failed: ${e}\n`)
+    } else {
+      log('orchestrator[daemon]: offline, channel sync skipped\n')
     }
     try {
-      await writeJoinedChannels(stateDir, joined ?? ((await client.whoisChannels()) ?? []).sort())
+      await writeJoinedChannels(stateDir, [...desired].filter(ch => client.isJoined(ch)).sort())
     } catch (e) {
       log(`orchestrator[daemon]: joined-channels snapshot failed: ${e}\n`)
     }
 
-    if (result.messages.length) {
-      try {
-        await dispatchMessages(result.messages, client)
-        log(`orchestrator[daemon]: tick dispatched ${result.messages.length} message(s) in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
-      } catch (e) {
-        log(`orchestrator[daemon]: dispatch error: ${e}\n`)
-        trySay(projectChannel, `[dispatcher_error] dispatch: ${e}`)
+    let delivered = false
+    try {
+      const d = await deliver(stateDir, client, result.messages, desired, log)
+      delivered = true
+      if (d.failures.length) {
+        log(`orchestrator[daemon]: dispatch error: ${d.failures.join('; ')}\n`)
+        notifyProject(`[dispatcher_error] dispatch: ${d.failures.join('; ')}`)
       }
-    } else {
-      log(`orchestrator[daemon]: tick clean, 0 events in ${((Date.now() - tickStart) / 1000).toFixed(1)}s\n`)
+      const secs = ((Date.now() - tickStart) / 1000).toFixed(1)
+      if (d.posted || d.held) log(`orchestrator[daemon]: tick posted to ${d.posted} channel(s), ${d.held} message(s) queued, in ${secs}s\n`)
+      else log(`orchestrator[daemon]: tick clean, 0 events in ${secs}s\n`)
+    } catch (e) {
+      // Outbox write failed: don't commit, so this tick's events re-derive next tick.
+      log(`orchestrator[daemon]: delivery failed, state not advanced: ${e}\n`)
+      notifyProject(`[dispatcher_error] delivery: ${e}`)
+    }
+    // Delivery already happened, so a commit failure must not look like a
+    // delivery failure. Events will re-derive and repost until the write works.
+    if (delivered && result.state) {
+      try {
+        await commitTick(stateDir, result.state)
+      } catch (e) {
+        log(`orchestrator[daemon]: state write failed, this tick's events will repost: ${e}\n`)
+        notifyProject(`[dispatcher_error] state write: ${e}`)
+      }
     }
 
     await sleepInterruptible(interval)
@@ -286,18 +384,20 @@ async function runDaemon(stateDir: string): Promise<void> {
 async function runDispatchIrc(stateDir: string, seed: boolean): Promise<void> {
   const { config, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, defaultPluginLogger)
   const { nick, server, port } = requireIrcConfig(config, '--dispatch-irc')
-  const channels = bootChannels(plugins, config, projectChannel)
+  const channels = withFirst(projectChannel, bootChannels(plugins, config, projectChannel))
 
   const client = newIrcClient(nick, channels)
   await connectAndWait(client, { host: server, port, nick }, channels)
   try {
-    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false }, defaultPluginLogger)
-    if (result.messages.length) {
-      await dispatchMessages(result.messages, client)
-      process.stderr.write(`orchestrator[--dispatch-irc]: dispatched ${result.messages.length} message(s)\n`)
-    } else {
-      process.stderr.write('orchestrator[--dispatch-irc]: no messages to dispatch\n')
+    const result = await runOneTick(stateDir, config, plugins, { seed, dryRun: false, deferCommit: true }, defaultPluginLogger)
+    const desired = new Set(reconcileDesiredChannels(plugins, config, projectChannel, result.channels))
+    for (const [ch, reason] of (await joinDesired(client, desired, projectChannel)).failed) {
+      process.stderr.write(`orchestrator[--dispatch-irc]: can't join ${ch}: ${reason}\n`)
     }
+    const d = await deliver(stateDir, client, result.messages, desired, defaultPluginLogger)
+    if (d.failures.length) process.stderr.write(`orchestrator[--dispatch-irc]: dispatch error: ${d.failures.join('; ')}\n`)
+    process.stderr.write(`orchestrator[--dispatch-irc]: posted to ${d.posted} channel(s), ${d.held} message(s) queued\n`)
+    if (result.state) await commitTick(stateDir, result.state)
   } finally {
     client.quit()
   }
