@@ -130,10 +130,7 @@ usage_spawn() {
 Usage: roost spawn <nick> [options]
 
 Bring up a Claude Code session on the roost. Joins the specified channels
-and dismisses the dev-channels prompt automatically. The nick must fit the
-ircd's NICKLEN (read from its ISUPPORT); spawn refuses one that doesn't,
-before starting anything. With --perm-irc or --ask-*, the permbot- and
-pnotify- nicks derived from it must fit too. Sessions launch under
+and dismisses the dev-channels prompt automatically. Sessions launch under
 the user's login shell (from \$SHELL) so .bash_profile / .zprofile / ~/.config/fish/config.fish loads — required for RVM, nvm, asdf, and similar toolchains.
 Permission mode handling splits by path. With --agent the wrapper passes
 no --permission-mode and claude code reads \`permissionMode:\` natively
@@ -677,10 +674,8 @@ require_ircd() {
   fi
 }
 
-# Print the ircd's NICKLEN, read from its ISUPPORT (005) reply to a throwaway
-# registration. Prints nothing and returns 1 if it can't be read: the ircd
-# doesn't advertise it, or doesn't answer within 5s in total. Runs in a
-# subshell so its fd and its QUIT never leak into the caller.
+# Print the ircd's NICKLEN from its ISUPPORT reply to a throwaway registration,
+# or nothing (status 1) if it isn't read within 5s.
 ircd_nicklen() {
   (
     exec 9<>"/dev/tcp/${IRC_HOST}/${IRC_PORT}" || exit 1
@@ -715,14 +710,15 @@ ircd_nicklen() {
   )
 }
 
-# Refuse a nick the ircd would reject at registration. Over-long nicks get a
-# 432 and the session sits "still connecting" with nothing on screen, so
-# fail here, before anything is started. Arguments: nick, then 1 when the
-# session also connects as permbot-<nick> and pnotify-<nick>. If NICKLEN
-# can't be read, warn and carry on: the ircd is up, and a flaky probe
-# shouldn't block a spawn.
+# Refuse a nick the ircd would reject at registration (432). Arguments: nick,
+# then 1 when the session also connects as permbot-<nick> and pnotify-<nick>.
+# Nicks up to ergo's default NICKLEN skip the probe. If NICKLEN can't be read,
+# warn and carry on.
 require_nick_fits() {
   local nick="$1" with_perm="${2:-0}" limit candidate
+  local longest="${#nick}"
+  [ "${with_perm}" -eq 1 ] && longest=$((longest + 8))
+  [ "${longest}" -le 32 ] && return 0
   limit="$(ircd_nicklen)" || limit=""
   case "${limit}" in
     ''|*[!0-9]*)
@@ -738,7 +734,7 @@ require_nick_fits() {
     if [ "${#candidate}" -gt "${limit}" ]; then
       echo "error: nick '${candidate}' is ${#candidate} chars; the ircd's NICKLEN is ${limit}" >&2
       if [ "${candidate}" != "${nick}" ]; then
-        echo "  '${candidate}' is derived from '${nick}' because of --perm-irc/--ask-*; the permbot connects under it" >&2
+        echo "  (derived from '${nick}' for --perm-irc/--ask-*)" >&2
       fi
       echo "  use a shorter nick, or raise limits.nicklen in the ircd config" >&2
       exit 1

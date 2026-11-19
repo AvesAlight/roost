@@ -99,8 +99,6 @@ On confirmation, for each issue N:
    - worker-nick = `<project>-<slug>-worker-<N>`
    - reviewer-nick = `<project>-<slug>-reviewer-<N>`
    - issue-channel = `#<project>-<slug>-issue-<N>`
-
-   Nicks have a length limit, the ircd's NICKLEN. A nick over it never registers, and the agent sits "still connecting". `roost spawn` refuses an over-long nick and the error names the limit. The reviewer nick is the longest, so if `<project>-<slug>-reviewer-<N>` is over the limit, use a shorter slug in the worker and reviewer nicks. Drop generic words like `terraform-aws-` and keep the distinctive tail. Shorten the nicks only. The issue channel keeps the full slug, because the dispatcher derives channels from the repo name. Say which nick slug you used in `#<project>-leads`.
 4. **Join the issue channel, invite the PM, and wait for its JOIN before spawning anything.** Join `<issue-channel>` yourself, then post in `#<project>-leads`:
 
    `<project>-pm: <issue-channel> is up for #<N> — join and I'll spawn.`
