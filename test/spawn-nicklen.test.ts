@@ -100,6 +100,42 @@ describe.if(isErgoAvailable())('roost spawn NICKLEN check (real ergo)', () => {
   })
 })
 
+describe('roost spawn NICKLEN check (short nicks)', () => {
+  it('does not register a probe for a nick at or under ergo\'s default NICKLEN', async () => {
+    let registrations = 0
+    const server = net.createServer(s => {
+      s.on('data', d => { if (String(d).includes('NICK ')) registrations++ })
+      s.on('error', () => {})
+    })
+    await new Promise<void>(res => server.listen(0, '127.0.0.1', res))
+    const port = (server.address() as net.AddressInfo).port
+    try {
+      const r = await spawnRoost(port, nickOf(NICKLEN))
+      expect(r.rc).toBe(3)
+      expect(r.out).not.toContain('NICKLEN')
+      expect(registrations).toBe(0)
+    } finally {
+      server.close()
+    }
+  }, 30_000)
+
+  it('probes when the permbot- nick pushes it over', async () => {
+    let registrations = 0
+    const server = net.createServer(s => {
+      s.on('data', d => { if (String(d).includes('NICK ')) registrations++ })
+      s.on('error', () => {})
+    })
+    await new Promise<void>(res => server.listen(0, '127.0.0.1', res))
+    const port = (server.address() as net.AddressInfo).port
+    try {
+      await spawnRoost(port, nickOf(NICKLEN - 'permbot-'.length + 1), ['--perm-irc', '--perm-target', 'pm'])
+      expect(registrations).toBe(1)
+    } finally {
+      server.close()
+    }
+  }, 30_000)
+})
+
 describe('roost spawn NICKLEN check (slow ircd)', () => {
   it('waits out a pause longer than one read before the 005 and still refuses', async () => {
     const sockets: net.Socket[] = []
