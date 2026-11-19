@@ -100,6 +100,30 @@ describe.if(isErgoAvailable())('roost spawn NICKLEN check (real ergo)', () => {
   })
 })
 
+describe('roost spawn NICKLEN check (slow ircd)', () => {
+  it('waits out a pause longer than one read before the 005 and still refuses', async () => {
+    const sockets: net.Socket[] = []
+    const server = net.createServer(s => {
+      sockets.push(s)
+      // An ircd doing ident or rDNS lookups can sit on registration for a while.
+      setTimeout(() => {
+        s.write(':irc.test 001 probe :Welcome\r\n:irc.test 005 probe NICKLEN=32 :are supported\r\n:irc.test 376 probe :End\r\n')
+      }, 1500)
+    })
+    await new Promise<void>(res => server.listen(0, '127.0.0.1', res))
+    const port = (server.address() as net.AddressInfo).port
+    try {
+      const r = await spawnRoost(port, nickOf(NICKLEN + 1))
+      expect(r.rc).not.toBe(0)
+      expect(r.rc).not.toBe(3)
+      expect(r.out).toContain(`NICKLEN is ${NICKLEN}`)
+    } finally {
+      sockets.forEach(s => s.destroy())
+      server.close()
+    }
+  }, 30_000)
+})
+
 describe('roost spawn NICKLEN check (indeterminate)', () => {
   it('warns and continues when the ircd never answers, within a bounded time', async () => {
     const sockets: net.Socket[] = []
