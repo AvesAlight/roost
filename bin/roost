@@ -35,7 +35,7 @@ done
 ROOST_DIR="$( cd -P "$( dirname "$_src" )/.." && pwd )"
 unset _src _dir
 IRC_HOST="${ROOST_IRC_SERVER:-127.0.0.1}"
-IRC_PORT=6667
+IRC_PORT="${ROOST_IRC_PORT:-6667}"
 SESSION_PREFIX="roost-"
 
 print_version() {
@@ -674,6 +674,74 @@ require_ircd() {
   fi
 }
 
+# Print the ircd's NICKLEN from its ISUPPORT reply to a throwaway registration,
+# or nothing (status 1) if it isn't read within 5s.
+ircd_nicklen() {
+  (
+    exec 9<>"/dev/tcp/${IRC_HOST}/${IRC_PORT}" || exit 1
+    printf 'NICK roost-probe-%s\r\nUSER roost-probe 0 * :roost nick length probe\r\n' "$$" >&9
+    local end=$((SECONDS + 5)) line word words tick
+    while [ "${SECONDS}" -lt "${end}" ]; do
+      # A read -t timeout and EOF both fail the read, and bash 3.2 gives them
+      # the same status. EOF returns at once; a timeout takes the full second,
+      # so elapsed whole seconds tell them apart. On a timeout, keep looping
+      # until the overall deadline.
+      tick="${SECONDS}"
+      if ! IFS= read -r -t 1 line <&9; then
+        [ "${SECONDS}" -gt "${tick}" ] && continue
+        exit 1
+      fi
+      case "${line}" in
+        PING*) printf 'PONG%s\r\n' "${line#PING}" >&9 ;;
+        *" 376 "*|*" 422 "*) exit 1 ;;
+      esac
+      read -ra words <<<"${line}"
+      for word in "${words[@]}"; do
+        case "${word}" in
+          NICKLEN=*[0-9])
+            printf 'QUIT\r\n' >&9
+            printf '%s\n' "${word#NICKLEN=}"
+            exit 0
+            ;;
+        esac
+      done
+    done
+    exit 1
+  )
+}
+
+# Refuse a nick the ircd would reject at registration (432). Arguments: nick,
+# then 1 when the session also connects as permbot-<nick> and pnotify-<nick>.
+# Nicks up to ergo's default NICKLEN skip the probe. If NICKLEN can't be read,
+# warn and carry on.
+require_nick_fits() {
+  local nick="$1" with_perm="${2:-0}" limit candidate
+  local longest="${#nick}"
+  [ "${with_perm}" -eq 1 ] && longest=$((longest + 8))
+  [ "${longest}" -le 32 ] && return 0
+  limit="$(ircd_nicklen)" || limit=""
+  case "${limit}" in
+    ''|*[!0-9]*)
+      echo "warning: could not read NICKLEN from ${IRC_HOST}:${IRC_PORT}; not checking nick length" >&2
+      return 0
+      ;;
+  esac
+  local candidates=("${nick}")
+  if [ "${with_perm}" -eq 1 ]; then
+    candidates+=("permbot-${nick}" "pnotify-${nick}")
+  fi
+  for candidate in "${candidates[@]}"; do
+    if [ "${#candidate}" -gt "${limit}" ]; then
+      echo "error: nick '${candidate}' is ${#candidate} chars; the ircd's NICKLEN is ${limit}" >&2
+      if [ "${candidate}" != "${nick}" ]; then
+        echo "  (derived from '${nick}' for --perm-irc/--ask-*)" >&2
+      fi
+      echo "  use a shorter nick, or raise limits.nicklen in the ircd config" >&2
+      exit 1
+    fi
+  done
+}
+
 # All per-session files live under a mktemp-generated directory created at
 # spawn time (ROOST_DATA_DIR). The dir is stored in the tmux session env so
 # shutdown can find it:
@@ -1019,7 +1087,7 @@ cmd_spawn() {
   # RVM / nvm / asdf etc. require. Env vars go through tmux -e so the inner
   # command stays a clean string.
   local tmux_env=(-e "ROOST_IRC_NICK=${nick}" -e "ROOST_IRC_CHANNELS=${channels}" -e "ROOST_DATA_DIR=${ROOST_DATA_DIR}" -e "ROOST_DIR=${ROOST_DIR}")
-  tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}")
+  tmux_env+=(-e "ROOST_IRC_SERVER=${IRC_HOST}" -e "ROOST_IRC_PORT=${IRC_PORT}")
   case "${cache_ttl}" in
     5m) tmux_env+=(-e "FORCE_PROMPT_CACHING_5M=1") ;;
     1h) tmux_env+=(-e "ENABLE_PROMPT_CACHING_1H=1") ;;
@@ -1162,6 +1230,11 @@ cmd_spawn() {
 
   require_tmux
   require_ircd
+  if [ -n "${perm_sock}" ]; then
+    require_nick_fits "${nick}" 1
+  else
+    require_nick_fits "${nick}" 0
+  fi
 
   if tmux has-session -t "${session_name}" 2>/dev/null; then
     echo "error: tmux session '${session_name}' already exists" >&2
