@@ -685,18 +685,23 @@ ircd_nicklen() {
   (
     exec 9<>"/dev/tcp/${IRC_HOST}/${IRC_PORT}" || exit 1
     printf 'NICK roost-probe-%s\r\nUSER roost-probe 0 * :roost nick length probe\r\n' "$$" >&9
-    local end=$((SECONDS + 5)) line word
+    local end=$((SECONDS + 5)) line word words tick
     while [ "${SECONDS}" -lt "${end}" ]; do
-      # read -t times out with status > 128; keep looping until the deadline.
+      # A read -t timeout and EOF both fail the read, and bash 3.2 gives them
+      # the same status. EOF returns at once; a timeout takes the full second,
+      # so elapsed whole seconds tell them apart. On a timeout, keep looping
+      # until the overall deadline.
+      tick="${SECONDS}"
       if ! IFS= read -r -t 1 line <&9; then
-        [ "$?" -gt 128 ] && continue
+        [ "${SECONDS}" -gt "${tick}" ] && continue
         exit 1
       fi
       case "${line}" in
         PING*) printf 'PONG%s\r\n' "${line#PING}" >&9 ;;
         *" 376 "*|*" 422 "*) exit 1 ;;
       esac
-      for word in ${line}; do
+      read -ra words <<<"${line}"
+      for word in "${words[@]}"; do
         case "${word}" in
           NICKLEN=*[0-9])
             printf 'QUIT\r\n' >&9

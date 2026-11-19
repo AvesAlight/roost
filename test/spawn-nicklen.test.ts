@@ -140,4 +140,18 @@ describe('roost spawn NICKLEN check (indeterminate)', () => {
       server.close()
     }
   }, 30_000)
+
+  it('warns and continues at once when the ircd hangs up', async () => {
+    const server = net.createServer(s => s.destroy())
+    await new Promise<void>(res => server.listen(0, '127.0.0.1', res))
+    const port = (server.address() as net.AddressInfo).port
+    try {
+      const r = await spawnRoost(port, nickOf(NICKLEN + 5))
+      expect(r.rc).toBe(3)
+      expect(r.out).toContain('could not read NICKLEN')
+      expect(r.elapsedMs).toBeLessThan(4_000)
+    } finally {
+      server.close()
+    }
+  }, 30_000)
 })
