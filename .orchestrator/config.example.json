@@ -11,6 +11,8 @@
   },
   "plugins": {
     "github-new-issues": { "watched": [{ "repo": "AvesAlight/roost", "channels": ["#roost-leads"] }] },
-    "github-commits": { "watched": [] }
+    "github-commits": { "watched": [] },
+    "linear-issues": { "interval_seconds": 120, "watched": [] },
+    "linear-new-issues": { "interval_seconds": 120, "watched": [] }
   }
 }
