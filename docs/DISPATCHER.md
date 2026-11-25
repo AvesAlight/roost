@@ -58,9 +58,9 @@ Fields:
 | `irc.nick` | Nick the dispatcher uses on the IRC server. Defaults to `<project>-dispatcher`. |
 | `irc.project_channel` | Fallback channel for errors and project-level events. Defaults to `#<project>-leads`. |
 | `irc.server` / `irc.port` | IRCv3 server address. Defaults to `127.0.0.1:6667`. |
-| `irc.interval_seconds` | Tick interval. Min 5s; 60s is sane for most repos. |
+| `irc.interval_seconds` | Default poll interval for every plugin that doesn't set its own. Min 5s; 60s is sane for most repos. |
 | `plugins.<name>` | Per-plugin config slice. Keys list the enabled plugins (in emission order). |
-| `plugins.<name>.interval_seconds` | Optional. Poll this plugin at most this often. Unset runs it every global tick. Min 5s. There is one scheduler, so the real cadence is a multiple of the global tick: 90s on a 60s tick polls every 120s, and a value under the tick polls every tick. Applies to the daemon only; a restart runs every plugin once. `linear-issues` and `linear-new-issues` share one Linear quota, so set both. |
+| `plugins.<name>.interval_seconds` | Optional. Poll this plugin every this many seconds. Unset uses `irc.interval_seconds`. Min 5s. The daemon wakes every second and does a full pass (config, IRC sync, delivery, heartbeat) only when a plugin is due, or `irc.interval_seconds` has passed. Daemon only; a restart runs every plugin once. `linear-issues` and `linear-new-issues` share one Linear quota, so set both. |
 | `plugin_paths` | Optional `[path, ...]` of external plugin modules to load before the registry is walked. Relative paths resolve against `.orchestrator/`. See [PLUGINS.md](./PLUGINS.md). |
 | `plugins.github-prs.watched` | `[{"number": N, "repo"?: "OWNER/NAME", "channels"?: [...]}]` |
 | `plugins.github-issues.watched` | Same shape as `plugins.github-prs.watched`. |

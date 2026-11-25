@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { runOneTick } from '../../orchestrator.js'
 import type { Plugin } from '../plugin.js'
 import type { OrchestratorConfig } from '../config.js'
+import { anyPluginDue, pluginIntervalSeconds } from '../schedule.js'
 
 // runOneTick passes config straight through to plugins and reads no config
 // fields itself, so a minimal stub satisfies it.
@@ -139,5 +140,37 @@ describe('runOneTick — per-plugin poll interval', () => {
     await runOneTick('/unused', config, [slow.plugin], opts, quiet)
     await runOneTick('/unused', config, [slow.plugin], opts, quiet)
     expect(slow.calls.n).toBe(2)
+  })
+})
+
+describe('poll interval scheduling against a 1s loop tick', () => {
+  const cfg = (irc: unknown, plugins: Record<string, unknown> = {}) => ({ project: 'proj', irc, plugins }) as unknown as OrchestratorConfig
+  const quiet = () => {}
+
+  it('a plugin with no value takes irc.interval_seconds', () => {
+    expect(pluginIntervalSeconds(cfg({ interval_seconds: 30 }, { a: {} }), 'a', quiet)).toBe(30)
+    expect(pluginIntervalSeconds(cfg({}), 'a', quiet)).toBe(60)
+  })
+
+  it('a 90s plugin runs at 90s, not rounded up to a multiple of the default', async () => {
+    const runs: number[] = []
+    const p = stubPlugin('p', async () => { runs.push(now); return { state: {}, messages: [], channels: [] } })
+    let now = 0
+    const config = cfg({ interval_seconds: 60 }, { p: { interval_seconds: 90 } })
+    const schedule = new Map()
+    for (now = 0; now <= 200_000; now += 1000) {
+      if (anyPluginDue([p], schedule, config, now)) await runOneTick('/unused', config, [p], opts, quiet, schedule, now)
+    }
+    expect(runs).toEqual([0, 90_000, 180_000])
+  })
+
+  it('no pass is due between runs, and one is due when the interval lands', async () => {
+    const p = stubPlugin('p', async () => ({ state: {}, messages: [], channels: [] }))
+    const config = cfg({ interval_seconds: 60 })
+    const schedule = new Map()
+    expect(anyPluginDue([p], schedule, config, 0)).toBe(true)
+    await runOneTick('/unused', config, [p], opts, quiet, schedule, 0)
+    expect(anyPluginDue([p], schedule, config, 59_000)).toBe(false)
+    expect(anyPluginDue([p], schedule, config, 60_000)).toBe(true)
   })
 })

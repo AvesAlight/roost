@@ -25,7 +25,7 @@ import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
 import { outboxMessages, nextOutbox } from './orchestrator/outbox.js'
 import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage, type PluginTickResult } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
-import { MIN_INTERVAL_SECONDS, pluginIntervalSeconds, pluginIsDue, type PluginSchedule } from './orchestrator/schedule.js'
+import { LOOP_TICK_MS, anyPluginDue, defaultIntervalSeconds, pluginIntervalSeconds, pluginIsDue, type PluginSchedule } from './orchestrator/schedule.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
 import { resolveProjectChannel, dispatcherNick, defaultProject } from './orchestrator/naming.js'
@@ -244,7 +244,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const { config: initialConfig, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, log)
   let config = initialConfig
   const { nick, server, port } = requireIrcConfig(config, 'daemon mode')
-  const interval = Math.max(MIN_INTERVAL_SECONDS, (config.irc?.interval_seconds ?? 60)) * 1000
+  const interval = defaultIntervalSeconds(config) * 1000
   const initialChannels = bootChannels(plugins, config, projectChannel, log)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
@@ -304,8 +304,17 @@ async function runDaemon(stateDir: string): Promise<void> {
   // changes, not every tick.
   let unjoinable = new Map<string, string>()
 
+  // The loop wakes every LOOP_TICK_MS but only does a full pass (config, state,
+  // IRC sync, delivery, heartbeat) when a plugin is due, or the default interval
+  // has gone by so outbox retries and the heartbeat keep their old cadence.
+  let lastPass = 0
   while (!stop) {
     const tickStart = Date.now()
+    if (!anyPluginDue(plugins, pluginSchedule, config, tickStart) && tickStart - lastPass < defaultIntervalSeconds(config) * 1000) {
+      await sleepInterruptible(LOOP_TICK_MS)
+      continue
+    }
+    lastPass = tickStart
     try {
       const next = await loadConfig(stateDir)
       assertRepoModeAll(plugins, await loadConfigBase(stateDir))
@@ -388,7 +397,7 @@ async function runDaemon(stateDir: string): Promise<void> {
       }
     }
 
-    await sleepInterruptible(interval)
+    await sleepInterruptible(LOOP_TICK_MS)
   }
 
   client.quit()
