@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'bun:test'
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { afterAll, describe, expect, it } from 'bun:test'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // Through the public surface, so dropping an export from plugin-api fails here.
@@ -61,8 +61,11 @@ describe('capPosts', () => {
 
 describe('runWithTimeout', () => {
   // A stand-in binary, called by absolute path so a real one never runs.
+  const dir = mkdtempSync(join(tmpdir(), 'fake-bin-'))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  let n = 0
   function fakeBin(body: string): string {
-    const bin = join(mkdtempSync(join(tmpdir(), 'fake-bin-')), 'tool')
+    const bin = join(dir, `tool-${n++}`)
     writeFileSync(bin, `#!/usr/bin/env bash\n${body}\n`)
     chmodSync(bin, 0o755)
     return bin
