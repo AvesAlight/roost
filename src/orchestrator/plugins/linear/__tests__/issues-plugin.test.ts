@@ -447,6 +447,68 @@ describe('LinearIssuesPlugin.desiredChannels', () => {
   })
 })
 
+describe('LinearIssuesPlugin — explicit channels replace the per-issue channel', () => {
+  it('desiredChannels holds only the explicit channels for an entry that names some', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [
+        { identifier: 'C-758', channels: ['#leads', '#triage'] },
+        { identifier: 'ENG-1' },
+      ] } },
+    }
+    const chans = new LinearIssuesPlugin('#proj-leads').desiredChannels(cfg).sort()
+    expect(chans).toEqual(['#leads', '#proj-issue-eng-1', '#triage'])
+  })
+
+  it('a watch made by DM with channels joins only those channels', () => {
+    const local: OrchestratorConfig = {}
+    const merged: OrchestratorConfig = { project: 'proj' }
+    const p = new LinearIssuesPlugin('#proj-leads')
+    p.handleCommand!(merged, local, watchCmd('C-758', ['#leads']))
+    const after: OrchestratorConfig = { project: 'proj', plugins: local.plugins }
+    expect(p.desiredChannels(after)).toEqual(['#leads'])
+  })
+
+  it('posts events and the fetch-failing warn to the explicit channels only', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
+    }
+    const client = mockClient(() => rawIssue({
+      comments: { nodes: [{ id: 'c-old', body: 'old', user: { name: 'a' }, parent: null }] },
+    }))
+    const seeded = await plugin(client).runTick(cfg, { issues: {} })
+    const posted = seeded.messages.filter(m => !m.text.startsWith('now watching'))
+    expect(posted.length).toBeGreaterThan(0)
+    for (const m of posted) expect(m.channels).toEqual(['#leads'])
+    expect(seeded.channels).toEqual(['#leads'])
+
+    const failing: LinearClientLike = {
+      graphql: async () => { throw new LinearError('linear graphql failed: HTTP 400 (code=INPUT_ERROR)') },
+      getLastRateLimit: () => null,
+    }
+    const prior: LinearIssueSnap = {
+      id: 'uuid-1', identifier: 'C-758', title: 't', url: 'https://x',
+      status: 'Backlog', statusType: 'backlog', labels: [],
+      seen_comment_ids: [], seen_github_attachment_ids: [],
+    }
+    const failed = await plugin(failing).runTick(cfg, { issues: { 'C-758': prior } })
+    const warn = failed.messages.find(m => m.text.includes('fetch failing'))
+    expect(warn?.channels).toEqual(['#leads'])
+  })
+
+  it('names only the explicit channels in the now-watching ack', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
+    }
+    const result = await plugin(mockClient(() => rawIssue())).runTick(cfg, { issues: {} })
+    const ack = result.messages.find(m => m.text.startsWith('now watching linear issue'))
+    expect(ack?.text).toContain('#leads')
+    expect(ack?.text).not.toContain('#proj-issue-c-758')
+  })
+})
+
 // ---- isTombstone re-export (used as discriminant) ---------------------
 
 describe('isTombstone helper', () => {

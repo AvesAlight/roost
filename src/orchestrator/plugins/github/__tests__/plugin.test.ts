@@ -1868,3 +1868,169 @@ describe('GhPluginBase.observeRateLimit — graphql budget', () => {
     expect(texts.some(t => t.includes('GH ') && !t.includes('GH-GraphQL'))).toBe(true)
   })
 })
+
+// ---- Explicit channels replace the auto-derived channel ----------------------
+
+describe('explicit watch channels replace the auto-derived channel', () => {
+  stubRateLimit()
+
+  const prComment = (linked: Array<{ repo: string; number: number }>): OrchestratorEvent => ({
+    kind: 'pr_review_comment',
+    repo: 'org/repo', pr: 25, url: 'https://github.com/org/repo/pull/25',
+    author: 'alice', body: 'x', body_preview: 'x', is_worker_reply: false,
+    comment_id: 1, comment_url: 'https://example.com/c/1',
+    linked_issues: linked,
+  } as OrchestratorEvent)
+
+  type Attachment = { id: string; sourceType: string | null; url: string | null }
+  function prPlugin(byId: Record<string, Attachment[]> | null): GitHubPrsPlugin {
+    const p = new GitHubPrsPlugin('#proj')
+    p._setLinearQueryForTest(byId === null ? null : async (team, numbers) => ({
+      nodes: numbers.flatMap(n => {
+        const id = `${team}-${n}`
+        return byId[id] ? [{ identifier: id, attachments: { nodes: byId[id] } }] : []
+      }),
+      hasNextPage: false,
+    }))
+    return p
+  }
+  const prAttachment: Attachment = { id: 'a1', sourceType: 'github', url: 'https://github.com/org/repo/pull/25' }
+
+  it('PrsPlugin.desiredChannels: an entry with channels contributes only those', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj', repo: 'org/repo',
+      plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#leads'] }, { number: 26 }] } },
+    }
+    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#leads', '#proj-issue-26'])
+  })
+
+  it('IssuesPlugin.desiredChannels: an entry with channels contributes only those', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj', repo: 'org/repo',
+      plugins: { 'github-issues': { watched: [{ number: 14, channels: ['#leads'] }, { number: 15 }] } },
+    }
+    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#leads', '#proj-issue-15'])
+  })
+
+  it('a DM watch with channels joins only those, for PRs and issues', () => {
+    for (const [plugin, Plugin] of [['github-prs', GitHubPrsPlugin], ['github-issues', GitHubIssuesPlugin]] as const) {
+      const local: OrchestratorConfig = {}
+      const merged: OrchestratorConfig = { project: 'proj', repo: 'org/repo' }
+      const p = new Plugin('#proj')
+      p.handleCommand!(merged, local, watchCmd(plugin, 25, null, ['#leads']))
+      expect(p.desiredChannels({ ...merged, plugins: local.plugins })).toEqual(['#leads'])
+    }
+  })
+
+  it('PrsPlugin.desiredChannels: a Linear watch with channels declares those, not its default channel', () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj', repo: 'org/repo',
+      plugins: {
+        'github-prs': { watched: [{ number: 25 }] },
+        'linear-issues': { watched: [{ identifier: 'C-1', channels: ['#leads'] }, { identifier: 'C-2' }] },
+      },
+    }
+    const chans = new GitHubPrsPlugin('#proj').desiredChannels(cfg)
+    expect(chans).not.toContain('#proj-issue-c-1')
+    expect(chans).toContain('#leads')
+    expect(chans).toContain('#proj-issue-c-2')
+  })
+
+  it('a PR watch with channels posts and joins only those, ignoring linked-issue and Linear channels', async () => {
+    const spy = stubPr({
+      snap: fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 14 }] }),
+      events: [prComment([{ repo: 'org/repo', number: 14 }])],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25, channels: ['#leads'] }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }] },
+        },
+      }
+      const result = await prPlugin({ 'C-1': [prAttachment] }).runTick(cfg, { prs: {} })
+      expect(result.messages).toHaveLength(1)
+      expect(result.messages[0]?.channels).toEqual(['#leads'])
+      expect(result.channels).toContain('#leads')
+      expect(result.channels).not.toContain('#proj-issue-14')
+      expect(result.channels).not.toContain('#proj-issue-25')
+    } finally { spy.mockRestore() }
+  })
+
+  it('a PR watch with channels keeps its channels when its read fails and the snapshot is replayed', async () => {
+    const batch = spyOn(GhClient.prototype, 'fetchPrsBatch').mockImplementation(async (entries) => {
+      const m = new Map<string, BatchOutcome<GhPrNode>>()
+      for (const e of entries) m.set(`${e.repo}#${e.number}`, { ok: false, reason: 'not found', logDetail: 'x' } as BatchOutcome<GhPrNode>)
+      return m
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#leads'] }] } },
+      }
+      const prev = { prs: { 'org/repo#25': fakePrSnap({ linked_issues: [{ repo: 'org/repo', number: 14 }] }) } }
+      const result = await new GitHubPrsPlugin('#proj').runTick(cfg, prev)
+      expect(result.channels).toEqual(['#leads'])
+    } finally { batch.mockRestore() }
+  })
+
+  it('a channel-less PR cross-linked to a Linear watch with channels routes to those, not the Linear default', async () => {
+    const spy = stubPr({ snap: fakePrSnap(), events: [prComment([])] })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1', channels: ['#leads'] }] },
+        },
+      }
+      const result = await prPlugin({ 'C-1': [prAttachment] }).runTick(cfg, { prs: {} })
+      expect(result.messages[0]?.channels).toEqual(['#leads'])
+      expect(result.channels).toContain('#leads')
+      expect(result.channels).not.toContain('#proj-issue-c-1')
+    } finally { spy.mockRestore() }
+  })
+
+  it('an issue watch with channels posts only to those, including the now-watching ack', async () => {
+    const seedEv = { kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't' } as OrchestratorEvent
+    const commentEv = {
+      kind: 'issue_comment', repo: 'org/repo', issue: 50, url: 'https://example.com/i/50',
+      author: 'bob', body: 'y', body_preview: 'y', is_worker_reply: false,
+      comment_id: 2, comment_url: 'https://example.com/c/2',
+    } as OrchestratorEvent
+    const spy = stubIssue({ snap: fakeIssueSnap(), events: [seedEv, commentEv] })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-issues': { watched: [{ number: 50, channels: ['#leads'] }] } },
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      const ack = result.messages.find(m => m.text.startsWith('now watching issue'))
+      expect(ack?.text).toBe('now watching issue org/repo#50 — routing events to #leads')
+      const comment = result.messages.find(m => m !== ack)
+      expect(comment?.channels).toEqual(['#leads'])
+      expect(result.channels).toEqual(['#leads'])
+    } finally { spy.mockRestore() }
+  })
+
+  it('watches with no channels keep the auto channel for joins and posts', async () => {
+    const spy = stubIssue({
+      snap: fakeIssueSnap(),
+      events: [{
+        kind: 'issue_comment', repo: 'org/repo', issue: 50, url: 'u',
+        author: 'bob', body: 'y', body_preview: 'y', is_worker_reply: false,
+        comment_id: 2, comment_url: 'c',
+      } as OrchestratorEvent],
+    })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: { 'github-issues': { watched: [{ number: 50 }] } },
+      }
+      const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-50'])
+      expect(result.channels).toEqual(['#proj-issue-50'])
+    } finally { spy.mockRestore() }
+  })
+})
