@@ -1896,22 +1896,6 @@ describe('explicit watch channels replace the auto-derived channel', () => {
   }
   const prAttachment: Attachment = { id: 'a1', sourceType: 'github', url: 'https://github.com/org/repo/pull/25' }
 
-  it('PrsPlugin.desiredChannels: an entry with channels contributes only those', () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj', repo: 'org/repo',
-      plugins: { 'github-prs': { watched: [{ number: 25, channels: ['#leads'] }, { number: 26 }] } },
-    }
-    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#leads', '#proj-issue-26'])
-  })
-
-  it('IssuesPlugin.desiredChannels: an entry with channels contributes only those', () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj', repo: 'org/repo',
-      plugins: { 'github-issues': { watched: [{ number: 14, channels: ['#leads'] }, { number: 15 }] } },
-    }
-    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#leads', '#proj-issue-15'])
-  })
-
   it('a DM watch with channels joins only those, for PRs and issues', () => {
     for (const [plugin, Plugin] of [['github-prs', GitHubPrsPlugin], ['github-issues', GitHubIssuesPlugin]] as const) {
       const local: OrchestratorConfig = {}

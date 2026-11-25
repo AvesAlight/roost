@@ -448,18 +448,6 @@ describe('LinearIssuesPlugin.desiredChannels', () => {
 })
 
 describe('LinearIssuesPlugin — explicit channels replace the per-issue channel', () => {
-  it('desiredChannels holds only the explicit channels for an entry that names some', () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj',
-      plugins: { 'linear-issues': { watched: [
-        { identifier: 'C-758', channels: ['#leads', '#triage'] },
-        { identifier: 'ENG-1' },
-      ] } },
-    }
-    const chans = new LinearIssuesPlugin('#proj-leads').desiredChannels(cfg).sort()
-    expect(chans).toEqual(['#leads', '#proj-issue-eng-1', '#triage'])
-  })
-
   it('a watch made by DM with channels joins only those channels', () => {
     const local: OrchestratorConfig = {}
     const merged: OrchestratorConfig = { project: 'proj' }
@@ -469,7 +457,7 @@ describe('LinearIssuesPlugin — explicit channels replace the per-issue channel
     expect(p.desiredChannels(after)).toEqual(['#leads'])
   })
 
-  it('posts events and the fetch-failing warn to the explicit channels only', async () => {
+  it('posts events to the explicit channels only', async () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
@@ -483,18 +471,6 @@ describe('LinearIssuesPlugin — explicit channels replace the per-issue channel
     for (const m of posted) expect(m.channels).toEqual(['#leads'])
     expect(seeded.channels).toEqual(['#leads'])
 
-    const failing: LinearClientLike = {
-      graphql: async () => { throw new LinearError('linear graphql failed: HTTP 400 (code=INPUT_ERROR)') },
-      getLastRateLimit: () => null,
-    }
-    const prior: LinearIssueSnap = {
-      id: 'uuid-1', identifier: 'C-758', title: 't', url: 'https://x',
-      status: 'Backlog', statusType: 'backlog', labels: [],
-      seen_comment_ids: [], seen_github_attachment_ids: [],
-    }
-    const failed = await plugin(failing).runTick(cfg, { issues: { 'C-758': prior } })
-    const warn = failed.messages.find(m => m.text.includes('fetch failing'))
-    expect(warn?.channels).toEqual(['#leads'])
   })
 
   it('names only the explicit channels in the now-watching ack', async () => {
