@@ -81,7 +81,7 @@ function stubIssue(result: IssueResult | ((repo: string, num: number) => IssueRe
 describe('GitHubPrsPlugin.runTick', () => {
   stubRateLimit()
 
-  it('routes a PR comment to linked-issue channels unioned with entry channels', async () => {
+  it('routes a PR comment to entry channels instead of the linked-issue channel', async () => {
     const commentEv: OrchestratorEvent = {
       kind: 'pr_review_comment',
       repo: 'org/repo', pr: 25, url: 'https://example.com/p/25',
@@ -105,9 +105,9 @@ describe('GitHubPrsPlugin.runTick', () => {
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.messages).toHaveLength(1)
-      expect(result.messages[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[0]?.channels).toEqual(['#extra'])
       expect(result.messages[0]?.text).toContain('\n')
-      expect(result.channels).toContain('#proj-issue-14')
+      expect(result.channels).not.toContain('#proj-issue-14')
       expect(result.channels).toContain('#extra')
     } finally { spy.mockRestore() }
   })
@@ -134,18 +134,18 @@ describe('GitHubPrsPlugin.runTick', () => {
       const cfg: OrchestratorConfig = {
         project: 'proj', repo: 'org/repo',
         plugins: {
-          'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] },
+          'github-prs': { watched: [{ number: 25 }] },
           'github-issues': { watched: [] },
         },
       }
       const result = await new GitHubPrsPlugin('#proj').runTick(cfg, { prs: {} })
       expect(result.messages).toHaveLength(2)
-      // framing line ships first (oneline), routed to the linked-issue channel unioned with entry
+      // framing line ships first (oneline), routed to the linked-issue channel
       expect(result.messages[0]?.text).not.toContain('\n')
-      expect(result.messages[0]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-14'])
       // the pre-watch comment routes identically to a live comment
       expect(result.messages[1]?.text).toContain('\n')
-      expect(result.messages[1]?.channels.sort()).toEqual(['#extra', '#proj-issue-14'])
+      expect(result.messages[1]?.channels).toEqual(['#proj-issue-14'])
     } finally { spy.mockRestore() }
   })
 
@@ -226,7 +226,7 @@ describe('GitHubPrsPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('includes entry channels in now-watching routing list', async () => {
+  it('lists only entry channels in now-watching routing list', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'pr_added_to_watch', repo: 'org/repo', pr: 25, url: 'u', title: 't',
       linked_issues: [{ repo: 'org/repo', number: 7 }],
@@ -243,7 +243,7 @@ describe('GitHubPrsPlugin.runTick', () => {
       expect(result.messages).toHaveLength(1)
       expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
       const text = result.messages[0]?.text
-      expect(text).toContain('#proj-issue-7')
+      expect(text).not.toContain('#proj-issue-7')
       expect(text).toContain('#extra')
     } finally { spy.mockRestore() }
   })
@@ -750,7 +750,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
     } finally { spy.mockRestore() }
   })
 
-  it('includes entry channels in now-watching routing list for issues', async () => {
+  it('lists only entry channels in now-watching routing list for issues', async () => {
     const seedEv: OrchestratorEvent = {
       kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't',
     } as OrchestratorEvent
@@ -766,12 +766,12 @@ describe('GitHubIssuesPlugin.runTick', () => {
       expect(result.messages).toHaveLength(1)
       expect(result.messages[0]?.channels).toEqual(['#proj-leads'])
       const text = result.messages[0]?.text
-      expect(text).toContain('#proj-issue-50')
+      expect(text).not.toContain('#proj-issue-50')
       expect(text).toContain('#extra')
     } finally { spy.mockRestore() }
   })
 
-  it('routes an issue comment to its own channel unioned with entry channels', async () => {
+  it('routes an issue comment to entry channels instead of its own channel', async () => {
     const issueEv: OrchestratorEvent = {
       kind: 'issue_comment',
       repo: 'org/repo', issue: 50, url: 'https://example.com/i/50',
@@ -793,7 +793,7 @@ describe('GitHubIssuesPlugin.runTick', () => {
       }
       const result = await new GitHubIssuesPlugin('#proj').runTick(cfg, { issues: {} })
       expect(result.messages).toHaveLength(1)
-      expect(result.messages[0]?.channels.sort()).toEqual(['#leads', '#proj-issue-50'])
+      expect(result.messages[0]?.channels).toEqual(['#leads'])
     } finally { spy.mockRestore() }
   })
 
@@ -852,28 +852,28 @@ describe('GitHubIssuesPlugin.runTick', () => {
 })
 
 describe('desiredChannels', () => {
-  it('PrsPlugin includes #<project>-issue-N + entry channels for github-prs.watched only', () => {
+  it('PrsPlugin includes #<project>-issue-N for a channel-less entry, entry channels otherwise, for github-prs.watched only', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
       plugins: {
-        'github-prs': { watched: [{ number: 25, channels: ['#extra'] }] },
+        'github-prs': { watched: [{ number: 25, channels: ['#extra'] }, { number: 26 }] },
         'github-issues': { watched: [{ number: 14 }] },
       },
     }
-    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#proj-issue-25'])
+    expect(new GitHubPrsPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#proj-issue-26'])
   })
 
-  it('IssuesPlugin includes #<project>-issue-N + entry channels for github-issues.watched only', () => {
+  it('IssuesPlugin includes #<project>-issue-N for a channel-less entry, entry channels otherwise, for github-issues.watched only', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       repo: 'org/repo',
       plugins: {
         'github-prs': { watched: [{ number: 25 }] },
-        'github-issues': { watched: [{ number: 14, channels: ['#extra', '#more'] }] },
+        'github-issues': { watched: [{ number: 14, channels: ['#extra', '#more'] }, { number: 15 }] },
       },
     }
-    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#more', '#proj-issue-14'])
+    expect(new GitHubIssuesPlugin('#proj').desiredChannels(cfg).sort()).toEqual(['#extra', '#more', '#proj-issue-15'])
   })
 
   it('falls back to repo basename when project is unset', () => {
@@ -932,7 +932,7 @@ describe('desiredChannels', () => {
     expect(logs.some(l => l.includes('org/my.tool') && l.includes('cannot derive slug'))).toBe(true)
   })
 
-  it('keeps an entry watched via an explicit channel even when its auto-derived slug throws', () => {
+  it('keeps an entry watched via an explicit channel without deriving the slug that would throw', () => {
     const logs: string[] = []
     const cfg: OrchestratorConfig = {
       project: 'proj',
@@ -942,7 +942,7 @@ describe('desiredChannels', () => {
     }
     const chans = new GitHubPrsPlugin('#proj', (m) => { logs.push(m) }).desiredChannels(cfg)
     expect(chans).toEqual(['#explicit-chan'])
-    expect(logs.some(l => l.includes('org/my.tool') && l.includes('cannot derive slug'))).toBe(true)
+    expect(logs).toEqual([])
   })
 })
 

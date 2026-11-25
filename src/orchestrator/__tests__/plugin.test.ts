@@ -27,8 +27,8 @@ class TestPlugin extends BasePlugin {
 describe('BasePlugin.resolveChannels', () => {
   const p = new TestPlugin('#proj')
 
-  it('unions auto-detected and entry channels with dedupe', () => {
-    expect(p.resolve(['#issue-14'], ['#issue-7', '#issue-14'])).toEqual(['#issue-14', '#issue-7'])
+  it('returns entry channels instead of auto-detected, deduped', () => {
+    expect(p.resolve(['#issue-14'], ['#issue-7', '#issue-7'])).toEqual(['#issue-7'])
   })
 
   it('returns auto-detected when entry channels empty', () => {

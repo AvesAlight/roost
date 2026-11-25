@@ -12,24 +12,25 @@ import { LinearClient } from '../linear/linear-api.js'
 import { LinearAttachmentResolver, makeBatchedAttachmentQuery, prKey, type AttachmentQuery } from '../linear-link.js'
 
 interface LinearIssuesSliceShape {
-  watched?: Array<{ identifier?: unknown }>
+  watched?: Array<{ identifier?: unknown; channels?: unknown }>
 }
 
-// Extract Linear identifiers from `config.plugins['linear-issues'].watched`.
+// Identifier → the channels `config.plugins['linear-issues'].watched` routes
+// that issue to: its declared channels, or its per-issue channel when it
+// declares none. A PR cross-linked to the issue routes to the same place.
 // Trusts the existing linear-issues parser to have validated shape on write;
-// defensive against operator hand-edits via the `typeof` filter.
-function linearWatchedIdentifiers(config: OrchestratorConfig): string[] {
+// defensive against operator hand-edits via the `typeof` filters.
+function linearWatchChannels(config: OrchestratorConfig, project: string): Map<string, string[]> {
   const slice = config.plugins?.['linear-issues'] as LinearIssuesSliceShape | undefined
-  const entries = slice?.watched ?? []
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const e of entries) {
+  const out = new Map<string, Set<string>>()
+  for (const e of slice?.watched ?? []) {
     if (typeof e?.identifier !== 'string') continue
-    if (seen.has(e.identifier)) continue
-    seen.add(e.identifier)
-    out.push(e.identifier)
+    const declared = Array.isArray(e.channels) ? e.channels.filter((c): c is string => typeof c === 'string') : []
+    const chans = out.get(e.identifier) ?? new Set<string>()
+    for (const c of declared.length ? declared : [linearIssueChannel(project, e.identifier)]) chans.add(c)
+    out.set(e.identifier, chans)
   }
-  return out
+  return new Map([...out].map(([ident, chans]) => [ident, [...chans]]))
 }
 
 export class GitHubPrsPlugin extends GhBase {
@@ -59,8 +60,9 @@ export class GitHubPrsPlugin extends GhBase {
 
   desiredChannels(config: OrchestratorConfig): string[] {
     const chans = new Set(this.entryChannels(config, this.watched(config)))
-    // Static, config-only — every watched Linear identifier maps to its own
-    // channel that github-prs may route events to. linear-issues already joins
+    // Static, config-only — every watched Linear identifier maps to the
+    // channels that github-prs may route events to (its declared channels, or
+    // its own channel when it declares none). linear-issues already joins
     // these but joining is idempotent; declaring interest keeps the boot-time
     // channel union accurate.
     //
@@ -74,8 +76,8 @@ export class GitHubPrsPlugin extends GhBase {
       try { return defaultProject(config) } catch { return null }
     })()
     if (project) {
-      for (const ident of linearWatchedIdentifiers(config)) {
-        chans.add(linearIssueChannel(project, ident))
+      for (const linearChans of linearWatchChannels(config, project).values()) {
+        for (const c of linearChans) chans.add(c)
       }
     }
     return [...chans]
@@ -251,7 +253,8 @@ export class GitHubPrsPlugin extends GhBase {
     // Cross-link lookup: one batched Linear query per tick, gated on a
     // non-empty linear-issues watch set. Empty-watched is the load-bearing
     // fast-path — no resolver constructed, no API call, no env-read.
-    const linearIds = linearWatchedIdentifiers(config)
+    const linearWatches = linearWatchChannels(config, project)
+    const linearIds = [...linearWatches.keys()]
     const linkMap: Map<string, string[]> = linearIds.length
       ? await this.resolveLinearCrossLinks(linearIds)
       : new Map()
@@ -259,7 +262,9 @@ export class GitHubPrsPlugin extends GhBase {
     const curState: PrPluginState = { prs: {} }
     const messages: PluginMessage[] = []
     // Static (config) + dynamic (linked-issues from scrape). Each linked-issue
-    // channel is slugged against its own repo (closures can cross repos).
+    // channel is slugged against its own repo (closures can cross repos). An
+    // entry with declared channels adds no dynamic ones: its events go only
+    // to what it declared, so there is nothing else to join.
     const channels = new Set<string>(this.desiredChannels(config))
     for (const { key, repo, number, entryChannels, recoveryCmd, prevPr } of resolved) {
       const outcome = batch.get(key)
@@ -275,9 +280,13 @@ export class GitHubPrsPlugin extends GhBase {
         }
         if (prevPr) {
           curState.prs[key] = prevPr
-          const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
-          GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
-          for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) channels.add(linearIssueChannel(project, ident))
+          if (!entryChannels.length) {
+            const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
+            GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
+            for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) {
+              for (const c of linearWatches.get(ident) ?? []) channels.add(c)
+            }
+          }
         }
         continue
       }
@@ -286,14 +295,14 @@ export class GitHubPrsPlugin extends GhBase {
       const { snap, events } = this.snapshotPr(repo, number, outcome.node, prevPr, agentLogins)
       curState.prs[key] = snap
       const { routable, dropped } = GitHubPrsPlugin.partitionLinked(config, snap.repo, snap.linked_issues ?? [])
-      GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
+      if (!entryChannels.length) GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
       // Linear cross-link channels for this PR. A PR can be attached to
       // multiple Linear issues — all matched identifiers route. Key
       // normalization (via prKey) guards against casing drift between
       // gh CLI output and Linear's webhook-attachment URL.
       const linearMatches = linkMap.get(prKey(snap.repo, snap.number)) ?? []
-      const linearChannels = linearMatches.map(ident => linearIssueChannel(project, ident))
-      for (const ch of linearChannels) channels.add(ch)
+      const linearChannels = linearMatches.flatMap(ident => linearWatches.get(ident) ?? [])
+      if (!entryChannels.length) for (const ch of linearChannels) channels.add(ch)
       // Cross-repo drop warning debounced per head_oid (force-push re-triggers).
       const prevWarnedOid = prev?.prs[key]?.warned_drops_for_oid ?? null
       if (dropped.length) {
