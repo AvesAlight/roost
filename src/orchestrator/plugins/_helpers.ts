@@ -50,7 +50,7 @@ export function runWithTimeout(timeoutMs: number, bin: string): Runner {
     const code = await proc.exited
     // Any signal kill (the timeout's included) is reported as timedOut. Don't wait on its
     // pipes after that: a child it left behind can hold them open.
-    if (proc.signalCode !== null) return { code, stdout: '', stderr: '', timedOut: true }
+    if (proc.signalCode != null) return { code, stdout: '', stderr: '', timedOut: true }
     return { code, stdout: await stdout, stderr: await stderr, timedOut: false }
   }
 }
