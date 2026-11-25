@@ -1,7 +1,8 @@
 // Public surface for external plugins — reach here via the `roost/plugin`
-// exports map: extend, register, type, plus the shared grammar and watch-list
-// helpers the built-ins use, so external plugins don't copy them. Adding to
-// this is a deliberate API change. See docs/PLUGINS.md.
+// exports map: extend, register, type, plus the shared grammar, watch-list and
+// bookkeeping helpers (failure notes, seen ids, post cap, runner) the built-ins
+// or external plugins would otherwise copy. Adding to this is a deliberate API
+// change. See docs/PLUGINS.md.
 export {
   BasePlugin,
   defaultPluginLogger,
@@ -30,6 +31,17 @@ export {
 } from './plugins/grammar.js'
 
 export { addChannelsToEntry, applyUnwatchEntry, trackedRefusal } from './plugins/_shared.js'
+
+export {
+  capPosts,
+  mergeSeen,
+  noteFailure,
+  noteRecovery,
+  runWithTimeout,
+  type RunResult,
+  type Runner,
+  type Say,
+} from './plugins/_helpers.js'
 
 export { CooldownGate } from './plugins/_rate-limit.js'
 
