@@ -284,7 +284,7 @@ export class GitHubPrsPlugin extends GhBase {
             const { routable } = GitHubPrsPlugin.partitionLinked(config, prevPr.repo, prevPr.linked_issues ?? [])
             GitHubPrsPlugin.addRoutableChannels(channels, config, project, routable, this.log)
             for (const ident of linkMap.get(prKey(prevPr.repo, prevPr.number)) ?? []) {
-              for (const c of linearWatches.get(ident) ?? []) channels.add(c)
+              for (const c of linearWatches.get(ident) ?? [linearIssueChannel(project, ident)]) channels.add(c)
             }
           }
         }
@@ -301,7 +301,9 @@ export class GitHubPrsPlugin extends GhBase {
       // normalization (via prKey) guards against casing drift between
       // gh CLI output and Linear's webhook-attachment URL.
       const linearMatches = linkMap.get(prKey(snap.repo, snap.number)) ?? []
-      const linearChannels = linearMatches.flatMap(ident => linearWatches.get(ident) ?? [])
+      // Linear can spell an identifier differently than the watch config; an
+      // unmatched one keeps the per-issue channel.
+      const linearChannels = linearMatches.flatMap(ident => linearWatches.get(ident) ?? [linearIssueChannel(project, ident)])
       if (!entryChannels.length) for (const ch of linearChannels) channels.add(ch)
       // Cross-repo drop warning debounced per head_oid (force-push re-triggers).
       const prevWarnedOid = prev?.prs[key]?.warned_drops_for_oid ?? null

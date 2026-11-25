@@ -1992,6 +1992,26 @@ describe('explicit watch channels replace the auto-derived channel', () => {
     } finally { spy.mockRestore() }
   })
 
+  it('routes a cross-linked PR to the per-issue channel when Linear spells the identifier differently than the watch', async () => {
+    const spy = stubPr({ snap: fakePrSnap(), events: [prComment([])] })
+    try {
+      const cfg: OrchestratorConfig = {
+        project: 'proj', repo: 'org/repo',
+        plugins: {
+          'github-prs': { watched: [{ number: 25 }] },
+          'linear-issues': { watched: [{ identifier: 'C-1' }] },
+        },
+      }
+      const p = new GitHubPrsPlugin('#proj')
+      p._setLinearQueryForTest(async () => ({
+        nodes: [{ identifier: 'c-1', attachments: { nodes: [prAttachment] } }],
+        hasNextPage: false,
+      }))
+      const result = await p.runTick(cfg, { prs: {} })
+      expect(result.messages[0]?.channels).toEqual(['#proj-issue-c-1'])
+    } finally { spy.mockRestore() }
+  })
+
   it('an issue watch with channels posts only to those, including the now-watching ack', async () => {
     const seedEv = { kind: 'issue_added_to_watch', repo: 'org/repo', issue: 50, url: 'u', title: 't' } as OrchestratorEvent
     const commentEv = {
