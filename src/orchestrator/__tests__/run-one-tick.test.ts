@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { runOneTick } from '../../orchestrator.js'
 import type { Plugin } from '../plugin.js'
 import type { OrchestratorConfig } from '../config.js'
+import { anyPluginDue, pluginIntervalSeconds } from '../schedule.js'
 
 // runOneTick passes config straight through to plugins and reads no config
 // fields itself, so a minimal stub satisfies it.
@@ -53,5 +54,123 @@ describe('runOneTick — per-plugin error isolation', () => {
     expect(result.channels).toEqual([])
     expect(logs.some(l => l.includes('plugin boom1 tick crashed') && l.includes('one'))).toBe(true)
     expect(logs.some(l => l.includes('plugin boom2 tick crashed') && l.includes('two'))).toBe(true)
+  })
+})
+describe('runOneTick — per-plugin poll interval', () => {
+  const T = 60_000
+  function counting(name: string) {
+    const calls = { n: 0 }
+    const plugin = stubPlugin(name, async () => {
+      calls.n++
+      return { state: { n: calls.n }, messages: [{ channels: [`#${name}`], text: `${name}-${calls.n}` }], channels: [`#${name}-dyn`] }
+    })
+    return { plugin, calls }
+  }
+  const cfg = (plugins: Record<string, unknown>) => ({ project: 'proj', plugins }) as unknown as OrchestratorConfig
+  const quiet = () => {}
+
+  it('a plugin with no interval runs every tick (global fallback)', async () => {
+    const a = counting('a')
+    const schedule = new Map()
+    for (let i = 0; i < 3; i++) await runOneTick('/unused', cfg({ a: {} }), [a.plugin], opts, quiet, schedule, i * T)
+    expect(a.calls.n).toBe(3)
+  })
+
+  it('an override of 2x the tick runs every other tick while a sibling still runs every tick', async () => {
+    const slow = counting('slow')
+    const fast = counting('fast')
+    const config = cfg({ slow: { interval_seconds: 120 }, fast: {} })
+    const schedule = new Map()
+    const texts: string[][] = []
+    for (let i = 0; i < 4; i++) {
+      const r = await runOneTick('/unused', config, [slow.plugin, fast.plugin], opts, quiet, schedule, i * T)
+      texts.push(r.messages.map(m => m.text))
+    }
+    expect(slow.calls.n).toBe(2)
+    expect(fast.calls.n).toBe(4)
+    expect(texts).toEqual([['slow-1', 'fast-1'], ['fast-2'], ['slow-2', 'fast-3'], ['fast-4']])
+  })
+
+  it('a skipped plugin keeps its channels so reconcile does not part them', async () => {
+    const slow = counting('slow')
+    const config = cfg({ slow: { interval_seconds: 120 } })
+    const schedule = new Map()
+    await runOneTick('/unused', config, [slow.plugin], opts, quiet, schedule, 0)
+    const r = await runOneTick('/unused', config, [slow.plugin], opts, quiet, schedule, T)
+    expect(slow.calls.n).toBe(1)
+    expect(r.channels).toEqual(['#slow-dyn'])
+  })
+
+  it('a bad interval falls back to every tick and logs it', async () => {
+    const a = counting('a')
+    const logs: string[] = []
+    const schedule = new Map()
+    for (let i = 0; i < 2; i++) await runOneTick('/unused', cfg({ a: { interval_seconds: 'soon' } }), [a.plugin], opts, m => logs.push(m), schedule, i * T)
+    expect(a.calls.n).toBe(2)
+    expect(logs.some(l => l.includes('plugins.a.interval_seconds'))).toBe(true)
+  })
+
+  it('a crash keeps the last good channels so reconcile does not part them', async () => {
+    let n = 0
+    const flaky = stubPlugin('flaky', async () => {
+      n++
+      if (n === 2) throw new Error('x')
+      return { state: {}, messages: [], channels: ['#flaky-dyn'] }
+    })
+    const schedule = new Map()
+    await runOneTick('/unused', cfg({}), [flaky], opts, quiet, schedule, 0)
+    const r = await runOneTick('/unused', cfg({}), [flaky], opts, quiet, schedule, T)
+    expect(n).toBe(2)
+    expect(r.channels).toEqual(['#flaky-dyn'])
+  })
+
+  it('a crash counts as a run so a failing plugin is not retried early', async () => {
+    let n = 0
+    const boom = stubPlugin('boom', async () => { n++; throw new Error('x') })
+    const config = cfg({ boom: { interval_seconds: 120 } })
+    const schedule = new Map()
+    await runOneTick('/unused', config, [boom], opts, quiet, schedule, 0)
+    await runOneTick('/unused', config, [boom], opts, quiet, schedule, T)
+    expect(n).toBe(1)
+  })
+
+  it('without a schedule every plugin runs (one-shot modes)', async () => {
+    const slow = counting('slow')
+    const config = cfg({ slow: { interval_seconds: 120 } })
+    await runOneTick('/unused', config, [slow.plugin], opts, quiet)
+    await runOneTick('/unused', config, [slow.plugin], opts, quiet)
+    expect(slow.calls.n).toBe(2)
+  })
+})
+
+describe('poll interval scheduling against a 1s loop tick', () => {
+  const cfg = (irc: unknown, plugins: Record<string, unknown> = {}) => ({ project: 'proj', irc, plugins }) as unknown as OrchestratorConfig
+  const quiet = () => {}
+
+  it('a plugin with no value takes irc.interval_seconds', () => {
+    expect(pluginIntervalSeconds(cfg({ interval_seconds: 30 }, { a: {} }), 'a', quiet)).toBe(30)
+    expect(pluginIntervalSeconds(cfg({}), 'a', quiet)).toBe(60)
+  })
+
+  it('a 90s plugin runs at 90s, not rounded up to a multiple of the default', async () => {
+    const runs: number[] = []
+    const p = stubPlugin('p', async () => { runs.push(now); return { state: {}, messages: [], channels: [] } })
+    let now = 0
+    const config = cfg({ interval_seconds: 60 }, { p: { interval_seconds: 90 } })
+    const schedule = new Map()
+    for (now = 0; now <= 200_000; now += 1000) {
+      if (anyPluginDue([p], schedule, config, now)) await runOneTick('/unused', config, [p], opts, quiet, schedule, now)
+    }
+    expect(runs).toEqual([0, 90_000, 180_000])
+  })
+
+  it('no pass is due between runs, and one is due when the interval lands', async () => {
+    const p = stubPlugin('p', async () => ({ state: {}, messages: [], channels: [] }))
+    const config = cfg({ interval_seconds: 60 })
+    const schedule = new Map()
+    expect(anyPluginDue([p], schedule, config, 0)).toBe(true)
+    await runOneTick('/unused', config, [p], opts, quiet, schedule, 0)
+    expect(anyPluginDue([p], schedule, config, 59_000)).toBe(false)
+    expect(anyPluginDue([p], schedule, config, 60_000)).toBe(true)
   })
 })

@@ -25,6 +25,7 @@ import { dispatchMessages, connectAndWait } from './orchestrator/dispatch.js'
 import { outboxMessages, nextOutbox } from './orchestrator/outbox.js'
 import { assertRepoModeAll, defaultPluginLogger, type Plugin, type PluginLogger, type PluginMessage, type PluginTickResult } from './orchestrator/plugin.js'
 import './orchestrator/registry.js'
+import { LOOP_TICK_MS, anyPluginDue, defaultIntervalSeconds, pluginIntervalSeconds, pluginIsDue, type PluginSchedule } from './orchestrator/schedule.js'
 import { buildPlugins } from './orchestrator/build-plugins.js'
 import { loadExternalPlugins } from './orchestrator/load-external-plugins.js'
 import { resolveProjectChannel, dispatcherNick, defaultProject } from './orchestrator/naming.js'
@@ -117,6 +118,11 @@ export async function runOneTick(
   // loses them for good.
   opts: { seed: boolean; dryRun: boolean; deferCommit?: boolean },
   log: PluginLogger = defaultPluginLogger,
+  // Daemon-only. With a schedule, a plugin whose `plugins.<name>.interval_seconds`
+  // hasn't elapsed since its last run sits this tick out. Without one every
+  // plugin runs, which is what the one-shot modes want.
+  schedule?: Map<string, PluginSchedule>,
+  now: number = Date.now(),
 ): Promise<TickResult> {
   const prev = opts.seed ? null : await loadState(stateDir)
   const curState: OrchestratorState = {
@@ -134,17 +140,26 @@ export async function runOneTick(
   // for the tick: a thrown plugin preserves its prevState, emits no messages,
   // and is logged; siblings still dispatch. Mirrors bootChannels' per-plugin
   // try/catch. A crashed plugin's config-static channels are still reconciled
-  // via desiredChannels (in bootChannels); only its scraped-dynamic channels
-  // for this tick are lost, which is moot since it couldn't scrape.
+  // via desiredChannels (in bootChannels). Its scraped-dynamic channels carry
+  // over from its last good run when a schedule is passed; without one (the
+  // one-shot modes) they are lost for the tick, which is moot since it
+  // couldn't scrape.
   const results = await Promise.all(
     plugins.map(async (plugin): Promise<{ plugin: Plugin; result: PluginTickResult }> => {
       const prevState = getPluginState<unknown>(prev, plugin.name)
+      if (schedule && !pluginIsDue(schedule, plugin.name, pluginIntervalSeconds(config, plugin.name, log), now)) {
+        return { plugin, result: { state: prevState, messages: [], channels: schedule.get(plugin.name)?.channels ?? [] } }
+      }
       try {
-        return { plugin, result: await plugin.runTick(config, prevState) }
+        const result = await plugin.runTick(config, prevState)
+        schedule?.set(plugin.name, { lastRun: now, channels: result.channels })
+        return { plugin, result }
       } catch (e) {
+        const carried = schedule?.get(plugin.name)?.channels ?? []
+        schedule?.set(plugin.name, { lastRun: now, channels: carried })
         const detail = e instanceof Error ? e.stack ?? e.message : String(e)
         log(`orchestrator: plugin ${plugin.name} tick crashed: ${detail}\n`)
-        return { plugin, result: { state: prevState, messages: [], channels: [] } }
+        return { plugin, result: { state: prevState, messages: [], channels: carried } }
       }
     })
   )
@@ -229,7 +244,7 @@ async function runDaemon(stateDir: string): Promise<void> {
   const { config: initialConfig, plugins, projectChannel } = await loadConfigWithPlugins(stateDir, log)
   let config = initialConfig
   const { nick, server, port } = requireIrcConfig(config, 'daemon mode')
-  const interval = Math.max(5, (config.irc?.interval_seconds ?? 60)) * 1000
+  const interval = defaultIntervalSeconds(config) * 1000
   const initialChannels = bootChannels(plugins, config, projectChannel, log)
   log(`orchestrator[daemon]: starting nick=${nick} server=${server}:${port} channels=${initialChannels.join(',')} interval=${interval / 1000}s\n`)
 
@@ -283,13 +298,23 @@ async function runDaemon(stateDir: string): Promise<void> {
     })
 
   const tickOpts = { seed: false, dryRun: false, deferCommit: true }
+  const pluginSchedule = new Map<string, PluginSchedule>()
   // Channel -> reason for joins that failed on the last complete pass. A
   // [dispatcher_error] posts when a channel starts failing or its reason
   // changes, not every tick.
   let unjoinable = new Map<string, string>()
 
+  // The loop wakes every LOOP_TICK_MS but only does a full pass (config, state,
+  // IRC sync, delivery, heartbeat) when a plugin is due, or the default interval
+  // has gone by so outbox retries and the heartbeat keep their old cadence.
+  let lastPass = 0
   while (!stop) {
     const tickStart = Date.now()
+    if (!anyPluginDue(plugins, pluginSchedule, config, tickStart) && tickStart - lastPass < defaultIntervalSeconds(config) * 1000) {
+      await sleepInterruptible(LOOP_TICK_MS)
+      continue
+    }
+    lastPass = tickStart
     try {
       const next = await loadConfig(stateDir)
       assertRepoModeAll(plugins, await loadConfigBase(stateDir))
@@ -300,7 +325,7 @@ async function runDaemon(stateDir: string): Promise<void> {
 
     let result: TickResult
     try {
-      result = await runOneTick(stateDir, config, plugins, tickOpts, log)
+      result = await runOneTick(stateDir, config, plugins, tickOpts, log, pluginSchedule, tickStart)
     } catch (e) {
       const msg = String(e)
       log(`orchestrator[daemon]: tick failed: ${msg}\n`)
@@ -372,7 +397,7 @@ async function runDaemon(stateDir: string): Promise<void> {
       }
     }
 
-    await sleepInterruptible(interval)
+    await sleepInterruptible(LOOP_TICK_MS)
   }
 
   client.quit()
