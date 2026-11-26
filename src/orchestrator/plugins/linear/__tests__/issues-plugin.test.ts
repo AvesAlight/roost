@@ -242,7 +242,7 @@ describe('LinearIssuesPlugin.runTick — hard fetch error isolation', () => {
     expect(warns[0]?.text).toBe('[linear-issues] issue C-758 fetch failing: linear graphql failed: HTTP 400 (code=INPUT_ERROR)')
   })
 
-  it('routes the fetch-failing warn to the per-issue channel + entry.channels', async () => {
+  it('routes the fetch-failing warn to entry.channels instead of the per-issue channel', async () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#triage'] }] } },
@@ -250,7 +250,7 @@ describe('LinearIssuesPlugin.runTick — hard fetch error isolation', () => {
     const result = await plugin(throwingClient('C-758')).runTick(cfg, { issues: { 'C-758': snapC758 } })
     const warns = result.messages.filter(e => e.text.includes('fetch failing'))
     expect(warns).toHaveLength(1)
-    expect(warns[0]?.channels).toEqual(['#proj-issue-c-758', '#triage'])
+    expect(warns[0]?.channels).toEqual(['#triage'])
   })
 
   it('does not modify state for the failing entry — prior watermark preserved', async () => {
@@ -430,7 +430,7 @@ describe('LinearIssuesPlugin.runTick — no watches', () => {
 // ---- desiredChannels ---------------------------------------------------
 
 describe('LinearIssuesPlugin.desiredChannels', () => {
-  it('emits per-issue channel for each watched entry, plus declared extras', () => {
+  it('emits the per-issue channel for an entry with no channels, declared channels otherwise', () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'linear-issues': { watched: [
@@ -439,11 +439,23 @@ describe('LinearIssuesPlugin.desiredChannels', () => {
       ] } },
     }
     const chans = new LinearIssuesPlugin('#proj-leads').desiredChannels(cfg).sort()
-    expect(chans).toEqual(['#extra', '#proj-issue-c-758', '#proj-issue-eng-1'])
+    expect(chans).toEqual(['#extra', '#proj-issue-c-758'])
   })
 
   it('empty when no watches (no project lookup required)', () => {
     expect(new LinearIssuesPlugin('#proj-leads').desiredChannels({})).toEqual([])
+  })
+})
+
+describe('LinearIssuesPlugin — now-watching ack', () => {
+  it('names only the explicit channels when the watch has them', async () => {
+    const cfg: OrchestratorConfig = {
+      project: 'proj',
+      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
+    }
+    const result = await plugin(mockClient(() => rawIssue())).runTick(cfg, { issues: {} })
+    const ack = result.messages.find(m => m.text.startsWith('now watching linear issue'))
+    expect(ack?.text).toBe('now watching linear issue C-758 — routing events to #leads')
   })
 })
 

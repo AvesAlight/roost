@@ -35,8 +35,8 @@ export interface LinearIssuePluginState {
 }
 
 // Watch-list entry — `identifier` is the spec-required uppercase Linear id
-// (e.g. `C-758`). Channels are optional extra routing targets, unioned with
-// the per-issue channel at event time.
+// (e.g. `C-758`). Channels, when present, replace the per-issue channel as the
+// routing targets.
 export interface LinearWatchedEntry {
   identifier: string
   channels?: string[]

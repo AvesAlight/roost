@@ -98,11 +98,12 @@ export abstract class BasePlugin implements Plugin {
   abstract runTick(config: PluginConfig, prevState: unknown): Promise<PluginTickResult>
   handleCommand?(merged: PluginConfig, local: PluginConfig, cmd: Command): string | null | Promise<string | null>
 
-  // Union auto-detected channels with declared channels; fall back to the
-  // default channel if both are empty (defensive for any entity-less event).
+  // Declared channels replace the auto-detected ones. Without declared
+  // channels use the auto-detected set; fall back to the default channel if
+  // both are empty (defensive for any entity-less event).
   protected resolveChannels(autoDetected: string[], entryChannels: string[]): string[] {
-    const merged = Array.from(new Set([...autoDetected, ...entryChannels]))
-    return merged.length ? merged : [this.defaultChannel]
+    const chosen = Array.from(new Set(entryChannels.length ? entryChannels : autoDetected))
+    return chosen.length ? chosen : [this.defaultChannel]
   }
 
   // This plugin's config slice from `config.plugins[name]` — shape is plugin-private.

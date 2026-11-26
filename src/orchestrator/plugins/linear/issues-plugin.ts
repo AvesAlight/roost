@@ -69,9 +69,9 @@ export class LinearIssuesPlugin extends BasePlugin {
     if (!entries.length) return []
     const project = defaultProject(config)
     const chans = new Set<string>()
+    // Declared channels replace the per-issue channel.
     for (const e of entries) {
-      chans.add(linearIssueChannel(project, e.identifier))
-      for (const c of e.channels ?? []) chans.add(c)
+      for (const c of e.channels?.length ? e.channels : [linearIssueChannel(project, e.identifier)]) chans.add(c)
     }
     return [...chans]
   }
@@ -214,7 +214,7 @@ export class LinearIssuesPlugin extends BasePlugin {
       for (const event of item.events) {
         if (event.kind === 'linear_issue_added_to_watch') {
           const issueChan = linearIssueChannel(project, item.key)
-          const routingChannels = [issueChan, ...item.entryChannels].filter(ch => ch !== projectChannel)
+          const routingChannels = this.resolveChannels([issueChan], item.entryChannels).filter(ch => ch !== projectChannel)
           messages.push({
             channels: [projectChannel],
             text: `now watching linear issue ${item.key} — routing events to ${routingChannels.join(', ')}`,

@@ -71,13 +71,18 @@ Fields:
 | `plugins.circleci.failure_hint` | Optional template appended to a failed-workflow line, e.g. `"my-tool log {slug} {job}"`. `{slug}` is the project slug and `{job}` the first failed job's number. Unset by default. |
 
 For watched entries, `repo` defaults to the top-level in single mode and is
-required per entry in multi mode. `channels` adds destinations on top of the
-auto-routed issue channel.
+required per entry in multi mode. `channels` replaces the auto-routed issue
+channel: an entry that names channels joins and posts to only those. An entry
+with no `channels` uses the auto-routed `#<project>-issue-<N>` (Linear:
+`#<project>-issue-<team>-<N>`). Each channel the dispatcher joins counts against
+the server's per-client limit, so naming channels also keeps the count down.
 
 ### Cross-repo PR closures
 
 `closingIssuesReferences` can cross repos — a PR in A may close an issue in
-B. Each linked-issue channel is slugged from its own repo, not the PR's:
+B. Each linked-issue channel is slugged from its own repo, not the PR's. This
+applies to watches with no `channels`; a PR watch that names channels posts only
+to those:
 
 - **Multi-repo:** PR `org/a#25` closing `org/b#14` routes to
   `#<project>-b-issue-14`. If `org/b` is also watched, PR-side and issue-side
