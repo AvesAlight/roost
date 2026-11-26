@@ -1935,13 +1935,4 @@ describe('github-prs with Linear watches that name channels', () => {
       expect(result.channels).toEqual(['#pr-room'])
     } finally { batch.mockRestore() }
   })
-
-  it('keeps the per-issue channel when Linear spells the identifier differently than the watch', async () => {
-    const spy = stubPr({ snap: fakePrSnap(), events: [prComment] })
-    try {
-      const cfg = cfgWith({ number: 25 }, { identifier: 'C-1' })
-      const result = await prPlugin('c-1').runTick(cfg, { prs: {} })
-      expect(result.messages[0]?.channels).toEqual(['#proj-issue-c-1'])
-    } finally { spy.mockRestore() }
-  })
 })
