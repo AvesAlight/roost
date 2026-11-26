@@ -793,11 +793,17 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       clearTimeout(timer)
       this.namesTimers.delete(channel)
     }
-    if (!this.joinResolvers.get(channel)?.length) return
-    if (this.topics.has(channel)) { this.resolveJoin(channel); return }
-    // No 332 came with this JOIN, and servers don't volunteer 331. Ask, and resolve
-    // the join on the reply (or give up after a beat and leave the topic unknown).
+    const joinPending = (this.joinResolvers.get(channel)?.length ?? 0) > 0
+    if (this.topics.has(channel)) {
+      if (joinPending) this.resolveJoin(channel)
+      return
+    }
+    // No 332 came with this JOIN, and servers don't volunteer 331. Ask, whether or not a
+    // join is waiting: auto-join and rejoin register no resolver but still need the cache.
+    if (this.topicQueryTimers.has(channel)) return
     this.irc.raw('TOPIC', channel)
+    if (!joinPending) return
+    // A waiting join resolves on the reply, or gives up after a beat with the topic unknown.
     const t = setTimeout(() => {
       this.topicQueryTimers.delete(channel)
       this.log(`topic query for ${channel} timed out`)

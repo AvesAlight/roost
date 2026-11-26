@@ -46,4 +46,18 @@ describe('topic cache (offline)', () => {
       quiet.mockRestore()
     }
   })
+
+  it('NAMES with no pending join (auto-join, rejoin) still asks for the topic', () => {
+    const client = makeClient()
+    const quiet = spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const raw = spyOn(client.irc, 'raw').mockImplementation(() => {})
+    try {
+      client.handleUserlist({ channel: '#auto', users: [{ nick: 'test-bot' }] })
+      expect(raw.mock.calls).toContainEqual(['TOPIC', '#auto'])
+      dispatch(client, '331', ['test-bot', '#auto', 'No topic is set'])
+      expect(client.getTopic('#auto')).toBe('')
+    } finally {
+      quiet.mockRestore()
+    }
+  })
 })
