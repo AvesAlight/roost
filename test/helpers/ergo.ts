@@ -3,7 +3,6 @@ import { mkdtemp, writeFile, rm, unlink } from 'node:fs/promises'
 import { accessSync, constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
-import { afterAll } from 'bun:test'
 
 const ROOST_ROOT = join(import.meta.dirname, '..', '..')
 
@@ -125,36 +124,22 @@ export interface ErgoLifecycle extends ErgoContext {
   cleanup(): Promise<void>
 }
 
-export async function startErgo(): Promise<ErgoContext | null> {
-  const ergo = findErgoBin()
-  if (!ergo) {
+/**
+ * Start a private ergo instance for a suite. The caller owns cleanup: call
+ * `cleanup()` from an `afterAll` at describe scope. Registering `afterAll`
+ * from inside a `beforeAll` runs it before the suite's tests finish on
+ * current bun.
+ * Returns null if ergo binary is not available (test should skip).
+ */
+export async function startErgo(): Promise<ErgoLifecycle | null> {
+  if (!findErgoBin()) {
     console.warn(
       '\nERGO NOT FOUND — skipping integration tests.\n' +
         'Run bin/install-ergo or set ERGO_BIN to the ergo binary path.\n',
     )
     return null
   }
-
-  const port = await getFreePort()
-  const datadir = await mkdtemp(join(tmpdir(), 'roost-test-'))
-  const configPath = join(datadir, 'ircd.yaml')
-
-  await writeFile(configPath, makeErgoConfig(port, datadir))
-
-  const init = Bun.spawnSync([ergo, 'initdb', '--conf', configPath], { cwd: datadir })
-  if (init.exitCode !== 0) {
-    await rm(datadir, { recursive: true, force: true })
-    throw new Error(`ergo initdb failed: ${new TextDecoder().decode(init.stderr)}`)
-  }
-
-  const proc = await spawnErgoProcess(ergo, configPath, datadir)
-
-  afterAll(async () => {
-    proc.kill()
-    await rm(datadir, { recursive: true, force: true })
-  })
-
-  return { port, host: '127.0.0.1' }
+  return startErgoDedicated()
 }
 
 async function spawnErgoProcess(

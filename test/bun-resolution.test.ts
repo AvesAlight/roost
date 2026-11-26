@@ -11,12 +11,12 @@
  * thoroughly via roost-irc-server (which has the full MCP connect probe) is
  * sufficient — no per-launcher duplication needed.
  */
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { join, dirname, resolve } from 'node:path'
 import { mkdirSync, symlinkSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { wireMcpClient, pollUntilIrcReady } from './helpers/mcp-core.js'
 
 const ROOST_ROOT = join(import.meta.dirname, '..')
@@ -43,11 +43,12 @@ function scrubEnv(): Record<string, string> {
 }
 
 describe.if(isErgoAvailable())('bin/roost-irc-server bun resolution — MCP connects', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('candidate-4 fallback: MCP connects via ${HOME}/.bun/bin/bun with bun absent from PATH (primary failure scenario)', async () => {
     const realBun = Bun.which('bun')!

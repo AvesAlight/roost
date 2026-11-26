@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as os from 'node:os'
@@ -6,7 +6,7 @@ import * as path from 'node:path'
 import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
 import { suppressLateRejection } from './helpers/tool.js'
 import { startPermbotStub, makeSock, captureIRC } from './helpers/permbot-stub.js'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { connectPeer } from './helpers/peer.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
@@ -373,11 +373,12 @@ describe('permission-prompt hook', () => {
 // delivery still works but takes 30s.
 
 describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('delivers DM to operator when permbot socket is absent', async () => {
     const operator = await connectPeer(ergo, 'op-real-1')

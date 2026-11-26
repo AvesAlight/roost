@@ -1,16 +1,17 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { messagePredicate, eventPredicate } from './helpers/mcp-core.js'
 import { connectPeer } from './helpers/peer.js'
 import { toolText } from './helpers/tool.js'
 
 describe.if(isErgoAvailable())('inbound notifications', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('peer→channel: notification has correct meta', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-in-mcp1')
