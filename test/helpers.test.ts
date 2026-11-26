@@ -1,18 +1,25 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcp } from './helpers/mcp.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { connectPeer } from './helpers/peer.js'
 
 describe.if(isErgoAvailable())('test helpers', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('ergo starts and is reachable', async () => {
     expect(ergo.port).toBeGreaterThan(0)
+  })
+
+  it('ergo is still up in a later test', async () => {
+    await Bun.sleep(1000)
+    const peer = await connectPeer(ergo, 'late-peer')
+    expect(peer.nick).toBe('late-peer')
   })
 
   it('peer can connect and join a channel', async () => {

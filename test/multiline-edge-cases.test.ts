@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
@@ -7,11 +7,12 @@ import { connectPeer } from './helpers/peer.js'
 import { MULTILINE_LINE_BYTES } from '../src/constants.js'
 
 describe.if(isErgoAvailable())('multiline edge cases', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('empty lines preserved (consecutive \\n round-trip)', async () => {
     const sender = await startMcpInProcess(ergo, 'ip-ml-ec1-s')
@@ -89,11 +90,12 @@ describe.if(isErgoAvailable())('multiline edge cases', () => {
 // Subprocess-only: these time out intermittently under the in-process harness
 // (timing-sensitive boundary cases). Tracked in #83.
 describe.if(isErgoAvailable())('multiline edge cases (subprocess)', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('exceeding max-lines: tool succeeds', async () => {
     // 201 lines > ergo's max-lines=200 (see makeErgoConfig in test/helpers/ergo.ts).

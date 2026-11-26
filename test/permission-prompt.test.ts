@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as os from 'node:os'
@@ -6,7 +6,7 @@ import * as path from 'node:path'
 import { summarize, extractIntent, resolveTranscriptPath } from '../src/permission-prompt.js'
 import { suppressLateRejection } from './helpers/tool.js'
 import { startPermbotStub, makeSock, captureIRC } from './helpers/permbot-stub.js'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { connectPeer } from './helpers/peer.js'
 
 const HOOK = path.join(import.meta.dirname, '../src/permission-prompt.ts')
@@ -373,11 +373,12 @@ describe('permission-prompt hook', () => {
 // delivery still works but takes 30s.
 
 describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('delivers DM to operator when permbot socket is absent', async () => {
     const operator = await connectPeer(ergo, 'op-real-1')
@@ -425,7 +426,13 @@ describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
   it('logs registration timeout when ergo never answers', async () => {
     // Sink that accepts TCP but never speaks IRC — registration deadline must
     // fire and the hook must still exit 0 with the documented log line.
-    const sink = net.createServer(() => { /* hold socket open, send nothing */ })
+    // Track accepted sockets: server.close() waits for them, and on current bun
+    // an accepted socket isn't closed when the hook exits. Destroy them first.
+    const accepted = new Set<net.Socket>()
+    const sink = net.createServer((s) => {
+      accepted.add(s)
+      s.on('close', () => accepted.delete(s))
+    })
     await new Promise<void>(r => sink.listen(0, '127.0.0.1', () => r()))
     const { port } = sink.address() as net.AddressInfo
 
@@ -451,6 +458,7 @@ describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
       expect(stderr).toContain('registration timeout fired')
       expect(proc.exitCode).toBe(0)
     } finally {
+      for (const s of accepted) s.destroy()
       await new Promise<void>(r => sink.close(() => r()))
     }
   }, 10_000)

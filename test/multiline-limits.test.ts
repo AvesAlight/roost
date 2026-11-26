@@ -1,16 +1,17 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { messagePredicate } from './helpers/mcp-core.js'
 
 // ergo rejects a draft/multiline batch over max-bytes (16384) or max-lines (200)
 // whole, delivering nothing. say() must split such text into batches that fit.
 describe.if(isErgoAvailable())('multiline server limits', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   async function sendAndCollect(id: string, text: string): Promise<string[]> {
     const sender = await startMcpInProcess(ergo, `ml-lim-${id}-s`)
