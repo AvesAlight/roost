@@ -440,9 +440,8 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
-  afterAll(async () => { await ergo?.cleanup() })
-
-  afterAll(() => {
+  afterAll(async () => {
+    await ergo?.cleanup()
     for (const d of tmpDirs) {
       try { rmSync(d, { recursive: true }) } catch {}
     }
