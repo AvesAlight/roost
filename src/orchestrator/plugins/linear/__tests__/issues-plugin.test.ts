@@ -447,41 +447,15 @@ describe('LinearIssuesPlugin.desiredChannels', () => {
   })
 })
 
-describe('LinearIssuesPlugin — explicit channels replace the per-issue channel', () => {
-  it('a watch made by DM with channels joins only those channels', () => {
-    const local: OrchestratorConfig = {}
-    const merged: OrchestratorConfig = { project: 'proj' }
-    const p = new LinearIssuesPlugin('#proj-leads')
-    p.handleCommand!(merged, local, watchCmd('C-758', ['#leads']))
-    const after: OrchestratorConfig = { project: 'proj', plugins: local.plugins }
-    expect(p.desiredChannels(after)).toEqual(['#leads'])
-  })
-
-  it('posts events to the explicit channels only', async () => {
-    const cfg: OrchestratorConfig = {
-      project: 'proj',
-      plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
-    }
-    const client = mockClient(() => rawIssue({
-      comments: { nodes: [{ id: 'c-old', body: 'old', user: { name: 'a' }, parent: null }] },
-    }))
-    const seeded = await plugin(client).runTick(cfg, { issues: {} })
-    const posted = seeded.messages.filter(m => !m.text.startsWith('now watching'))
-    expect(posted.length).toBeGreaterThan(0)
-    for (const m of posted) expect(m.channels).toEqual(['#leads'])
-    expect(seeded.channels).toEqual(['#leads'])
-
-  })
-
-  it('names only the explicit channels in the now-watching ack', async () => {
+describe('LinearIssuesPlugin — now-watching ack', () => {
+  it('names only the explicit channels when the watch has them', async () => {
     const cfg: OrchestratorConfig = {
       project: 'proj',
       plugins: { 'linear-issues': { watched: [{ identifier: 'C-758', channels: ['#leads'] }] } },
     }
     const result = await plugin(mockClient(() => rawIssue())).runTick(cfg, { issues: {} })
     const ack = result.messages.find(m => m.text.startsWith('now watching linear issue'))
-    expect(ack?.text).toContain('#leads')
-    expect(ack?.text).not.toContain('#proj-issue-c-758')
+    expect(ack?.text).toBe('now watching linear issue C-758 — routing events to #leads')
   })
 })
 
