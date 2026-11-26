@@ -426,7 +426,13 @@ describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
   it('logs registration timeout when ergo never answers', async () => {
     // Sink that accepts TCP but never speaks IRC — registration deadline must
     // fire and the hook must still exit 0 with the documented log line.
-    const sink = net.createServer(() => { /* hold socket open, send nothing */ })
+    // Track accepted sockets: server.close() waits for them, and on current bun
+    // an accepted socket isn't closed when the hook exits. Destroy them first.
+    const accepted = new Set<net.Socket>()
+    const sink = net.createServer((s) => {
+      accepted.add(s)
+      s.on('close', () => accepted.delete(s))
+    })
     await new Promise<void>(r => sink.listen(0, '127.0.0.1', () => r()))
     const { port } = sink.address() as net.AddressInfo
 
@@ -452,6 +458,7 @@ describe.if(isErgoAvailable())('sendFallbackDm against real ergo', () => {
       expect(stderr).toContain('registration timeout fired')
       expect(proc.exitCode).toBe(0)
     } finally {
+      for (const s of accepted) s.destroy()
       await new Promise<void>(r => sink.close(() => r()))
     }
   }, 10_000)
