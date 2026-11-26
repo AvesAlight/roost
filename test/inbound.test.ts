@@ -252,6 +252,24 @@ describe.if(isErgoAvailable())('inbound notifications', () => {
     expect(n.meta.mention).toBe('true')
   })
 
+  it('peer TOPIC change: notification with event=topic, then cleared', async () => {
+    const peer = await connectPeer(ergo, 'ip-in-topic-peer')
+    await peer.joinChannel('#ip-in-topic')
+    const mcp = await startMcpInProcess(ergo, 'ip-in-topic')
+    await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-in-topic' } })
+
+    peer.setTopic('#ip-in-topic', 'new rules')
+    const n = await mcp.waitForNotification(eventPredicate('topic', { channel: '#ip-in-topic' }))
+    expect(n.content).toBe('new rules')
+    expect(n.meta.sender).toBe('ip-in-topic-peer')
+    expect(n.meta.isDirect).toBe('false')
+
+    peer.setTopic('#ip-in-topic', '')
+    const isTopic = eventPredicate('topic', { channel: '#ip-in-topic' })
+    const cleared = await mcp.waitForNotification(n => isTopic(n) && n.content === '(topic cleared)')
+    expect(cleared.content).toBe('(topic cleared)')
+  })
+
   // ---- seenBy attribute -------------------------------------------------------
 
   it('peer→channel message carries seenBy with both nicks', async () => {

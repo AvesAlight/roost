@@ -8,6 +8,7 @@ import type {
   WireMembershipMeta,
   WireSystemMeta,
   WireUnreadSummaryMeta,
+  WireTopicMeta,
 } from '../../src/wire-meta.js'
 import { sleep, suppressLateRejection } from './tool.js'
 
@@ -89,6 +90,7 @@ export function assertChannelMessage(
 // assignable to `{event: 'join'}` and would `Extract` to `never`.
 export type EventVariantMeta<E extends WireMeta['event']> =
   E extends 'message' ? WireMessageMeta & { event: 'message' }
+  : E extends 'topic' ? WireTopicMeta & { event: 'topic' }
   : E extends MembershipKind ? WireMembershipMeta & { event: E }
   : E extends 'unread-summary' ? WireUnreadSummaryMeta & { event: 'unread-summary' }
   : E extends SystemKind ? WireSystemMeta & { event: E }

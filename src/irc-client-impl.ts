@@ -63,6 +63,9 @@ const MAPPED_JOIN_ERRORS: Record<string, string> = {
 // 403 ERR_NOSUCHCHANNEL, 476 ERR_BADCHANMASK, 477 ERR_NEEDREGGEDNICK.
 const UNMAPPED_JOIN_ERRORS = new Set(['403', '476', '477'])
 
+// How long a join waits for the reply to our TOPIC query before leaving the topic unknown.
+const TOPIC_QUERY_TIMEOUT_MS = 1000
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const buildMentionRegex = (nick: string) => new RegExp(`\\b${escapeRegex(nick)}\\b`, 'i')
 
@@ -84,6 +87,8 @@ interface PartEvent { nick: string; channel: string; message?: string }
 interface KickEvent { nick?: string; kicked: string; channel: string; message?: string }
 interface QuitEvent { nick: string; message?: string }
 interface NickEvent { nick: string; new_nick: string }
+// nick is present only for a live TOPIC command; the 331/332 numerics carry none.
+interface TopicEvent { channel: string; topic: string; nick?: string }
 interface MessageEvent {
   nick: string
   target: string
@@ -176,10 +181,17 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly unread = new Map<string, UnreadInfo>()
   private readonly seenFingerprints = new Map<string, Set<string>>()
   private readonly channelUsers = new Map<string, Set<string>>()
+  // Lowercased channel -> topic as the server reported it. '' means the server said
+  // there is none; a missing key means we haven't heard.
+  private readonly topics = new Map<string, string>()
+  // Joins waiting on the reply to our explicit TOPIC query (servers don't send 331
+  // unprompted at JOIN), with the timer that gives up and resolves anyway.
+  private readonly topicQueryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private pendingRejoinChannels: string[] = []
 
   private readonly messageHandlers: Array<(msg: IrcMessage, meta: MessageMeta) => void> = []
   private readonly membershipHandlers: Array<(kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void> = []
+  private readonly topicHandlers: Array<(channel: string, topic: string, setter: string) => void> = []
   private readonly systemHandlers: Array<(kind: SystemKind, content: SystemContent) => void> = []
 
   constructor(config: ClientConfig) {
@@ -371,6 +383,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     return set ? [...set].sort() : []
   }
 
+  getTopic(channel: string): string | undefined { return this.topics.get(channel.toLowerCase()) }
+
   getUnread(): ReadonlyMap<string, UnreadInfo> { return this.unread }
   ackUnread(key: string): void { this.unread.delete(key.toLowerCase()) }
   clearDedupeCache(): void { this.seenFingerprints.clear() }
@@ -379,11 +393,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   on(event: 'message', handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
+  on(event: 'topic', handler: (channel: string, topic: string, setter: string) => void): void
   on(event: 'system', handler: (kind: SystemKind, content: SystemContent) => void): void
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- implementation signature required by TS overload pattern
   on(event: string, handler: (...args: any[]) => void): void {
     if (event === 'message') this.messageHandlers.push(handler)
     else if (event === 'membership') this.membershipHandlers.push(handler)
+    else if (event === 'topic') this.topicHandlers.push(handler)
     else if (event === 'system') this.systemHandlers.push(handler)
   }
 
@@ -488,6 +504,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.irc.on('registered', () => this.handleRegistered())
     this.irc.on('join', (e: JoinEvent) => this.handleJoin(e))
     this.irc.on('userlist', (e: UserlistEvent) => this.handleUserlist(e))
+    this.irc.on('topic', (e: TopicEvent) => this.handleTopic(e))
     this.irc.on('part', (e: PartEvent) => this.handlePart(e))
     this.irc.on('kick', (e: KickEvent) => this.handleKick(e))
     this.irc.on('quit', (e: QuitEvent) => this.handleQuit(e))
@@ -776,11 +793,38 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       clearTimeout(timer)
       this.namesTimers.delete(channel)
     }
+    if (!this.joinResolvers.get(channel)?.length) return
+    if (this.topics.has(channel)) { this.resolveJoin(channel); return }
+    // No 332 came with this JOIN, and servers don't volunteer 331. Ask, and resolve
+    // the join on the reply (or give up after a beat and leave the topic unknown).
+    this.irc.raw('TOPIC', channel)
+    const t = setTimeout(() => {
+      this.topicQueryTimers.delete(channel)
+      this.log(`topic query for ${channel} timed out`)
+      this.resolveJoin(channel)
+    }, TOPIC_QUERY_TIMEOUT_MS)
+    t.unref?.()
+    this.topicQueryTimers.set(channel, t)
+  }
+
+  private resolveJoin(channel: string): void {
     const list = this.joinResolvers.get(channel)
-    if (list?.length) {
-      for (const r of list) r({ ok: true, members })
-      this.joinResolvers.delete(channel)
+    if (!list?.length) return
+    const members = this.getUsers(channel)
+    for (const r of list) r({ ok: true, members })
+    this.joinResolvers.delete(channel)
+  }
+
+  private handleTopic(event: TopicEvent): void {
+    const channel = event.channel.toLowerCase()
+    this.topics.set(channel, event.topic)
+    const timer = this.topicQueryTimers.get(channel)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.topicQueryTimers.delete(channel)
+      this.resolveJoin(channel)
     }
+    if (event.nick) for (const h of this.topicHandlers) h(channel, event.topic, event.nick)
   }
 
   private handlePart(event: PartEvent): void {
@@ -792,6 +836,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
         this.partResolvers.delete(channel)
       }
       this.channelUsers.delete(channel)
+      this.topics.delete(channel)
       this.unread.delete(channel)
       return
     }
@@ -806,6 +851,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const victim = event.kicked
     if (victim === this.nick) {
       this.channelUsers.delete(channel)
+      this.topics.delete(channel)
       this.unread.delete(channel)
       return
     }
@@ -1019,6 +1065,9 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.pendingRejoinChannels = [...this.channelUsers.keys()].sort()
       this.channelUsers.clear()
     }
+    this.topics.clear()
+    for (const t of this.topicQueryTimers.values()) clearTimeout(t)
+    this.topicQueryTimers.clear()
     // Pre-empt pending resolvers; stale setTimeouts still fire but calling resolve() again is a no-op.
     for (const list of this.joinResolvers.values()) for (const r of list) r({ ok: false, members: [], reason: 'disconnected' })
     this.joinResolvers.clear()

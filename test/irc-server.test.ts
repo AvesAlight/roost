@@ -85,6 +85,23 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
     expect(toolText(again)).toContain('joined')
   })
 
+  it('channel_join reports the channel topic, including on a repeat join', async () => {
+    const peer = await connectPeer(ergo, 'ip-topic1-peer')
+    await peer.joinChannel('#ip-topic1')
+    peer.setTopic('#ip-topic1', 'read the docs first')
+    const mcp = await startMcpInProcess(ergo, 'ip-topic1')
+    const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-topic1' } })
+    expect(toolText(join)).toContain('topic: read the docs first')
+    const again = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-topic1' } })
+    expect(toolText(again)).toContain('topic: read the docs first')
+  })
+
+  it('channel_join says "no topic" when the channel has none', async () => {
+    const mcp = await startMcpInProcess(ergo, 'ip-topic2')
+    const join = await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-topic2' } })
+    expect(toolText(join)).toContain('topic: no topic')
+  })
+
   it('channel_list reflects joined channels', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-clist')
     await mcp.client.callTool({ name: 'channel_join', arguments: { channel: '#ip-clist-a' } })
@@ -716,6 +733,7 @@ function makeStubClient(): RoostIrcClient {
     getHistory: () => [],
     chathistoryLatest: async () => null,
     getUsers: () => [],
+    getTopic: () => undefined,
     getUnread: () => new Map(),
     ackUnread: () => {},
     clearDedupeCache: () => {},

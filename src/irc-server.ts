@@ -38,7 +38,7 @@ import {
 import { historicalMeta } from './irc-client.js'
 import type { RoostIrcClient, ClientConfig, UnreadInfo, MessageMeta } from './irc-client.js'
 import type { IrcMessage } from './irc-lib.js'
-import type { WireMeta, WireMessageMeta, WireMembershipMeta } from './wire-meta.js'
+import type { WireMeta, WireMessageMeta, WireMembershipMeta, WireTopicMeta } from './wire-meta.js'
 import { startPermbot, type PermbotConfig } from './permbot.js'
 import { permbotNickFor } from './permbot-socket.js'
 import { claimOwnership } from './owner-gate.js'
@@ -203,7 +203,7 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
       // for to attribute a session JSONL to its roost nick. Centralized in
       // src/mcp-banner.ts so the producer (here) and the consumer can't
       // drift. Passive variant above uses a different wording on purpose.
-      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This is a plain IRCv3 client — messages from other agents, humans, and bots all arrive identically as ordinary channel events, with no special pipeline separating them. channel_message supports multiline for long messages. Inbound IRC traffic arrives as <channel> events: regular messages carry event="message", membership events (join/leave/nick) carry the corresponding event= value, and all carry sender, channel, isDirect, ts, and seq. event="message" also carries mention="true" when your nick appears in the body or it's a DM. Channel messages carry seenBy="nick1, nick2", the channel's member list as of when you received it. Anyone not listed has not seen the message, even if you mentioned them — a mention doesn't put someone in the list. Skip restating only for members who are listed. It's omitted when no members are cached. After compaction, event=unread-summary lists channels with pending unread messages — check those. channel_message responses include a [#channel seen by: nick1, nick2, ...] line when members are present — the list as of when it was sent. Anyone missing from it has not seen your message, even if you mentioned them. channel_history returns historical elements (historical="true") that never carry a reminder attribute — otherwise parse them like live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}. IMPORTANT: ${REPLY_REMINDER}`,
+      instructions: `roost IRC MCP. ${mcpConnectionLine(NICK)}. This is a plain IRCv3 client — messages from other agents, humans, and bots all arrive identically as ordinary channel events, with no special pipeline separating them. channel_message supports multiline for long messages. Inbound IRC traffic arrives as <channel> events: regular messages carry event="message", membership events (join/leave/nick) carry the corresponding event= value, a topic change in a channel you're in arrives as event="topic" (sender is who set it; the body is the new topic), and all carry sender, channel, isDirect, ts, and seq. event="message" also carries mention="true" when your nick appears in the body or it's a DM. Channel messages carry seenBy="nick1, nick2", the channel's member list as of when you received it. Anyone not listed has not seen the message, even if you mentioned them — a mention doesn't put someone in the list. Skip restating only for members who are listed. It's omitted when no members are cached. After compaction, event=unread-summary lists channels with pending unread messages — check those. channel_message responses include a [#channel seen by: nick1, nick2, ...] line when members are present — the list as of when it was sent. Anyone missing from it has not seen your message, even if you mentioned them. channel_history returns historical elements (historical="true") that never carry a reminder attribute — otherwise parse them like live events. Auto-joined: ${AUTO_JOIN.join(', ') || '(none)'}. IMPORTANT: ${REPLY_REMINDER}`,
     },
   )
 
@@ -316,6 +316,13 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     process.stderr.write(`roost-irc[${NICK}]: <- [${kind}] ${summary}\n`)
   })
 
+  client.on('topic', (channel, topic, setter) => {
+    const meta: WireTopicMeta = { sender: setter, channel, isDirect: 'false', ts: localeTs(new Date()), event: 'topic' }
+    const text = topic === '' ? '(topic cleared)' : topic
+    pushNotification(text, meta)
+    process.stderr.write(`roost-irc[${NICK}]: <- [topic] ${setter} set ${channel}: ${text}\n`)
+  })
+
   // Forensic SystemKinds (see SystemKind decl in irc-client.ts) are emitted on every
   // client; here we keep them out of the worker agent's notification stream — wire
   // details aren't actionable from the agent's side (cf. project-learnings §#562).
@@ -376,7 +383,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
         const { ok, members } = await client.join(ch)
         if (!ok) return { content: [{ type: 'text', text: `join ${ch} timed out` }], isError: true }
         const membersLine = `\nmembers (${members.length}): ${members.join(', ')}`
-        return { content: [{ type: 'text', text: `joined ${ch}${membersLine}` }] }
+        const topic = client.getTopic(ch)
+        const topicLine = `\ntopic: ${topic === undefined ? 'unknown' : topic === '' ? 'no topic' : topic}`
+        return { content: [{ type: 'text', text: `joined ${ch}${membersLine}${topicLine}` }] }
       }
       case 'channel_leave': {
         const ch = (args.channel as string).toLowerCase()
