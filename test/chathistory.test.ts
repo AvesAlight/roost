@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
@@ -11,11 +11,12 @@ import IRC from 'irc-framework'
 import { RoostIrcClientImpl } from '../src/irc-client-impl.js'
 
 describe.if(isErgoAvailable())('chathistory backfill', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('pre-join messages arrive as historical notifications in seq order', async () => {
     const peer = await connectPeer(ergo, 'ip-hist-peer1')
@@ -227,11 +228,12 @@ describe.if(isErgoAvailable())('chathistory backfill', () => {
 })
 
 describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('returns the agent\'s own outbound messages', async () => {
     const peer = await connectPeer(ergo, 'ip-cq-peer1')
@@ -432,14 +434,14 @@ describe.if(isErgoAvailable())('channel_history (mid-session CHATHISTORY query)'
 
 // Subprocess-only: requires process.kill on subprocess pid via pidfile.
 describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
   const tmpDirs: string[] = []
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
-
-  afterAll(() => {
+  afterAll(async () => {
+    await ergo?.cleanup()
     for (const d of tmpDirs) {
       try { rmSync(d, { recursive: true }) } catch {}
     }
@@ -483,11 +485,12 @@ describe.if(isErgoAvailable())('chathistory backfill (subprocess)', () => {
 // messages" with far fewer than N, on a busy agent channel often zero. The client
 // compensates by over-fetching and slicing back down.
 describe.if(isErgoAvailable())('channel_history under membership churn', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   // Connect a throwaway client, join, then quit. Each round deposits two HistServ
   // rows into the channel's server-side history, consuming two CHATHISTORY slots

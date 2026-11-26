@@ -2,10 +2,10 @@
  * irc-server.ts tests via InMemoryTransport. Imports createMcpServer directly
  * so the server runs in the test process and appears in the coverage report.
  */
-import { describe, it, expect, beforeAll, spyOn } from 'bun:test'
+import { describe, it, expect, beforeAll, afterAll, spyOn } from 'bun:test'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { startErgo, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { startErgo, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { messagePredicate } from './helpers/mcp-core.js'
@@ -16,11 +16,12 @@ import { mcpConnectionLine } from '../src/mcp-banner.js'
 import type { RoostIrcClient, ClientConfig } from '../src/irc-client.js'
 
 describe.if(isErgoAvailable())('irc-server MCP tools', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('tools/list returns expected tool names', async () => {
     const mcp = await startMcpInProcess(ergo, 'ip-list')
@@ -622,11 +623,12 @@ describe.if(isErgoAvailable())('irc-server MCP tools', () => {
 
 // Subprocess smoke tests: verify the binary wiring (StdioClientTransport + spawned process).
 describe.if(isErgoAvailable())('irc-server MCP tools (subprocess)', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('tools/list returns correct schemas', async () => {
     const mcp = await startMcp(ergo, 'list-test-mcp')

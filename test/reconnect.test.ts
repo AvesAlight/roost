@@ -1,16 +1,17 @@
-import { describe, it, expect, beforeAll } from 'bun:test'
-import { startErgo, startErgoDedicated, isErgoAvailable, type ErgoContext } from './helpers/ergo.js'
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
+import { startErgo, startErgoDedicated, isErgoAvailable, type ErgoLifecycle } from './helpers/ergo.js'
 import { startMcpInProcess } from './helpers/mcp-inprocess.js'
 import { startMcp } from './helpers/mcp.js'
 import { connectPeer } from './helpers/peer.js'
 import { messagePredicate, eventPredicate, type ChannelNotification } from './helpers/mcp-core.js'
 
 describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => {
-  let ergo: ErgoContext
+  let ergo: ErgoLifecycle
 
   beforeAll(async () => {
     ergo = (await startErgo())!
   })
+  afterAll(async () => { await ergo?.cleanup() })
 
   it('burst of N messages from different peers → seq strictly monotonic', async () => {
     const N = 5
