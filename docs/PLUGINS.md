@@ -34,7 +34,16 @@ Shared helpers, so you don't copy the built-ins' internals:
 | `trackedRefusal(label, action)` | Reply when a DM tries to change an entry in tracked `config.json`. |
 | `CooldownGate` | One warning per window per key. `claim(key, now)` checks and records; `clear(key)` resets. |
 | `resolveProjectChannel(config)` | The project channel. Your constructor already gets it as `defaultChannel`, so use this only on config-only paths. |
+| `noteFailure(prevError, why, say, failText)` | One post per distinct failure. Returns `{ error, messages }`; store `error` in your state slice and pass it back as `prevError` next tick. Survives a dispatcher restart because it lives in your state. |
+| `noteRecovery(prevError, say, text)` | One post when a source that was failing reads again. Pair it with `noteFailure`. |
+| `mergeSeen(ids, prevSeen, max)` | Newest-first list of handled ids, capped at `max`. |
+| `capPosts(items, max, render, moreText, say)` | At most `max` posts for a batch, then one "N more" line. |
+| `runWithTimeout(timeoutMs, bin)` | Returns a `Runner`: `(args) => Promise<RunResult>`. Spawns `bin` with no shell and drains both pipes. If the process is killed by a signal, including the timeout kill, it returns `timedOut: true` with empty output. |
 | `defaultPluginLogger` | Stderr logger, for constructing a plugin directly in tests. |
+
+`Say` is `(text) => PluginMessage`: close over your channels and pass it to `noteFailure`, `noteRecovery` and `capPosts`.
+
+`noteFailure` and `CooldownGate` both limit repeat warnings. Use `noteFailure` when you want one post per distinct reason, a recovery post, and memory across restarts. Use `CooldownGate` when you want a time window held in memory with no recovery post.
 
 The built-in `circleci` plugin imports only from this surface. It's a working example.
 

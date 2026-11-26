@@ -51,10 +51,10 @@ export abstract class GhPluginBase extends BasePlugin {
   // breaker is open so a multi-minute backoff doesn't PART the watched channels.
   private _lastChannels: string[] = []
 
-  constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger) {
+  constructor(defaultChannel: string, log: PluginLogger = defaultPluginLogger, client: GhClient = new GhClient(log)) {
     super(defaultChannel)
     this.log = log
-    this.client = new GhClient(log)
+    this.client = client
   }
 
   protected agentLogins(config: OrchestratorConfig): Set<string> {

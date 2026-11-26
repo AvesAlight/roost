@@ -1,4 +1,5 @@
 import type { PluginLogger } from '../../plugin.js'
+import { runWithTimeout, type RunResult, type Runner } from '../../plugin-api.js'
 import type { RateLimitInfo } from '../_rate-limit.js'
 import type { RateLimitKind } from './backoff.js'
 
@@ -123,6 +124,22 @@ export class GhError extends Error {
   }
 }
 
+// Upper bound on one gh call. The slowest normal call (an aliased graphql batch)
+// answers in about a second, so 30s only ever trips on a hang: a stuck network
+// or an auth prompt nobody can answer.
+export const GH_TIMEOUT_MS = 30_000
+
+const defaultRun: Runner = runWithTimeout(GH_TIMEOUT_MS, 'gh')
+
+// A killed call becomes a GhError whose stderr says "timed out", which the
+// transient classifier already labels `timeout`, so spawnGh retries it with
+// backoff like any other flake.
+function throwIfTimedOut(res: RunResult, args: string[]): RunResult {
+  if (!res.timedOut) return res
+  const msg = `gh timed out`
+  throw new GhError(`${msg}: gh ${args.join(' ')}`, msg)
+}
+
 // Splits `gh api --include` output into status/headers/body. Header keys are
 // lowercased for case-insensitive lookup. `status: null` when the text doesn't
 // look like an HTTP response at all (e.g. a network failure that never reached
@@ -174,13 +191,8 @@ function retryAfterFromIncludedStdout(stdout: string): number | undefined {
 // carries `--include`, stdout leads with a status line + header block (present
 // on both the success and failure paths — verified against a real 404) that
 // must be stripped before JSON-parsing the body.
-async function runGhOnce(args: string[]): Promise<unknown> {
-  const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
-  const [out, errOut] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  const exitCode = await proc.exited
+async function runGhOnce(args: string[], run: Runner = defaultRun): Promise<unknown> {
+  const { code: exitCode, stdout: out, stderr: errOut } = throwIfTimedOut(await run(args), args)
   const included = args.includes('--include')
   if (exitCode !== 0) {
     throw new GhError(
@@ -212,13 +224,8 @@ async function runGhOnce(args: string[]): Promise<unknown> {
 // body at all). A non-zero exit with no usable body (rate-limit / auth /
 // network) throws, routing back through spawnGh's retry + rate-limit
 // classification.
-async function runGhGraphqlBatchOnce(args: string[]): Promise<unknown> {
-  const proc = Bun.spawn(['gh', ...args], { stdout: 'pipe', stderr: 'pipe' })
-  const [out, errOut] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  const exitCode = await proc.exited
+async function runGhGraphqlBatchOnce(args: string[], run: Runner = defaultRun): Promise<unknown> {
+  const { code: exitCode, stdout: out, stderr: errOut } = throwIfTimedOut(await run(args), args)
   const included = args.includes('--include')
   const body = included ? parseIncludeOutput(out).body : out
   const trimmed = body.trim()
@@ -250,6 +257,7 @@ export interface SpawnDeps {
   jitterFraction?: number    // backoff *= 1 + random()*jitterFraction; default 0.5
   random?: () => number      // 0..1; default Math.random
   exec?: (args: string[]) => Promise<unknown>  // default runGhOnce
+  run?: Runner               // how gh is spawned; default runs `gh` with GH_TIMEOUT_MS
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -262,7 +270,7 @@ export async function spawnGh(args: string[], deps: SpawnDeps): Promise<unknown>
   const notFoundBaseMs = deps.notFoundBaseMs ?? 250
   const jitterFraction = deps.jitterFraction ?? 0.5
   const random = deps.random ?? Math.random
-  const exec = deps.exec ?? runGhOnce
+  const exec = deps.exec ?? ((a: string[]) => runGhOnce(a, deps.run))
 
   const cmd = `gh ${args.join(' ')}`
   for (let i = 0; i < totalAttempts; i++) {
@@ -549,7 +557,10 @@ export function mapBatchOutcomes<T>(
 // Per-plugin handle owning the PluginLogger. Every fetch lands in spawnGh (via
 // the private api() helper or runBatchQuery), so retry stays universal.
 export class GhClient {
-  constructor(private readonly log: PluginLogger) {}
+  constructor(
+    private readonly log: PluginLogger,
+    private readonly deps: Pick<SpawnDeps, 'run' | 'sleep'> = {},
+  ) {}
 
   // --include captures response headers (for Retry-After) but interleaves
   // per-page headers into stdout under --paginate, breaking gh's JSON-array
@@ -559,7 +570,7 @@ export class GhClient {
     if (paginate) args.push('--paginate')
     else args.push('--include')
     args.push(endpoint)
-    return spawnGh(args, { log: this.log })
+    return spawnGh(args, { log: this.log, ...this.deps })
   }
 
   // PR-stripped open-issue set (the endpoint returns both).
@@ -605,7 +616,11 @@ export class GhClient {
     const query = `query(${decls.join(',')}){ ${bodies.join(' ')} }`
     args.splice(2, 0, '-f', `query=${query}`)
     args.push('--include')
-    const raw = await spawnGh(args, { log: this.log, exec: runGhGraphqlBatchOnce })
+    const raw = await spawnGh(args, {
+      log: this.log,
+      ...this.deps,
+      exec: a => runGhGraphqlBatchOnce(a, this.deps.run),
+    })
     const env = (raw ?? {}) as GqlEnvelope
     if ((env.errors ?? []).some(e => e.type === 'RATE_LIMITED')) {
       // RATE_LIMITED comes back HTTP 200 with an error node, so there's no
