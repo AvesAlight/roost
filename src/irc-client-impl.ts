@@ -1161,7 +1161,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
       this.closingForNickRetry = false
       return
     }
-    if (this.nickRetries > 0 && !this.nickRetryTimer) {
+    if (this.nickRetries > 0 && !this.nickRetryTimer && this.failureReason === null) {
       // A retry's connect died before any 433 (server down again), so nothing else
       // will re-arm it. Keep going on the same limit, or give up with the reason.
       if (this.canRetryNick()) this.armNickRetry(this.nick)

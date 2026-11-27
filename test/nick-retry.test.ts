@@ -165,6 +165,28 @@ describe.if(isErgoAvailable())('registration 433 retry (real ergo)', () => {
     }
   }, 40_000)
 
+  it('a close after giving up does not report the failure twice', async () => {
+    const ergo = await startErgoDedicated()
+    if (!ergo) return
+    const nick = 'nr-once'
+    const client = new RoostIrcClientImpl(baseConfig(nick, { nickRetryLimit: 1, nickRetryBaseMs: 50 }))
+    const events = track(client)
+    const holder = await holdNick(ergo, nick)
+    try {
+      client.connect({ host: ergo.host, port: ergo.port, nick, autoReconnect: true })
+      await waitFor(() => events.find(e => e.kind === 'registration-failed'), 10_000, 'no registration-failed')
+      // The socket is still open after giving up; closing it must not fail again or retry.
+      client.quit()
+      await new Promise<void>(res => setTimeout(res, 500))
+      expect(events.filter(e => e.kind === 'registration-failed').length).toBe(1)
+      expect(events.filter(e => e.kind === 'registration-retry').length).toBe(1)
+    } finally {
+      holder.quit()
+      client.quit()
+      await ergo.cleanup()
+    }
+  }, 20_000)
+
   it('432 is not retryable even with autoReconnect', async () => {
     const ergo = await startErgoDedicated()
     if (!ergo) return
