@@ -54,7 +54,7 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
     // Observed: ergo refuses nick collision with 433 ERR_NICKNAMEINUSE.
     // startMcpInProcess connects with autoReconnect off, so the second client fails its
     // 433 at once and never retries; its tool calls return the registration failure and
-    // the readiness poll throws it. Retry and give-up behavior is covered in nick-retry.test.ts.
+    // the readiness poll throws it.
     const mcp1 = await startMcpInProcess(ergo, 'ip-collision-mcp')
 
     await expect(startMcpInProcess(ergo, 'ip-collision-mcp')).rejects.toThrow('IRC registration failed: 433')

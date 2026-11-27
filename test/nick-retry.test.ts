@@ -140,25 +140,30 @@ describe.if(isErgoAvailable())('registration 433 retry (real ergo)', () => {
     }
   }, 30_000)
 
-  it('without autoReconnect a 433 fails at once and never retries', async () => {
+  it('keeps retrying when ergo goes down between a 433 retry and its reconnect', async () => {
     const ergo = await startErgoDedicated()
     if (!ergo) return
-    const nick = 'nr-noreconnect'
-    const client = new RoostIrcClientImpl(baseConfig(nick, { nickRetryBaseMs: 50 }))
+    const nick = 'nr-bounce'
+    const client = new RoostIrcClientImpl(baseConfig(nick, { nickRetryBaseMs: 300 }))
     const events = track(client)
     const holder = await holdNick(ergo, nick)
     try {
-      client.connect({ host: ergo.host, port: ergo.port, nick, autoReconnect: false })
-      await waitFor(() => events.find(e => e.kind === 'registration-failed'), 5000, 'no registration-failed')
-      await new Promise<void>(res => setTimeout(res, 300))
-      expect(events.filter(e => e.kind === 'registration-retry').length).toBe(0)
-      expect(client.registrationFailure()).toContain('433')
+      client.connect({ host: ergo.host, port: ergo.port, nick, autoReconnect: true })
+      await waitFor(() => events.find(e => e.kind === 'registration-retry'), 5000, 'no first registration-retry')
+      // The retry timer fires into a dead server: no socket opens, so no 433 and no framework reconnect.
+      await ergo.kill()
+      await waitFor(() => events.filter(e => e.kind === 'registration-retry').length >= 2 || undefined, 10_000,
+        'retry did not re-arm after a refused connect')
+      // The restarted ergo has no ghost, so the next retry registers.
+      await ergo.restart()
+      await waitFor(() => client.isReady() || undefined, 20_000, 'client did not register after ergo came back')
+      expect(client.registrationFailure()).toBeNull()
     } finally {
       holder.quit()
       client.quit()
       await ergo.cleanup()
     }
-  }, 15_000)
+  }, 40_000)
 
   it('432 is not retryable even with autoReconnect', async () => {
     const ergo = await startErgoDedicated()

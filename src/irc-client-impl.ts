@@ -580,15 +580,23 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     const onNickReject = (code: number) => (e: { nick?: string; reason?: string }) => {
       if (this.ircReady) return
       if (code === 433 && this.retryNickInUse(e)) return
-      const retries = code === 433 && this.nickRetries > 0 ? this.nickRetries : undefined
-      const nick = e?.nick ?? this.nick
-      const reason = e?.reason?.trim() || (code === 432 ? 'Erroneous nickname' : 'Nickname is already in use')
-      this.failureReason = `${code} ${reason} for nick '${nick}'` +
-        (retries !== undefined ? ` (gave up after ${retries} retries)` : '')
-      this.emitSystem('registration-failed', { code, nick: e?.nick, reason: e?.reason, retries })
+      this.failRegistration(code, e?.nick, e?.reason)
     }
     this.irc.on('nick invalid', onNickReject(432))
     this.irc.on('nick in use', onNickReject(433))
+  }
+
+  private failRegistration(code: number, nickArg?: string, reasonArg?: string): void {
+    const retries = code === 433 && this.nickRetries > 0 ? this.nickRetries : undefined
+    const nick = nickArg ?? this.nick
+    const reason = reasonArg?.trim() || (code === 432 ? 'Erroneous nickname' : 'Nickname is already in use')
+    this.failureReason = `${code} ${reason} for nick '${nick}'` +
+      (retries !== undefined ? ` (gave up after ${retries} retries)` : '')
+    this.emitSystem('registration-failed', { code, nick: nickArg, reason: reasonArg, retries })
+  }
+
+  private canRetryNick(): boolean {
+    return !!this.connectOpts?.autoReconnect && this.nickRetries < this.nickRetryLimit
   }
 
   // Close the socket and reconnect after exponential backoff. Returns false when
@@ -596,19 +604,26 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // The framework won't do this itself: its reconnect only fires after a socket that
   // registered cleanly, and a 433 leaves the socket open.
   private retryNickInUse(e: { nick?: string }): boolean {
-    if (!this.connectOpts?.autoReconnect || this.nickRetries >= this.nickRetryLimit) return false
+    if (!this.canRetryNick()) return false
     if (this.nickRetryTimer) return true // a retry is already scheduled
+    this.closingForNickRetry = true
+    this.irc.connection.end(null, true)
+    this.armNickRetry(e?.nick ?? this.nick)
+    return true
+  }
+
+  private armNickRetry(nick: string): void {
     const waitMs = Math.min(this.nickRetryBaseMs * 2 ** this.nickRetries, 30_000)
     this.nickRetries++
     this.emitSystem('registration-retry',
-      `nick '${e?.nick ?? this.nick}' in use, retry ${this.nickRetries}/${this.nickRetryLimit} in ${waitMs}ms`)
-    this.closingForNickRetry = true
-    this.irc.connection.end(null, true)
+      `nick '${nick}' in use, retry ${this.nickRetries}/${this.nickRetryLimit} in ${waitMs}ms`)
     this.nickRetryTimer = setTimeout(() => {
       this.nickRetryTimer = null
+      // The close that precedes this normally already cleared it; don't let a missed one
+      // swallow the next real disconnect.
+      this.closingForNickRetry = false
       this.irc.connection.connect()
     }, waitMs)
-    return true
   }
 
   // ergo replays a draft/multiline post as a BATCH nested inside another batch
@@ -1144,6 +1159,13 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     if (this.closingForNickRetry) {
       // Our own close to retry a 433; the registration-retry event already said so.
       this.closingForNickRetry = false
+      return
+    }
+    if (this.nickRetries > 0 && !this.nickRetryTimer) {
+      // A retry's connect died before any 433 (server down again), so nothing else
+      // will re-arm it. Keep going on the same limit, or give up with the reason.
+      if (this.canRetryNick()) this.armNickRetry(this.nick)
+      else this.failRegistration(433, this.nick)
       return
     }
     this.emitSystem('disconnected', '[roost] disconnected from IRC')

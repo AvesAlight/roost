@@ -205,8 +205,8 @@ export async function wireMcpClient(
 
 /**
  * Poll `channel_who` until the MCP's IRC client has registered. Throws if not
- * ready within `deadlineMs`, or at once if registration was given up on. Returns immediately on the first non-error tool
- * call (or on a non-`not ready` error, which is treated as "ready enough" —
+ * ready within `deadlineMs`, or at once if registration was given up on.
+ * Returns immediately on the first non-error tool call (or on a non-`not ready` error, which is treated as "ready enough" —
  * caller's tool call surfaced something we don't recognize as the not-ready
  * sentinel and shouldn't loop forever).
  */
