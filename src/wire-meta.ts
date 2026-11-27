@@ -38,6 +38,14 @@ export interface WireMembershipMeta {
   newNick?: string
 }
 
+export interface WireTopicMeta {
+  event: 'topic'
+  sender: string
+  channel: string
+  isDirect: 'false'
+  ts: string
+}
+
 export interface WireSystemMeta {
   event: SystemKind
   sender: string
@@ -57,6 +65,7 @@ export interface WireUnreadSummaryMeta {
 export type WireMeta =
   | WireMessageMeta
   | WireMembershipMeta
+  | WireTopicMeta
   | WireSystemMeta
   | WireUnreadSummaryMeta
 

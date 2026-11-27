@@ -30,6 +30,7 @@ function makeMockClient() {
     getHistory: () => [],
     chathistoryLatest: async () => null,
     getUsers: () => [],
+    getTopic: () => undefined,
     getUnread: () => new Map<string, UnreadInfo>(),
     ackUnread: () => {},
     clearDedupeCache: () => {},

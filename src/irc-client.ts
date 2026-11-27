@@ -108,6 +108,8 @@ export interface RoostIrcClient {
   // pre-startup activity; the local ring does not.
   chathistoryLatest(target: string, limit: number): Promise<IrcMessage[] | null>
   getUsers(channel: string): string[]
+  // Topic as the server reported it: '' means it said there is none, undefined means unknown.
+  getTopic(channel: string): string | undefined
   // Incremented on every non-historical inbound message; tool handlers read this to build the unread suffix.
   getUnread(): ReadonlyMap<string, UnreadInfo>
   ackUnread(key: string): void
@@ -119,6 +121,7 @@ export interface RoostIrcClient {
 
   on(event: 'message',    handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: MembershipKind, nick: string, channel: string, extras: MembershipExtras) => void): void
+  on(event: 'topic',      handler: (channel: string, topic: string, setter: string) => void): void
   on(event: 'system',     handler: (kind: SystemKind, content: SystemContent) => void): void
 }
 

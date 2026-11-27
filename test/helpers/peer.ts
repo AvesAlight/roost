@@ -28,6 +28,7 @@ export interface PeerContext {
   leaveChannel(channel: string): Promise<void>
   say(channel: string, text: string): void
   kick(channel: string, nick: string, reason?: string): void
+  setTopic(channel: string, topic: string): void
   changeNick(newNick: string, timeoutMs?: number): Promise<void>
   waitForMessage(
     channel: string,
@@ -142,6 +143,11 @@ export async function connectPeer(ergo: ErgoContext, nick?: string): Promise<Pee
 
     kick(channel, nick, reason) {
       client.raw('KICK', channel, nick, ...(reason ? [reason] : []))
+    },
+
+    setTopic(channel, topic) {
+      // Explicit trailing colon: an empty param would otherwise be dropped and read as a query.
+      client.raw(`TOPIC ${channel} :${topic}`)
     },
 
     changeNick(newNick, timeoutMs = 5000) {
