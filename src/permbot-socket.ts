@@ -11,7 +11,7 @@ export function permbotNickFor(nick: string): string { return `permbot-${nick}` 
  *  hint. Shared by the permbot daemon (deny reason + log) and the hook's
  *  pnotify fallback (log). The 432 hint names nicklen because an over-long
  *  derived nick is the dominant cause in this system. */
-export function describeNickReject(c: { code?: number; nick?: string; reason?: string }): string {
+export function describeNickReject(c: { code?: number; nick?: string; reason?: string; retries?: number }): string {
   const code = c.code ?? '?'
   const reason = c.reason?.trim()
     || (c.code === 432 ? 'Erroneous nickname' : c.code === 433 ? 'Nickname in use' : 'registration rejected')
@@ -20,7 +20,7 @@ export function describeNickReject(c: { code?: number; nick?: string; reason?: s
   const hint = c.code === 432
     ? ' — likely exceeds the server nicklen; raise limits.nicklen in ergo.yaml if the nick exceeds it, then respawn the agent (a wedged permbot cannot self-heal)'
     : c.code === 433
-      ? ' — nick already held by another client; respawn the agent'
+      ? ` — nick still held by another client${c.retries ? ` after ${c.retries} retries` : ''}; respawn the agent`
       : ''
   return `${code} ${reason} for nick '${nick}'${len}${hint}`
 }

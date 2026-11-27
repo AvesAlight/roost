@@ -361,8 +361,9 @@ export function createMcpServer(client: RoostIrcClient, config: ClientConfig, op
     const { name, arguments: args = {} } = req.params
 
     if (!client.isReady()) {
+      const failure = client.registrationFailure()
       return {
-        content: [{ type: 'text', text: NOT_READY_SENTINEL }],
+        content: [{ type: 'text', text: failure ? `IRC registration failed: ${failure}. Respawn the agent.` : NOT_READY_SENTINEL }],
         isError: true,
       }
     }

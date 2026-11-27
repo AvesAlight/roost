@@ -727,6 +727,7 @@ function makeStubClient(): RoostIrcClient {
   return {
     connect: () => {},
     isReady: () => false,
+    registrationFailure: () => null,
     join: async () => ({ ok: false, members: [] }),
     leave: async () => false,
     say: () => ({ chunks: 0, mode: 'single' as const }),

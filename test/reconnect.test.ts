@@ -52,11 +52,12 @@ describe.if(isErgoAvailable())('reconnect, ordering, and nick collision', () => 
 
   it('two MCPs with same nick → second fails cleanly; first unaffected', async () => {
     // Observed: ergo refuses nick collision with 433 ERR_NICKNAMEINUSE.
-    // irc-framework auto_reconnects but always gets 433. startMcpInProcess's 5s
-    // readiness poll expires and throws.
+    // startMcpInProcess connects with autoReconnect off, so the second client fails its
+    // 433 at once and never retries; its tool calls return the registration failure and
+    // the readiness poll throws it.
     const mcp1 = await startMcpInProcess(ergo, 'ip-collision-mcp')
 
-    await expect(startMcpInProcess(ergo, 'ip-collision-mcp')).rejects.toThrow('IRC not ready within 5s')
+    await expect(startMcpInProcess(ergo, 'ip-collision-mcp')).rejects.toThrow('IRC registration failed: 433')
 
     // First MCP is unaffected by the collision attempt
     const r = await mcp1.client.callTool({ name: 'channel_who', arguments: { channel: '#_ready' } })

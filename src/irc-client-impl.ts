@@ -144,10 +144,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   private readonly chathistoryDisabled: boolean
   private readonly chathistoryQueryTimeoutMs: number
   private readonly pendingJoinReplayMs: number
+  private readonly nickRetryLimit: number
+  private readonly nickRetryBaseMs: number
 
   private readonly irc: IrcFrameworkClient
 
   private ircReady = false
+  private connectOpts: ConnectOpts | null = null
+  private nickRetries = 0
+  private nickRetryTimer: ReturnType<typeof setTimeout> | null = null
+  // Set while we close the socket ourselves to retry a 433, so the close isn't announced as a drop.
+  private closingForNickRetry = false
+  private failureReason: string | null = null
   private hasRegistered = false
   private chathistoryCapActive = false
   private readonly joinResolvers = new Map<string, Array<(result: JoinResult) => void>>()
@@ -205,6 +213,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.chathistoryDisabled = config.chathistoryDisabled ?? false
     this.chathistoryQueryTimeoutMs = config.chathistoryQueryTimeoutMs ?? 2000
     this.pendingJoinReplayMs = config.pendingJoinReplayMs ?? 500
+    this.nickRetryLimit = config.nickRetryLimit ?? 12
+    this.nickRetryBaseMs = config.nickRetryBaseMs ?? 1000
     this.irc = new IRC.Client()
     this.registerHandlers()
     this.installNestedMultilineBatchIntake()
@@ -213,6 +223,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   // ---- Public interface --------------------------------------------------
 
   connect(opts: ConnectOpts): void {
+    this.connectOpts = opts
     // See CAP_CHATHISTORY comment — we DON'T negotiate the chathistory cap on purpose.
     // Detection runs against the server's CAP LS advertisement list (network.cap.available).
     this.irc.requestCap(['draft/multiline', 'labeled-response', 'server-time'])
@@ -228,6 +239,7 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   }
 
   isReady(): boolean { return this.ircReady }
+  registrationFailure(): string | null { return this.failureReason }
   isJoined(channel: string): boolean { return this.channelUsers.has(channel.toLowerCase()) }
 
   async join(channel: string): Promise<JoinResult> {
@@ -389,7 +401,11 @@ export class RoostIrcClientImpl implements RoostIrcClient {
   ackUnread(key: string): void { this.unread.delete(key.toLowerCase()) }
   clearDedupeCache(): void { this.seenFingerprints.clear() }
 
-  quit(): void { this.irc.quit() }
+  quit(): void {
+    if (this.nickRetryTimer) clearTimeout(this.nickRetryTimer)
+    this.nickRetryTimer = null
+    this.irc.quit()
+  }
 
   on(event: 'message', handler: (msg: IrcMessage, meta: MessageMeta) => void): void
   on(event: 'membership', handler: (kind: 'join' | 'leave' | 'nick', nick: string, channel: string, extras: MembershipExtras) => void): void
@@ -553,16 +569,61 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     // NAMED events before emitting — it never emits the bare numeric — so we
     // listen on the names, not '432'/'433'. 432 ERR_ERRONEOUSNICKNAME →
     // 'nick invalid', 433 ERR_NICKNAMEINUSE → 'nick in use'. The library does
-    // no auto-rename, so either numeric stalls registration permanently. The
-    // !ircReady gate scopes this to the handshake: a post-registration /NICK
+    // no auto-rename and leaves the socket open, so neither numeric recovers on
+    // its own. 432 is permanent. 433 is usually a ghost: our previous connection
+    // still holds the nick until the server times it out, so we close and retry
+    // ourselves (see retryNickInUse) and only report failure once retries run out.
+    // The !ircReady gate scopes this to the handshake: a post-registration /NICK
     // rejection is not a registration failure. (436 ERR_NICKCOLLISION has no
     // irc-framework event mapping and is a server-to-server numeric that a
     // single-server ergo never emits, so there's nothing to listen for.)
     const onNickReject = (code: number) => (e: { nick?: string; reason?: string }) => {
-      if (!this.ircReady) this.emitSystem('registration-failed', { code, nick: e?.nick, reason: e?.reason })
+      if (this.ircReady) return
+      if (code === 433 && this.retryNickInUse(e)) return
+      this.failRegistration(code, e?.nick, e?.reason)
     }
     this.irc.on('nick invalid', onNickReject(432))
     this.irc.on('nick in use', onNickReject(433))
+  }
+
+  private failRegistration(code: number, nickArg?: string, reasonArg?: string): void {
+    const retries = code === 433 && this.nickRetries > 0 ? this.nickRetries : undefined
+    const nick = nickArg ?? this.nick
+    const reason = reasonArg?.trim() || (code === 432 ? 'Erroneous nickname' : 'Nickname is already in use')
+    this.failureReason = `${code} ${reason} for nick '${nick}'` +
+      (retries !== undefined ? ` (gave up after ${retries} retries)` : '')
+    this.emitSystem('registration-failed', { code, nick: nickArg, reason: reasonArg, retries })
+  }
+
+  private canRetryNick(): boolean {
+    return !!this.connectOpts?.autoReconnect && this.nickRetries < this.nickRetryLimit
+  }
+
+  // Close the socket and reconnect after exponential backoff. Returns false when
+  // retrying isn't enabled or the limit is spent, so the caller reports the failure.
+  // The framework won't do this itself: its reconnect only fires after a socket that
+  // registered cleanly, and a 433 leaves the socket open.
+  private retryNickInUse(e: { nick?: string }): boolean {
+    if (!this.canRetryNick()) return false
+    if (this.nickRetryTimer) return true // a retry is already scheduled
+    this.closingForNickRetry = true
+    this.irc.connection.end(null, true)
+    this.armNickRetry(e?.nick ?? this.nick)
+    return true
+  }
+
+  private armNickRetry(nick: string): void {
+    const waitMs = Math.min(this.nickRetryBaseMs * 2 ** this.nickRetries, 30_000)
+    this.nickRetries++
+    this.emitSystem('registration-retry',
+      `nick '${nick}' in use, retry ${this.nickRetries}/${this.nickRetryLimit} in ${waitMs}ms`)
+    this.nickRetryTimer = setTimeout(() => {
+      this.nickRetryTimer = null
+      // The close that precedes this normally already cleared it; don't let a missed one
+      // swallow the next real disconnect.
+      this.closingForNickRetry = false
+      this.irc.connection.connect()
+    }, waitMs)
   }
 
   // ergo replays a draft/multiline post as a BATCH nested inside another batch
@@ -666,6 +727,8 @@ export class RoostIrcClientImpl implements RoostIrcClient {
 
   private handleRegistered(): void {
     this.log('registered with the IRC server')
+    this.nickRetries = 0
+    this.failureReason = null
     if (!this.parseMultilineCap()) return
     const enabled: string[] = this.irc.network?.cap?.enabled ?? []
     if (!enabled.includes('server-time')) {
@@ -1093,6 +1156,18 @@ export class RoostIrcClientImpl implements RoostIrcClient {
     this.pendingJoinReplays.clear()
     this.chathistoryCapActive = false
     this.ircReady = false
+    if (this.closingForNickRetry) {
+      // Our own close to retry a 433; the registration-retry event already said so.
+      this.closingForNickRetry = false
+      return
+    }
+    if (this.nickRetries > 0 && !this.nickRetryTimer && this.failureReason === null) {
+      // A retry's connect died before any 433 (server down again), so nothing else
+      // will re-arm it. Keep going on the same limit, or give up with the reason.
+      if (this.canRetryNick()) this.armNickRetry(this.nick)
+      else this.failRegistration(433, this.nick)
+      return
+    }
     this.emitSystem('disconnected', '[roost] disconnected from IRC')
   }
 

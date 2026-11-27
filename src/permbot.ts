@@ -265,6 +265,8 @@ export function startPermbot(
         logLoud('IRC registration recovered — clearing unreachable state')
       }
       log('registered with IRC (001 received)')
+    } else if (kind === 'registration-retry') {
+      log(detail)
     } else if (kind === 'registration-failed') {
       // Fail loud + fail closed: the IRC link will never deliver, so reject
       // everything now instead of letting the hook wait out its socket timeout
