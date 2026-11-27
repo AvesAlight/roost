@@ -8,11 +8,15 @@ export async function waitForReady(
 ): Promise<void> {
   if (client.isReady()) return
   return new Promise((resolve, reject) => {
+    // A 433 is retried in the background; keep the last reason so a timeout says why.
+    let lastRetry = ''
     const timer = setTimeout(() => {
-      reject(new Error('IRC connection timed out'))
+      reject(new Error(`IRC connection timed out${lastRetry ? ` (${lastRetry})` : ''}`))
     }, timeoutMs)
-    client.on('system', (kind: SystemKind) => {
-      if (kind === 'registered') {
+    client.on('system', (kind: SystemKind, content) => {
+      if (kind === 'registration-retry' && typeof content === 'string') {
+        lastRetry = content
+      } else if (kind === 'registered') {
         clearTimeout(timer)
         resolve()
       } else if (kind === 'registration-failed') {

@@ -205,7 +205,7 @@ export async function wireMcpClient(
 
 /**
  * Poll `channel_who` until the MCP's IRC client has registered. Throws if not
- * ready within `deadlineMs`. Returns immediately on the first non-error tool
+ * ready within `deadlineMs`, or at once if registration was given up on. Returns immediately on the first non-error tool
  * call (or on a non-`not ready` error, which is treated as "ready enough" —
  * caller's tool call surfaced something we don't recognize as the not-ready
  * sentinel and shouldn't loop forever).
@@ -216,6 +216,7 @@ export async function pollUntilIrcReady(handle: McpHandle, deadlineMs = 5000): P
     const r = await handle.client.callTool({ name: 'channel_who', arguments: { channel: '#_ready' } })
     if (!r.isError) return
     const text = (((r.content as unknown[])[0] ?? {}) as { text?: string }).text ?? ''
+    if (text.startsWith('IRC registration failed')) throw new Error(`${text} (nick=${handle.nick})`)
     if (!text.includes(NOT_READY_SENTINEL)) return
     if (Date.now() > deadline) throw new Error(`IRC not ready within ${deadlineMs / 1000}s (nick=${handle.nick})`)
     await sleep(50)

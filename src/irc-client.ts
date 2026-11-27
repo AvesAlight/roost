@@ -28,6 +28,13 @@ export interface ClientConfig {
    *  isn't stolen off the resolver queue. Default 500ms (tuned for loopback ergo;
    *  raise for higher-latency remote daemons). */
   pendingJoinReplayMs?: number
+  /** How many times a registration rejected with 433 (nick in use) is retried before
+   *  giving up. Needed because a reconnect can register before the server has dropped
+   *  our previous connection, which still holds the nick. Default 12, about 4 minutes of
+   *  backoff, which outlasts ergo's 2m30s idle disconnect. Only applies with autoReconnect. */
+  nickRetryLimit?: number
+  /** First backoff delay for a 433 retry; doubles each attempt up to 30s. Default 1000ms. */
+  nickRetryBaseMs?: number
 }
 
 // Extras attached to inbound message events (buffered = reassembled multiline batch).
@@ -71,11 +78,12 @@ export interface ConnectOpts {
 // signals and can ignore the lifecycle kinds.
 export type SystemKind =
   | 'disconnected' | 'reconnected' | 'cap-missing' | 'chathistory-short' | 'registered' | 'registration-failed'
-  | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls' | 'multiline-intake-degraded'
+  | 'registration-retry' | 'ping' | 'pong' | 'reconnecting' | 'cap-ack' | 'cap-nak' | 'cap-ls' | 'multiline-intake-degraded'
 // string for disconnected/reconnected/cap-missing/chathistory-short/ping/pong/reconnecting/cap-*/
 // multiline-intake-degraded; { nick } for registered; { code, nick, reason } for registration-failed
-// (reason is the server's text for the numeric, e.g. "Erroneous nickname").
-export type SystemContent = string | { code?: number; nick?: string; reason?: string }
+// (reason is the server's text for the numeric, e.g. "Erroneous nickname"; retries is set when a
+// 433 was retried that many times before giving up). registration-retry carries a string.
+export type SystemContent = string | { code?: number; nick?: string; reason?: string; retries?: number }
 
 export type MembershipKind = 'join' | 'leave' | 'nick'
 
@@ -91,6 +99,9 @@ export interface RoostIrcClient {
   // Use isReady() + on('system') to track connection state.
   connect(opts: ConnectOpts): void
   isReady(): boolean
+  // Why registration was given up on (432, or 433 after the retry limit), or null while
+  // connecting, retrying, or registered. Tool calls surface this instead of "still connecting".
+  registrationFailure(): string | null
 
   join(channel: string): Promise<JoinResult>
   leave(channel: string): Promise<boolean>
